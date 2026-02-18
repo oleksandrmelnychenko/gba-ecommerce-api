@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using GBA.Common.Helpers;
 using GBA.Domain.Entities.Sales;
@@ -6,7 +6,6 @@ using GBA.Domain.EntityHelpers;
 using GBA.Domain.EntityHelpers.SalesModels.Models;
 using GBA.Domain.EntityHelpers.TotalDashboards;
 using GBA.Domain.FilterEntities;
-using GBA.Domain.Messages.Sales;
 
 namespace GBA.Domain.Repositories.Sales.Contracts;
 
@@ -138,9 +137,9 @@ public interface ISaleRepository {
 
     List<Sale> GetAllUkPlClientsSalesFiltered(DateTime from, DateTime to, string value);
 
-    List<Sale> GetAllByClientNetIdFiltered(GetAllSalesByClientNetIdMessage message);
+    List<Sale> GetAllByClientNetIdFiltered(GetAllSalesByClientNetIdQuery message);
 
-    List<SalesRegisterModel> GetAllSalesWithReturnsByClientNetIdFiltered(GetSalesRegisterByClientNetIdMessage message);
+    List<SalesRegisterModel> GetAllSalesWithReturnsByClientNetIdFiltered(GetSalesRegisterByClientNetIdQuery message);
 
     List<Sale> GetAllByLifeCycleType(SaleLifeCycleType saleLifeCycleType);
     List<Sale> GetAllRegisterIvoiceType(DateTime from, DateTime to, string value, long offset, long limit);

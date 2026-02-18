@@ -1,4 +1,4 @@
-﻿namespace GBA.Common.WebApi.RoutingConfiguration.Maps;
+namespace GBA.Common.WebApi.RoutingConfiguration.Maps;
 
 public static class ApplicationSegments {
     public const string UserManagement = "usermanagement";
@@ -214,8 +214,6 @@ public static class ApplicationSegments {
     public const string Countries = "countries";
 
     public const string PackingMarkings = "packings";
-
-    public const string AllegroServices = "allegro";
 
     public const string Dashboards = "dashboards";
 

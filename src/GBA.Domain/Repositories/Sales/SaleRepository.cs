@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
@@ -33,7 +33,6 @@ using GBA.Domain.EntityHelpers;
 using GBA.Domain.EntityHelpers.SalesModels.Models;
 using GBA.Domain.EntityHelpers.TotalDashboards;
 using GBA.Domain.FilterEntities;
-using GBA.Domain.Messages.Sales;
 using GBA.Domain.Repositories.Sales.Contracts;
 using GBA.Domain.TranslationEntities;
 
@@ -179,7 +178,7 @@ public sealed class SaleRepository : ISaleRepository {
         ).ToList();
     }
 
-    public List<SalesRegisterModel> GetAllSalesWithReturnsByClientNetIdFiltered(GetSalesRegisterByClientNetIdMessage message) {
+    public List<SalesRegisterModel> GetAllSalesWithReturnsByClientNetIdFiltered(GetSalesRegisterByClientNetIdQuery message) {
         List<SalesRegisterModel> toReturn = new();
 
         SaleLifeCycleType saleLifeCycleType = message.SaleRegisterType is SaleRegisterType.Order ? SaleLifeCycleType.New : SaleLifeCycleType.Packaging;
@@ -1341,7 +1340,7 @@ public sealed class SaleRepository : ISaleRepository {
         return sales.Where(s => s.Order.OrderItems.Any());
     }
 
-    public List<Sale> GetAllByClientNetIdFiltered(GetAllSalesByClientNetIdMessage message) {
+    public List<Sale> GetAllByClientNetIdFiltered(GetAllSalesByClientNetIdQuery message) {
         List<Sale> sales = new();
 
         string sqlExpression =

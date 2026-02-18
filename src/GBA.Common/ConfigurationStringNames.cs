@@ -1,14 +1,6 @@
-﻿namespace GBA.Common;
+namespace GBA.Common;
 
 public static class ConfigurationStringNames {
-    public const string AllegroUserName = "UserName";
-
-    public const string AllegroPassword = "Password";
-
-    public const string AllegroApiKey = "ApiKey";
-
-    public const string AllegroBaseWebApiUrl = "BaseWebApiUrl";
-
     public const string MailUserName = "UserName";
 
     public const string MailPassword = "Password";

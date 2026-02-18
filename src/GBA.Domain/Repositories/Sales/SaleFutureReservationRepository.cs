@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
@@ -7,7 +7,6 @@ using GBA.Domain.Entities.Clients;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.Entities.Supplies;
-using GBA.Domain.Messages.Sales.Reservations;
 using GBA.Domain.Repositories.Sales.Contracts;
 
 namespace GBA.Domain.Repositories.Sales;
@@ -19,7 +18,7 @@ public sealed class SaleFutureReservationRepository : ISaleFutureReservationRepo
         _connection = connection;
     }
 
-    public long Add(AddSaleFutureReservationMessage message) {
+    public long Add(AddSaleFutureReservationQuery message) {
         return _connection.Query<long>(
                 "INSERT INTO [SaleFutureReservation] (ProductId, ClientId, SupplyOrderId, RemindDate, Count, Updated) " +
                 "VALUES (" +

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.Extensions.Configuration;
 
 namespace GBA.Common.Helpers;
@@ -15,22 +15,6 @@ public static class ConfigurationManager {
     public static string AmgOneCConnectionString { get; private set; }
 
     public static string EnvironmentRootPath { get; private set; }
-
-    public static string AllegroUserName { get; private set; }
-
-    public static string AllegroPassword { get; private set; }
-
-    public static string AllegroApiKey { get; private set; }
-
-    public static string AllegroBaseWebApiUrl { get; private set; }
-
-    public static string AllegroUserNameSandbox { get; private set; }
-
-    public static string AllegroPasswordSandbox { get; private set; }
-
-    public static string AllegroApiKeySandbox { get; private set; }
-
-    public static string AllegroBaseWebApiUrlSandbox { get; private set; }
 
     public static string MailUserName { get; private set; }
 
@@ -64,22 +48,6 @@ public static class ConfigurationManager {
         FenixOneCConnectionString = configuration.GetConnectionString(ConnectionStringNames.FenixOneC);
 
         AmgOneCConnectionString = configuration.GetConnectionString(ConnectionStringNames.AmgOneC);
-
-        AllegroUserName = configuration.GetSection("Allegro")[ConfigurationStringNames.AllegroUserName];
-
-        AllegroPassword = configuration.GetSection("Allegro")[ConfigurationStringNames.AllegroPassword];
-
-        AllegroApiKey = configuration.GetSection("Allegro")[ConfigurationStringNames.AllegroApiKey];
-
-        AllegroBaseWebApiUrl = configuration.GetSection("Allegro")[ConfigurationStringNames.AllegroBaseWebApiUrl];
-
-        AllegroUserNameSandbox = configuration.GetSection("Allegro").GetSection("Sandbox")[ConfigurationStringNames.AllegroUserName];
-
-        AllegroPasswordSandbox = configuration.GetSection("Allegro").GetSection("Sandbox")[ConfigurationStringNames.AllegroPassword];
-
-        AllegroApiKeySandbox = configuration.GetSection("Allegro").GetSection("Sandbox")[ConfigurationStringNames.AllegroApiKey];
-
-        AllegroBaseWebApiUrlSandbox = configuration.GetSection("Allegro").GetSection("Sandbox")[ConfigurationStringNames.AllegroBaseWebApiUrl];
 
         MailUserName = configuration.GetSection("Mail")[ConfigurationStringNames.MailUserName];
 

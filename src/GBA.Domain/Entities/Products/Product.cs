@@ -1,5 +1,4 @@
-﻿using System.Collections.Generic;
-using GBA.Domain.Entities.AllegroServices;
+using System.Collections.Generic;
 using GBA.Domain.Entities.Consignments;
 using GBA.Domain.Entities.DepreciatedOrders;
 using GBA.Domain.Entities.Products.Incomes;
@@ -40,8 +39,6 @@ public sealed class Product : EntityBase {
         ProductSpecifications = new HashSet<ProductSpecification>();
 
         SaleFutureReservations = new HashSet<SaleFutureReservation>();
-
-        AllegroProductReservations = new HashSet<AllegroProductReservation>();
 
         ProductImages = new HashSet<ProductImage>();
 
@@ -237,8 +234,6 @@ public sealed class Product : EntityBase {
     public ICollection<ProductSpecification> ProductSpecifications { get; set; }
 
     public ICollection<SaleFutureReservation> SaleFutureReservations { get; set; }
-
-    public ICollection<AllegroProductReservation> AllegroProductReservations { get; set; }
 
     public ICollection<ProductImage> ProductImages { get; set; }
 

@@ -1,9 +1,8 @@
-﻿using GBA.Common.Helpers;
+using GBA.Common.Helpers;
 using GBA.Data.MapConfigurations;
 using GBA.Data.TableMaps.ConcordContext;
 using GBA.Data.TableMaps.ConcordContext.AccountingDocumentNames;
 using GBA.Data.TableMaps.ConcordContext.Agreements;
-using GBA.Data.TableMaps.ConcordContext.AllegroServices;
 using GBA.Data.TableMaps.ConcordContext.Auditing;
 using GBA.Data.TableMaps.ConcordContext.Carriers;
 using GBA.Data.TableMaps.ConcordContext.Clients;
@@ -56,7 +55,6 @@ using GBA.Domain.AuditEntities;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.AccountingDocumentNames;
 using GBA.Domain.Entities.Agreements;
-using GBA.Domain.Entities.AllegroServices;
 using GBA.Domain.Entities.Carriers;
 using GBA.Domain.Entities.Clients;
 using GBA.Domain.Entities.Clients.Documents;
@@ -429,10 +427,6 @@ public class ConcordContext : DbContext {
     public virtual DbSet<SupplyInvoiceOrderItem> SupplyInvoiceOrderItem { get; set; }
 
     public virtual DbSet<ClientShoppingCart> ClientShoppingCart { get; set; }
-
-    public virtual DbSet<AllegroCategory> AllegroCategory { get; set; }
-
-    public virtual DbSet<AllegroProductReservation> AllegroProductReservation { get; set; }
 
     public virtual DbSet<DashboardNodeModule> DashboardNodeModule { get; set; }
 
@@ -1052,10 +1046,6 @@ public class ConcordContext : DbContext {
         modelBuilder.AddConfiguration(new SupplyInvoiceOrderItemMap());
 
         modelBuilder.AddConfiguration(new ClientShoppingCartMap());
-
-        modelBuilder.AddConfiguration(new AllegroCategoryMap());
-
-        modelBuilder.AddConfiguration(new AllegroProductReservationMap());
 
         modelBuilder.AddConfiguration(new DashboardNodeModuleMap());
 

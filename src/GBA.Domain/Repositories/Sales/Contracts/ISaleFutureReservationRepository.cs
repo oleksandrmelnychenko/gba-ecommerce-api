@@ -1,12 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using GBA.Domain.Entities.Sales;
-using GBA.Domain.Messages.Sales.Reservations;
 
 namespace GBA.Domain.Repositories.Sales.Contracts;
 
 public interface ISaleFutureReservationRepository {
-    long Add(AddSaleFutureReservationMessage message);
+    long Add(AddSaleFutureReservationQuery message);
 
     SaleFutureReservation GetById(long id);
 
