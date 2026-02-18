@@ -1,0 +1,366 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<root>
+    <!-- 
+      Microsoft ResX Schema 
+      
+      Version 2.0
+      
+      The primary goals of this format is to allow a simple XML format 
+      that is mostly human readable. The generation and parsing of the 
+      various data types are done through the TypeConverter classes 
+      associated with the data types.
+      
+      Example:
+      
+      ... ado.net/XML headers & schema ...
+      <resheader name="resmimetype">text/microsoft-resx</resheader>
+      <resheader name="version">2.0</resheader>
+      <resheader name="reader">System.Resources.ResXResourceReader, System.Windows.Forms, ...</resheader>
+      <resheader name="writer">System.Resources.ResXResourceWriter, System.Windows.Forms, ...</resheader>
+      <data name="Name1"><value>this is my long string</value><comment>this is a comment</comment></data>
+      <data name="Color1" type="System.Drawing.Color, System.Drawing">Blue</data>
+      <data name="Bitmap1" mimetype="application/x-microsoft.net.object.binary.base64">
+          <value>[base64 mime encoded serialized .NET Framework object]</value>
+      </data>
+      <data name="Icon1" type="System.Drawing.Icon, System.Drawing" mimetype="application/x-microsoft.net.object.bytearray.base64">
+          <value>[base64 mime encoded string representing a byte array form of the .NET Framework object]</value>
+          <comment>This is a comment</comment>
+      </data>
+                  
+      There are any number of "resheader" rows that contain simple 
+      name/value pairs.
+      
+      Each data row contains a name, and value. The row also contains a 
+      type or mimetype. Type corresponds to a .NET class that support 
+      text/value conversion through the TypeConverter architecture. 
+      Classes that don't support this are serialized and stored with the 
+      mimetype set.
+      
+      The mimetype is used for serialized objects, and tells the 
+      ResXResourceReader how to depersist the object. This is currently not 
+      extensible. For a given mimetype the value must be set accordingly:
+      
+      Note - application/x-microsoft.net.object.binary.base64 is the format 
+      that the ResXResourceWriter will generate, however the reader can 
+      read any of the formats listed below.
+      
+      mimetype: application/x-microsoft.net.object.binary.base64
+      value   : The object must be serialized with 
+              : System.Runtime.Serialization.Formatters.Binary.BinaryFormatter
+              : and then encoded with base64 encoding.
+      
+      mimetype: application/x-microsoft.net.object.soap.base64
+      value   : The object must be serialized with 
+              : System.Runtime.Serialization.Formatters.Soap.SoapFormatter
+              : and then encoded with base64 encoding.
+  
+      mimetype: application/x-microsoft.net.object.bytearray.base64
+      value   : The object must be serialized into a byte array 
+              : using a System.ComponentModel.TypeConverter
+              : and then encoded with base64 encoding.
+      -->
+    <xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata" id="root" xmlns="">
+        <xsd:import namespace="http://www.w3.org/XML/1998/namespace"/>
+        <xsd:element name="root" msdata:IsDataSet="true">
+            <xsd:complexType>
+                <xsd:choice maxOccurs="unbounded">
+                    <xsd:element name="metadata">
+                        <xsd:complexType>
+                            <xsd:sequence>
+                                <xsd:element name="value" type="xsd:string" minOccurs="0"/>
+                            </xsd:sequence>
+                            <xsd:attribute name="name" use="required" type="xsd:string"/>
+                            <xsd:attribute name="type" type="xsd:string"/>
+                            <xsd:attribute name="mimetype" type="xsd:string"/>
+                            <xsd:attribute ref="xml:space"/>
+                        </xsd:complexType>
+                    </xsd:element>
+                    <xsd:element name="assembly">
+                        <xsd:complexType>
+                            <xsd:attribute name="alias" type="xsd:string"/>
+                            <xsd:attribute name="name" type="xsd:string"/>
+                        </xsd:complexType>
+                    </xsd:element>
+                    <xsd:element name="data">
+                        <xsd:complexType>
+                            <xsd:sequence>
+                                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1"/>
+                                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2"/>
+                            </xsd:sequence>
+                            <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1"/>
+                            <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3"/>
+                            <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4"/>
+                            <xsd:attribute ref="xml:space"/>
+                        </xsd:complexType>
+                    </xsd:element>
+                    <xsd:element name="resheader">
+                        <xsd:complexType>
+                            <xsd:sequence>
+                                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1"/>
+                            </xsd:sequence>
+                            <xsd:attribute name="name" type="xsd:string" use="required"/>
+                        </xsd:complexType>
+                    </xsd:element>
+                </xsd:choice>
+            </xsd:complexType>
+        </xsd:element>
+    </xsd:schema>
+    <resheader name="resmimetype">
+        <value>text/microsoft-resx</value>
+    </resheader>
+    <resheader name="version">
+        <value>2.0</value>
+    </resheader>
+    <resheader name="reader">
+        <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+    </resheader>
+    <resheader name="writer">
+        <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+    </resheader>
+    <data name="InvalidCredentials" xml:space="preserve">
+    <value>Не валідний email/номер телефону або пароль</value>
+  </data>
+    <data name="InvalidEmail" xml:space="preserve">
+    <value>Користувач з таким номером телефону або імейлом вже існує</value>
+  </data>
+    <data name="InvalidPassword" xml:space="preserve">
+    <value>Не валідний пароль</value>
+  </data>
+    <data name="InvalidUserName" xml:space="preserve">
+    <value>Користувач з таким номером телефону вже існує</value>
+  </data>
+    <data name="UserDisabled" xml:space="preserve">
+    <value>Користувач заблокований</value>
+  </data>
+    <data name="SyncStarted" xml:space="preserve">
+    <value>Синхронізацію розпочато</value>
+  </data>
+    <data name="SyncFinished" xml:space="preserve">
+    <value>Синхронізацію завершено</value>
+  </data>
+    <data name="EXCHANGE_RATE_HISTORY_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію історії курсів валют розпочато</value>
+  </data>
+    <data name="EXCHANGE_RATE_HISTORY_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію історії курсів валют завершено</value>
+  </data>
+    <data name="ACCOUNTING_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію балансів і боргів розпочато</value>
+  </data>
+    <data name="ACCOUNTING_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію балансів і боргів завершено</value>
+  </data>
+    <data name="REGIONS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію регіонів розпочато</value>
+  </data>
+    <data name="REGIONS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію регіонів завершено</value>
+  </data>
+    <data name="CLIENTS_AND_SUPPLIERS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію клієнтів і постачальників розпочато</value>
+  </data>
+    <data name="CLIENTS_AND_SUPPLIERS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію клієнтів і постачальників завершено</value>
+  </data>
+    <data name="TAX_INSPECTIONS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію податкових розпочато</value>
+  </data>
+    <data name="TAX_INSPECTIONS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію податкових завершено</value>
+  </data>
+    <data name="ORGANIZATIONS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію організацій розпочато</value>
+  </data>
+    <data name="ORGANIZATIONS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію організацій завершено</value>
+  </data>
+    <data name="STORAGES_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію складів розпочато</value>
+  </data>
+    <data name="STORAGES_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію складів завершено</value>
+  </data>
+    <data name="PRICINGS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію цінових рівнів розпочато</value>
+  </data>
+    <data name="PRICINGS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію цінових рівнів завершено</value>
+  </data>
+    <data name="AGREEMENTS_AND_DISCOUNTS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію договорів і знижок по договорам розпочато</value>
+  </data>
+    <data name="AGREEMENTS_AND_DISCOUNTS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію договорів і знижок по договорам завершено</value>
+  </data>
+    <data name="DELIVERY_RECIPIENTS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію отримувачів розпочато</value>
+  </data>
+    <data name="DELIVERY_RECIPIENTS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію отримувачів завершено</value>
+  </data>
+    <data name="CONSIGNMENTS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію залишків по партіям розпочато</value>
+  </data>
+    <data name="CONSIGNMENTS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію залишків по партіям завершено</value>
+  </data>
+    <data name="CONSIGNMENTS_SYNC_EXCEPTION_LIST" xml:space="preserve">
+    <value>Недостатньо товарів для синхронізації рахунків: </value>
+  </data>
+    <data name="CASH_REGISTERS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію касових рахунків розпочато</value>
+  </data>
+    <data name="CASH_REGISTERS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію касових рахунків завершено</value>
+  </data>
+    <data name="BANK_REGISTERS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію банківських рахунків розпочато</value>
+  </data>
+    <data name="BANK_REGISTERS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію банківських рахунків завершено</value>
+  </data>
+    <data name="MEASURE_UNITS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію одиниць виміру розпочато</value>
+  </data>
+    <data name="MEASURE_UNITS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію одиниць виміру завершено</value>
+  </data>
+    <data name="PRODUCT_GROUPS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію товарних груп розпочато</value>
+  </data>
+    <data name="PRODUCT_GROUPS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію товарних груп завершено</value>
+  </data>
+    <data name="PRODUCTS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію товарів розпочато</value>
+  </data>
+    <data name="PRODUCTS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію товарів завершено</value>
+  </data>
+    <data name="ASSIGN_PRODUCTS_TO_PRODUCT_GROUPS_START" xml:space="preserve">
+    <value>Прив'язку товарів до товарних груп розпочато</value>
+  </data>
+    <data name="ASSIGN_PRODUCTS_TO_PRODUCT_GROUPS_END" xml:space="preserve">
+    <value>Прив'язку товарів до товарних груп завершено</value>
+  </data>
+    <data name="ASSIGN_ANALOGUES_START" xml:space="preserve">
+    <value>Синхронізацію аналогів розпочато</value>
+  </data>
+    <data name="ASSIGN_ANALOGUES_END" xml:space="preserve">
+    <value>Синхронізацію аналогів завершено</value>
+  </data>
+    <data name="ASSIGN_COMPONENTS_START" xml:space="preserve">
+    <value>Синхронізацію компонентів розпочато</value>
+  </data>
+    <data name="ASSIGN_COMPONENTS_END" xml:space="preserve">
+    <value>Синхронізацію компонентів завершено</value>
+  </data>
+    <data name="ORIGINAL_NUMBERS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію оригінальних і кросс номерів розпочато</value>
+  </data>
+    <data name="ORIGINAL_NUMBERS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію оригінальних і кросс номерів завершено</value>
+  </data>
+    <data name="PRODUCT_PRICES_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію цін на товари розпочато</value>
+  </data>
+    <data name="PRODUCT_PRICES_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію цін на товари завершено</value>
+  </data>
+    <data name="REORGANIZING_CLIENT_STRUCTURE_START" xml:space="preserve">
+    <value>Реорганізацію клієнтської структури розпочато</value>
+  </data>
+    <data name="REORGANIZING_CLIENT_STRUCTURE_END" xml:space="preserve">
+    <value>Реорганізацію клієнтської структури завершено</value>
+  </data>
+    <data name="BANKS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію банків розпочато</value>
+  </data>
+    <data name="BANKS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію банків завершено</value>
+  </data>
+    <data name="OUTCOME_DOCUMENTS_SYNC_START" xml:space="preserve">
+    <value>Синхронізацію видаткових розпочато</value>
+  </data>
+    <data name="OUTCOME_DOCUMENTS_SYNC_END" xml:space="preserve">
+    <value>Синхронізацію видаткових завершено</value>
+  </data>
+    <data name="SYNC_ERROR" xml:space="preserve">
+    <value>Помилка синхронізації</value>
+  </data>
+    <data name="ORDERS_SYNC_EXCEPTION_LIST" xml:space="preserve">
+        <value>Виникли помилки при синхронізації наступних документів:</value>
+    </data>
+    <data name="PRODUCT_INCOME_SYNC_START" xml:space="preserve">
+        <value>Синхронізацію прихідних накладних на товар розпочато</value>
+    </data>
+    <data name="PRODUCT_INCOME_SYNC_END" xml:space="preserve">
+        <value>Синхронізацію прихідних накладних на товар завершено</value>
+    </data>
+    <data name="PRODUCT_CAPITALIZATION_SYNC_START" xml:space="preserve">
+        <value>Синхронізацію оприходування розпочато</value>
+    </data>
+    <data name="PRODUCT_CAPITALIZATION_SYNC_END" xml:space="preserve">
+        <value>Синхронізацію оприходування завершено</value>
+    </data>
+    <data name="CLIENT_RETURN_SYNC_START" xml:space="preserve">
+        <value>Синхронізацію повернення від клієнта розпочато</value>
+    </data>
+    <data name="CLIENT_RETURN_SYNC_END" xml:space="preserve">
+        <value>Синхронізацію повернення від клієнта завершено</value>
+    </data>
+    <data name="PRODUCT_TRANSFER_SYNC_START" xml:space="preserve">
+        <value>Синхронізацію переміщення товарів розпочато</value>
+    </data>
+    <data name="PRODUCT_TRANSFER_SYNC_END" xml:space="preserve">
+        <value>Синхронізацію переміщення товарів завершено</value>
+    </data>
+    <data name="PRODUCT_DEPRECIATION_SYNC_START" xml:space="preserve">
+        <value>Синхронізацію списання товарів розпочато</value>
+    </data>
+    <data name="PRODUCT_DEPRECIATION_SYNC_END" xml:space="preserve">
+        <value>Синхронізацію списання товарів завершено</value>
+    </data>
+    <data name="ACT_PRODUCT_TRANSFER_SYNC_START" xml:space="preserve">
+        <value>Синхронізація акт списання оприходування розпочато</value>
+    </data>
+    <data name="ACT_PRODUCT_TRANSFER_SYNC_END" xml:space="preserve">
+        <value>Синхронізація акт списання оприходування завершено</value>
+    </data>
+    <data name="SALES_SYNC_START" xml:space="preserve">
+        <value>Синхронізацію рахунків та видаткових накладних розпочато</value>
+    </data>
+    <data name="SALES_SYNC_END" xml:space="preserve">
+        <value>Синхронізацію рахунків та видаткових накладних завершено</value>
+    </data>
+    <data name="INCOME_ORDERS_CASH_SYNC_START" xml:space="preserve">
+        <value>Синхронізацію прибуткових касових ордерів розпочато</value>
+    </data>
+    <data name="INCOME_ORDERS_CASH_SYNC_END" xml:space="preserve">
+        <value>Синхронізацію прибуткових касових ордерів завершено</value>
+    </data>
+    <data name="INCOME_ORDERS_BANK_SYNC_START" xml:space="preserve">
+        <value>Синхронізацію прибуткових банківських ордерів розпочато</value>
+    </data>
+    <data name="INCOME_ORDERS_BANK_SYNC_END" xml:space="preserve">
+        <value>Синхронізацію прибуткових банківських ордерів завершено</value>
+    </data>
+    <data name="OUTCOME_ORDERS_CASH_SYNC_START" xml:space="preserve">
+        <value>Синхронізацію видаткових касових ордерів розпочато</value>
+    </data>
+    <data name="OUTCOME_ORDERS_CASH_SYNC_END" xml:space="preserve">
+        <value>Синхронізацію видаткових касових ордерів завершено</value>
+    </data>
+    <data name="OUTCOME_ORDERS_BANK_SYNC_START" xml:space="preserve">
+        <value>Синхронізацію видаткових банківських ордерів розпочато</value>
+    </data>
+    <data name="OUTCOME_ORDERS_BANK_SYNC_END" xml:space="preserve">
+        <value>Синхронізацію видаткових банківських ордерів завершено</value>
+    </data>
+    <data name="INTERNAL_MOVEMENT_OF_FUNDS_START" xml:space="preserve">
+        <value>Синхронізація Внутрішнього переміщення грошових коштів розпочато</value>
+    </data>
+    <data name="INTERNAL_MOVEMENT_OF_FUNDS_END" xml:space="preserve">
+        <value>Синхронізація Внутрішнього переміщення грошових коштів завершено</value>
+    </data>
+</root>

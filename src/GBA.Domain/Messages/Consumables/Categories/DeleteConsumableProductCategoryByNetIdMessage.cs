@@ -1,0 +1,11 @@
+﻿using System;
+
+namespace GBA.Domain.Messages.Consumables.Categories;
+
+public sealed class DeleteConsumableProductCategoryByNetIdMessage {
+    public DeleteConsumableProductCategoryByNetIdMessage(Guid netId) {
+        NetId = netId;
+    }
+
+    public Guid NetId { get; set; }
+}

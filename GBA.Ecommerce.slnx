@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GBA.Common/GBA.Common.csproj" />
+    <Project Path="src/GBA.Data/GBA.Data.csproj" />
+    <Project Path="src/GBA.Domain/GBA.Domain.csproj" />
+    <Project Path="src/GBA.Ecommerce/GBA.Ecommerce.csproj" />
+    <Project Path="src/GBA.Search/GBA.Search.csproj" />
+    <Project Path="src/GBA.Services/GBA.Services.csproj" />
+  </Folder>
+</Solution>

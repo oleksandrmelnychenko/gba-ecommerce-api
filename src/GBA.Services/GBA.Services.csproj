@@ -1,0 +1,37 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <Platforms>AnyCPU;x86</Platforms>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Remove="Services\Contracts\**"/>
+        <EmbeddedResource Remove="Services\Contracts\**"/>
+        <None Remove="Services\Contracts\**"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Akka.DI.AutoFac" Version="1.4.27"/>
+        <PackageReference Include="Akka.DI.Core" Version="1.4.40"/>
+        <PackageReference Include="Google.OrTools" Version="9.15.6755"/>
+        <PackageReference Include="MailKit" Version="4.14.1"/>
+        <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.15.0"/>
+        <PackageReference Include="SlugGenerator" Version="2.0.2"/>
+        <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.15.0"/>
+        <PackageReference Include="System.ServiceModel.Duplex" Version="4.10.0"/>
+        <PackageReference Include="System.ServiceModel.Http" Version="4.10.0"/>
+        <PackageReference Include="System.ServiceModel.NetTcp" Version="4.10.0"/>
+        <PackageReference Include="System.ServiceModel.Security" Version="4.10.0"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\GBA.Common\GBA.Common.csproj"/>
+        <ProjectReference Include="..\GBA.Domain\GBA.Domain.csproj"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <WCFMetadata Include="Connected Services"/>
+    </ItemGroup>
+
+</Project>

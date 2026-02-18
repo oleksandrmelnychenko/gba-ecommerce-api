@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <Platforms>AnyCPU;x86</Platforms>
+        <UserSecretsId>e528f11a-8e52-40ba-9c28-4fa957aa496e</UserSecretsId>
+        <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>disable</ImplicitUsings>
+    </PropertyGroup>
+
+    <!-- Release Build Optimizations -->
+    <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+        <!-- Compiler optimizations -->
+        <Optimize>true</Optimize>
+        <DebugType>none</DebugType>
+        <DebugSymbols>false</DebugSymbols>
+
+        <!-- Tiered compilation: quick startup + optimized hot paths -->
+        <TieredCompilation>true</TieredCompilation>
+        <TieredPGO>true</TieredPGO>
+
+        <!-- Server GC: optimized for server workloads -->
+        <ServerGarbageCollection>true</ServerGarbageCollection>
+        <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+
+        <!-- Additional optimizations -->
+        <OptimizationPreference>Speed</OptimizationPreference>
+        <InvariantGlobalization>false</InvariantGlobalization>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Folder Include="wwwroot\" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.1" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.1">
+          <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+          <PrivateAssets>all</PrivateAssets>
+        </PackageReference>
+        <PackageReference Include="Swashbuckle.AspNetCore" Version="8.0.0" />
+        <PackageReference Include="Microsoft.AspNetCore.Mvc.NewtonsoftJson" Version="10.0.1" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\GBA.Common\GBA.Common.csproj" />
+        <ProjectReference Include="..\GBA.Data\GBA.Data.csproj" />
+        <ProjectReference Include="..\GBA.Domain\GBA.Domain.csproj" />
+        <ProjectReference Include="..\GBA.Services\GBA.Services.csproj" />
+        <ProjectReference Include="..\GBA.Search\GBA.Search.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Content Include="Properties\PublishProfiles\Default Settings.pubxml" />
+        <Content Include="Properties\PublishProfiles\Default Settings.pubxml.user" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Content Include="..\GBA.Search\search_synonyms.txt" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+</Project>

@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <Platforms>AnyCPU;x86</Platforms>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <FrameworkReference Include="Microsoft.AspNetCore.App"/>
+        <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.1"/>
+        <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.15.0"/>
+        <PackageReference Include="Microsoft.IO.RecyclableMemoryStream" Version="3.0.1"/>
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.4"/>
+        <PackageReference Include="NLog" Version="6.0.7"/>
+        <PackageReference Include="NLog.Web.AspNetCore" Version="6.1.0"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <EmbeddedResource Update="Resources\Helpers.SharedResource.uk.resx">
+            <Generator>ResXFileCodeGenerator</Generator>
+        </EmbeddedResource>
+    </ItemGroup>
+
+    <ItemGroup>
+        <Compile Update="Resources\Helpers.SharedResource.uk.Designer.cs">
+            <AutoGen>True</AutoGen>
+            <DependentUpon>Helpers.SharedResource.uk.resx</DependentUpon>
+            <DesignTime>True</DesignTime>
+        </Compile>
+    </ItemGroup>
+
+</Project>

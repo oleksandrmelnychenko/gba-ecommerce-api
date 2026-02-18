@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Polly for Circuit Breaker -->
+    <PackageReference Include="Polly" Version="8.5.2" />
+
+    <!-- Dapper for sync queries -->
+    <PackageReference Include="Dapper" Version="2.1.66" />
+
+    <!-- Russian stemming (Lucene.NET) -->
+    <PackageReference Include="Lucene.Net.Analysis.Common" Version="4.8.0-beta00016" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\GBA.Domain\GBA.Domain.csproj" />
+    <ProjectReference Include="..\GBA.Services\GBA.Services.csproj" />
+  </ItemGroup>
+
+</Project>
