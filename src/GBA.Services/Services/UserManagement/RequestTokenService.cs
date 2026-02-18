@@ -4,6 +4,7 @@ using System.Data;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using GBA.Common.Helpers;
@@ -19,11 +20,14 @@ using GBA.Domain.Repositories.Identities.Contracts;
 using GBA.Services.Services.UserManagement.Contracts;
 using Microsoft.Extensions.Localization;
 using Microsoft.IdentityModel.Tokens;
-using Newtonsoft.Json;
 
 namespace GBA.Services.Services.UserManagement;
 
 public sealed class RequestTokenService : IRequestTokenService {
+    private static readonly JsonSerializerOptions _jsonSerializerOptions = new() {
+        PropertyNameCaseInsensitive = true
+    };
+
     private readonly IClientRepositoriesFactory _clientRepositoriesFactory;
 
     private readonly IDbConnectionFactory _connectionFactory;
@@ -49,7 +53,7 @@ public sealed class RequestTokenService : IRequestTokenService {
             using IDbConnection connection = _connectionFactory.NewIdentitySqlConnection();
             string decryptedToken = AesManager.Decrypt(refreshToken);
 
-            RefreshToken deserializedRefreshToken = JsonConvert.DeserializeObject<RefreshToken>(decryptedToken);
+            RefreshToken deserializedRefreshToken = JsonSerializer.Deserialize<RefreshToken>(decryptedToken, _jsonSerializerOptions);
 
             if (deserializedRefreshToken.ExpireAt < DateTime.Now) throw new Exception("Refresh token expired");
 
@@ -151,7 +155,7 @@ public sealed class RequestTokenService : IRequestTokenService {
             ExpireAt = DateTime.Now.AddMinutes(AuthOptions.REFRESH_LIFETIME)
         };
 
-        string encryptedRefreshToken = AesManager.Encrypt(JsonConvert.SerializeObject(newRefreshToken));
+        string encryptedRefreshToken = AesManager.Encrypt(JsonSerializer.Serialize(newRefreshToken));
 
         if (userTokensRepository.IsTokenExistForUser(user.Id)) {
             UserToken userToken = userTokensRepository.GetByUserId(user.Id);

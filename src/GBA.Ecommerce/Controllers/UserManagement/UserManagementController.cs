@@ -13,7 +13,6 @@ using GBA.Services.Services.Clients.Contracts;
 using GBA.Services.Services.UserManagement.Contracts;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-using NLog;
 
 namespace GBA.Ecommerce.Controllers.UserManagement;
 
@@ -24,110 +23,83 @@ public sealed class UserManagementController(
     IRequestTokenService requestTokenService,
     IEmailAvailabilityService emailAvailabilityService,
     IEmailValidationService emailValidationService,
-    IClientRegistrationTaskService clientRegistrationTaskService,
-    IClientAgreementService clientAgreementService)
+    IClientRegistrationTaskService clientRegistrationTaskService)
     : WebApiControllerBase(responseFactory) {
-    private readonly IClientAgreementService _clientAgreementService = clientAgreementService;
 
     [HttpPost]
     [AssignActionRoute(UserManagementSegments.SIGN_UP)]
     [EnableRateLimiting("auth")]
     public async Task<IActionResult> SignUp([FromBody] Client client, [FromQuery] string password, [FromQuery] string login, [FromQuery] int isLocalPayment) {
-        try {
-            if (string.IsNullOrEmpty(password)) {
-                Random random = new();
+        if (string.IsNullOrEmpty(password)) {
+            Random random = new();
 
-                password = new string(Enumerable.Repeat(AuthOptions.DEFAULT_PASSWORD_CHARS, 12)
-                    .Select(s => s[random.Next(s.Length)]).ToArray());
+            password = new string(Enumerable.Repeat(AuthOptions.DEFAULT_PASSWORD_CHARS, 12)
+                .Select(s => s[random.Next(s.Length)]).ToArray());
 
-                //ToDo: send password to email after success registration.
-            }
-
-            Tuple<IdentityResponse, Client> identityResponse = await signUpService.SignUp(client, password, login, isLocalPayment.Equals(1));
-
-            if (identityResponse.Item1.Succeeded) {
-                await clientRegistrationTaskService.Add(identityResponse.Item2);
-
-                Tuple<bool, string, CompleteAccessToken> result = await requestTokenService.RequestToken(client.EmailAddress, password);
-
-                return Ok(SuccessResponseBody(result.Item3));
-            }
-
-            return BadRequest(ErrorResponseBody(identityResponse.Item1.Errors.FirstOrDefault()?.Description, HttpStatusCode.BadRequest));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
+            //ToDo: send password to email after success registration.
         }
+
+        Tuple<IdentityResponse, Client> identityResponse = await signUpService.SignUp(client, password, login, isLocalPayment.Equals(1));
+
+        if (identityResponse.Item1.Succeeded) {
+            await clientRegistrationTaskService.Add(identityResponse.Item2);
+
+            Tuple<bool, string, CompleteAccessToken> result = await requestTokenService.RequestToken(client.EmailAddress, password);
+
+            return Ok(SuccessResponseBody(result.Item3));
+        }
+
+        return BadRequest(ErrorResponseBody(identityResponse.Item1.Errors.FirstOrDefault()?.Description, HttpStatusCode.BadRequest));
     }
 
     [HttpGet]
     [AssignActionRoute(UserManagementSegments.GET_TOKEN)]
     [EnableRateLimiting("auth")]
     public async Task<IActionResult> GetTokenAsync([FromQuery] string username, [FromQuery] string password) {
-        try {
-            Tuple<bool, string, CompleteAccessToken> result = await requestTokenService.RequestToken(username, password);
+        Tuple<bool, string, CompleteAccessToken> result = await requestTokenService.RequestToken(username, password);
 
-            if (!result.Item1) return BadRequest(ErrorResponseBody(result.Item2, HttpStatusCode.BadRequest));
+        if (!result.Item1) return BadRequest(ErrorResponseBody(result.Item2, HttpStatusCode.BadRequest));
 
-            return Ok(SuccessResponseBody(result.Item3));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(result.Item3));
     }
 
     [HttpPost]
     [AssignActionRoute(UserManagementSegments.GET_TOKEN)]
     [EnableRateLimiting("auth")]
     public async Task<IActionResult> GetTokenPostAsync([FromBody] LoginRequest request) {
-        try {
-            if (string.IsNullOrEmpty(request?.Username) || string.IsNullOrEmpty(request?.Password))
-                return BadRequest(ErrorResponseBody("Username and password are required", HttpStatusCode.BadRequest));
+        if (string.IsNullOrEmpty(request?.Username) || string.IsNullOrEmpty(request?.Password))
+            return BadRequest(ErrorResponseBody("Username and password are required", HttpStatusCode.BadRequest));
 
-            Tuple<bool, string, CompleteAccessToken> result = await requestTokenService.RequestToken(request.Username, request.Password);
+        Tuple<bool, string, CompleteAccessToken> result = await requestTokenService.RequestToken(request.Username, request.Password);
 
-            if (!result.Item1) return BadRequest(ErrorResponseBody(result.Item2, HttpStatusCode.BadRequest));
+        if (!result.Item1) return BadRequest(ErrorResponseBody(result.Item2, HttpStatusCode.BadRequest));
 
-            return Ok(SuccessResponseBody(result.Item3));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(result.Item3));
     }
 
     public class LoginRequest {
-        public string Username { get; set; }
-        public string Password { get; set; }
+        public string? Username { get; set; }
+        public string? Password { get; set; }
     }
 
     [HttpGet]
     [AssignActionRoute(UserManagementSegments.REFRESH_TOKEN)]
     [EnableRateLimiting("auth")]
     public async Task<IActionResult> RefreshTokenAsync([FromQuery] string token) {
-        try {
-            Tuple<bool, string, CompleteAccessToken> result = await requestTokenService.RefreshToken(token);
+        Tuple<bool, string, CompleteAccessToken> result = await requestTokenService.RefreshToken(token);
 
-            if (!result.Item1) return BadRequest(ErrorResponseBody(result.Item2, HttpStatusCode.BadRequest));
+        if (!result.Item1) return BadRequest(ErrorResponseBody(result.Item2, HttpStatusCode.BadRequest));
 
-            return Ok(SuccessResponseBody(result.Item3));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(result.Item3));
     }
 
     [HttpGet]
     [AssignActionRoute(UserManagementSegments.IS_EMAIL_AVAILABLE)]
     public async Task<IActionResult> CheckIsEmailAvaliable([FromQuery] string email) {
-        try {
-            bool isEmailValid = emailValidationService.IsEmailValid(email);
+        bool isEmailValid = emailValidationService.IsEmailValid(email);
 
-            if (!isEmailValid) return BadRequest(ErrorResponseBody("Email is not valid", HttpStatusCode.BadRequest));
+        if (!isEmailValid) return BadRequest(ErrorResponseBody("Email is not valid", HttpStatusCode.BadRequest));
 
-            return Ok(SuccessResponseBody(await emailAvailabilityService.IsEmailAvailableAsync(email)));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(await emailAvailabilityService.IsEmailAvailableAsync(email)));
     }
 }

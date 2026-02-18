@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -904,7 +904,6 @@ public sealed class ParseConfigurationXlsManager : IParseConfigurationXlsManager
         List<ProductPlacementMovementVendorCode> parsedSpecifications = new();
         List<ProductPlacement> productPlacements = new();
 
-        NumberStyles style = NumberStyles.AllowThousands;
         CultureInfo culture = CultureInfo.InvariantCulture;
         FileInfo inputtedFile = new(pathToFile);
 

@@ -1,6 +1,8 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Net;
+using System.Text.Json;
 using System.Threading.Tasks;
+using GBA.Common.ResponseBuilder;
 using GBA.Common.Exceptions.GlobalHandler.Contracts;
 using GBA.Common.Exceptions.UserExceptions.Contracts;
 using Microsoft.AspNetCore.Diagnostics;
@@ -39,19 +41,29 @@ public class GlobalExceptionHandler : IGlobalExceptionHandler {
     }
 
     private async Task HandleServerException(HttpContext context, IExceptionHandlerFeature exceptionHandler, bool isDevelopment) {
-        context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
-        context.Response.ContentType = "text/html";
+        HttpStatusCode statusCode = exceptionHandler.Error is IRouteContraintException
+            ? HttpStatusCode.Forbidden
+            : HttpStatusCode.BadRequest;
 
         string developerMessage = string.Format(CultureInfo.CurrentCulture,
             $"{exceptionHandler.Error.Message}</br>{exceptionHandler.Error.InnerException}</br>{exceptionHandler.Error.StackTrace}");
 
-        if (isDevelopment) {
-            await context.Response.WriteAsync(developerMessage).ConfigureAwait(false);
-        } else if (exceptionHandler.Error is IRouteContraintException) {
-            context.Response.StatusCode = (int)HttpStatusCode.Forbidden;
-            await context.Response.WriteAsync((exceptionHandler.Error as IRouteContraintException).GetUserMessageException).ConfigureAwait(false);
-        }
+        context.Response.StatusCode = (int)statusCode;
+        context.Response.ContentType = "application/json";
+        string errorMessage = exceptionHandler.Error is IRouteContraintException routeException
+            ? routeException.GetUserMessageException
+            : exceptionHandler.Error.Message;
 
-        _logger.Fatal(developerMessage);
+        ErrorResponse response = new() {
+            Body = null,
+            Message = isDevelopment ? developerMessage : errorMessage,
+            StatusCode = statusCode
+        };
+
+        await context.Response.WriteAsync(JsonSerializer.Serialize(response, new JsonSerializerOptions {
+            PropertyNamingPolicy = null
+        })).ConfigureAwait(false);
+
+        _logger.Error(exceptionHandler.Error, developerMessage);
     }
 }

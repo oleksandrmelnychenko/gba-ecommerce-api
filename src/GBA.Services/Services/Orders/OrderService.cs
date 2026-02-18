@@ -8,8 +8,10 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using GBA.Common.Helpers;
+using GBA.Common.Models;
 using GBA.Common.ResourceNames;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
@@ -29,15 +31,18 @@ using GBA.Domain.Repositories.Products.Contracts;
 using GBA.Domain.Repositories.Sales.Contracts;
 using GBA.Domain.Repositories.Storages.Contracts;
 using GBA.Domain.Repositories.Users.Contracts;
+using GBA.Services.Infrastructure;
 using GBA.Services.Services.Messengers.Contracts;
 using GBA.Services.Services.Orders.Contracts;
 using Microsoft.Extensions.Http;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Serialization;
 
 namespace GBA.Services.Services.Orders;
 
 public sealed class OrderService : IOrderService {
+    private static readonly JsonSerializerOptions _jsonSerializerOptions = new() {
+        PropertyNameCaseInsensitive = true
+    };
+
     private readonly IAgreementRepositoriesFactory _agreementRepositoriesFactory;
     private readonly IClientRepositoriesFactory _clientRepositoriesFactory;
     private readonly IDbConnectionFactory _connectionFactory;
@@ -176,38 +181,24 @@ public sealed class OrderService : IOrderService {
 
             sale = saleRepository.GetById(sale.Id);
 
-            _ = Task.Run(async () => {
-                try {
-                    string saleSyncCrmUrl;
+            BackgroundSyncRunner.Run(async cancellationToken => {
+                string saleSyncCrmUrl;
 
-                    if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                        dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+                if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                    EcommerceCrmConfig data = ReadEcommerceCrmConfig();
 
 #if DEBUG
-                        saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
+                    saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
 #else
-                                saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
+                            saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
 #endif
-                    } else {
-                        saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
-                    }
-
-                    using HttpClient httpClient = _httpClientFactory.CreateClient();
-                    await httpClient.GetAsync(saleSyncCrmUrl);
-                } catch (Exception exc) {
-                    string path = Path.Combine(NoltFolderManager.GetLogFolderPath(), "sync_error_log.txt");
-
-                    File.AppendAllText(
-                        path,
-                        string.Format(
-                            "{0}\r\n{1}\r\n{2}\r\n\r\n",
-                            DateTime.UtcNow.ToString("dd.MM.yyyy hh:mm"),
-                            exc.Message,
-                            exc.InnerException?.Message ?? string.Empty
-                        )
-                    );
+                } else {
+                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
                 }
-            });
+
+                using HttpClient httpClient = _httpClientFactory.CreateClient();
+                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+            }, "Order sale sync");
 
             return Task.FromResult(sale);
     }
@@ -506,31 +497,27 @@ public sealed class OrderService : IOrderService {
                     productAvailabilityRepository.Update(productAvailability);
                 }
 
-                _ = Task.Run(async () => {
-                    try {
-                        string saleSyncCrmUrl;
+                BackgroundSyncRunner.Run(async cancellationToken => {
+                    string saleSyncCrmUrl;
 
-                        if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                            dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+                    if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                        EcommerceCrmConfig data = ReadEcommerceCrmConfig();
 
 #if DEBUG
-                            saleSyncCrmUrl =
-                                $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+                        saleSyncCrmUrl =
+                            $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
 #else
-                                    saleSyncCrmUrl =
+                                saleSyncCrmUrl =
  $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
 #endif
-                        } else {
-                            saleSyncCrmUrl =
-                                $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                        }
-
-                        using HttpClient httpClient = _httpClientFactory.CreateClient();
-                        await httpClient.GetAsync(saleSyncCrmUrl);
-                    } catch (Exception) {
-                        // ignored
+                    } else {
+                        saleSyncCrmUrl =
+                            $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
                     }
-                });
+
+                    using HttpClient httpClient = _httpClientFactory.CreateClient();
+                    await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                }, "Order invoice product availability sync");
             }
 
             sale.ClientAgreementId = order.ClientAgreementId;
@@ -603,27 +590,23 @@ public sealed class OrderService : IOrderService {
 
             Sale createdSale = saleRepository.GetByIdWithCalculatedDynamicPrices(sale.Id);
 
-            _ = Task.Run(async () => {
-                try {
-                    string saleSyncCrmUrl;
+            BackgroundSyncRunner.Run(async cancellationToken => {
+                string saleSyncCrmUrl;
 
-                    if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                        dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+                if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                    EcommerceCrmConfig data = ReadEcommerceCrmConfig();
 #if DEBUG
-                        saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
+                    saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
 #else
-                                saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
+                            saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
 #endif
-                    } else {
-                        saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
-                    }
-
-                    using HttpClient httpClient = _httpClientFactory.CreateClient();
-                    await httpClient.GetAsync(saleSyncCrmUrl);
-                } catch (Exception) {
-                    // ignored
+                } else {
+                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
                 }
-            });
+
+                using HttpClient httpClient = _httpClientFactory.CreateClient();
+                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+            }, "Order invoice sale sync");
 
             createdSale.DeliveryRecipient = sale.DeliveryRecipient;
             createdSale.DeliveryRecipientAddress = sale.DeliveryRecipientAddress;
@@ -632,7 +615,7 @@ public sealed class OrderService : IOrderService {
             string crmApiUrl;
 
             if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+                EcommerceCrmConfig data = ReadEcommerceCrmConfig();
 #if DEBUG
                 crmApiUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
 #else
@@ -642,9 +625,7 @@ public sealed class OrderService : IOrderService {
                 crmApiUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
             }
 
-            string payload = JsonConvert.SerializeObject(createdSale, Formatting.None, new JsonSerializerSettings {
-                ContractResolver = new DefaultContractResolver()
-            });
+            string payload = JsonSerializer.Serialize(createdSale);
 
             using HttpClient httpClient = _httpClientFactory.CreateClient();
             HttpResponseMessage responseMessage =
@@ -654,10 +635,10 @@ public sealed class OrderService : IOrderService {
                 );
 
             string responseContent = await responseMessage.Content.ReadAsStringAsync();
-            dynamic responseData = JsonConvert.DeserializeObject<dynamic>(responseContent);
+            string responseErrorMessage = ExtractErrorMessage(responseContent);
 
             if (!responseMessage.IsSuccessStatusCode)
-                throw new Exception(responseData.Message);
+                throw new Exception(responseErrorMessage);
 
             sale = saleRepository.GetByNetId(createdSale.NetUid);
 
@@ -753,31 +734,27 @@ public sealed class OrderService : IOrderService {
                     productAvailabilityRepository.Update(productAvailability);
                 }
 
-                _ = Task.Run(async () => {
-                    try {
-                        string saleSyncCrmUrl;
+                BackgroundSyncRunner.Run(async cancellationToken => {
+                    string saleSyncCrmUrl;
 
-                        if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                            dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+                    if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                        EcommerceCrmConfig data = ReadEcommerceCrmConfig();
 
 #if DEBUG
-                            saleSyncCrmUrl =
-                                $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+                        saleSyncCrmUrl =
+                            $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
 #else
-                                    saleSyncCrmUrl =
+                                saleSyncCrmUrl =
  $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
 #endif
-                        } else {
-                            saleSyncCrmUrl =
-                                $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                        }
-
-                        using HttpClient httpClient = _httpClientFactory.CreateClient();
-                        await httpClient.GetAsync(saleSyncCrmUrl);
-                    } catch (Exception) {
-                        // ignored
+                    } else {
+                        saleSyncCrmUrl =
+                            $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
                     }
-                });
+
+                    using HttpClient httpClient = _httpClientFactory.CreateClient();
+                    await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                }, "Retail sale product availability sync");
             }
 
             sale.ClientAgreementId = order.ClientAgreementId;
@@ -866,28 +843,24 @@ public sealed class OrderService : IOrderService {
                 saleRepository.Update(createdSale);
             }
 
-            _ = Task.Run(async () => {
-                try {
-                    string saleSyncCrmUrl;
+            BackgroundSyncRunner.Run(async cancellationToken => {
+                string saleSyncCrmUrl;
 
-                    if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                        dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+                if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                    EcommerceCrmConfig data = ReadEcommerceCrmConfig();
 
 #if DEBUG
-                        saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
+                    saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
 #else
-                                saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
+                            saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
 #endif
-                    } else {
-                        saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
-                    }
-
-                    using HttpClient httpClient = _httpClientFactory.CreateClient();
-                    await httpClient.GetAsync(saleSyncCrmUrl);
-                } catch (Exception) {
-                    // ignored
+                } else {
+                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
                 }
-            });
+
+                using HttpClient httpClient = _httpClientFactory.CreateClient();
+                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+            }, "Retail sale sync");
 
             createdSale.DeliveryRecipient = sale.DeliveryRecipient;
             createdSale.DeliveryRecipientAddress = sale.DeliveryRecipientAddress;
@@ -896,7 +869,7 @@ public sealed class OrderService : IOrderService {
             string crmApiUrl;
 
             if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+                EcommerceCrmConfig data = ReadEcommerceCrmConfig();
 
 #if DEBUG
                 //crmApiUrl = $"http://localhost:35981/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
@@ -908,9 +881,7 @@ public sealed class OrderService : IOrderService {
                 crmApiUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
             }
 
-            string payload = JsonConvert.SerializeObject(createdSale, Formatting.None, new JsonSerializerSettings {
-                ContractResolver = new DefaultContractResolver()
-            });
+            string payload = JsonSerializer.Serialize(createdSale);
 
 
             using HttpClient httpClient = _httpClientFactory.CreateClient();
@@ -921,10 +892,10 @@ public sealed class OrderService : IOrderService {
                 );
 
             string responseContent = await responseMessage.Content.ReadAsStringAsync();
-            dynamic responseData = JsonConvert.DeserializeObject<dynamic>(responseContent);
+            string responseErrorMessage = ExtractErrorMessage(responseContent);
 
             if (!responseMessage.IsSuccessStatusCode)
-                throw new Exception(responseData.Message);
+                throw new Exception(responseErrorMessage);
 
             // sale = saleRepository.GetByNetId(createdSale.NetUid);
 
@@ -1050,31 +1021,27 @@ public sealed class OrderService : IOrderService {
                     productAvailabilityRepository.Update(productAvailability);
                 }
 
-                _ = Task.Run(async () => {
-                    try {
-                        string saleSyncCrmUrl;
+                BackgroundSyncRunner.Run(async cancellationToken => {
+                    string saleSyncCrmUrl;
 
-                        if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                            dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+                    if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                        EcommerceCrmConfig data = ReadEcommerceCrmConfig();
 
 #if DEBUG
-                            saleSyncCrmUrl =
-                                $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+                        saleSyncCrmUrl =
+                            $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
 #else
-                                    saleSyncCrmUrl =
+                                saleSyncCrmUrl =
  $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
 #endif
-                        } else {
-                            saleSyncCrmUrl =
-                                $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                        }
-
-                        using HttpClient httpClient = _httpClientFactory.CreateClient();
-                        await httpClient.GetAsync(saleSyncCrmUrl);
-                    } catch (Exception) {
-                        // ignored
+                    } else {
+                        saleSyncCrmUrl =
+                            $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
                     }
-                });
+
+                    using HttpClient httpClient = _httpClientFactory.CreateClient();
+                    await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                }, "Quick sale product availability sync");
             }
 
             sale.ClientAgreementId = order.ClientAgreementId;
@@ -1163,28 +1130,24 @@ public sealed class OrderService : IOrderService {
                 saleRepository.Update(createdSale);
             }
 
-            _ = Task.Run(async () => {
-                try {
-                    string saleSyncCrmUrl;
+            BackgroundSyncRunner.Run(async cancellationToken => {
+                string saleSyncCrmUrl;
 
-                    if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                        dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+                if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                    EcommerceCrmConfig data = ReadEcommerceCrmConfig();
 
 #if DEBUG
-                        saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
+                    saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
 #else
-                                saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
+                            saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
 #endif
-                    } else {
-                        saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
-                    }
-
-                    using HttpClient httpClient = _httpClientFactory.CreateClient();
-                    await httpClient.GetAsync(saleSyncCrmUrl);
-                } catch (Exception) {
-                    // ignored
+                } else {
+                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
                 }
-            });
+
+                using HttpClient httpClient = _httpClientFactory.CreateClient();
+                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+            }, "Quick sale sync");
 
             createdSale.DeliveryRecipient = sale.DeliveryRecipient;
             createdSale.DeliveryRecipientAddress = sale.DeliveryRecipientAddress;
@@ -1193,7 +1156,7 @@ public sealed class OrderService : IOrderService {
             string crmApiUrl;
 
             if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+                EcommerceCrmConfig data = ReadEcommerceCrmConfig();
 
 #if DEBUG
                 //crmApiUrl = $"http://localhost:35981/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
@@ -1205,9 +1168,7 @@ public sealed class OrderService : IOrderService {
                 crmApiUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
             }
 
-            string payload = JsonConvert.SerializeObject(createdSale, Formatting.None, new JsonSerializerSettings {
-                ContractResolver = new DefaultContractResolver()
-            });
+            string payload = JsonSerializer.Serialize(createdSale);
 
 
             using HttpClient httpClient = _httpClientFactory.CreateClient();
@@ -1218,10 +1179,10 @@ public sealed class OrderService : IOrderService {
                 );
 
             string responseContent = await responseMessage.Content.ReadAsStringAsync();
-            dynamic responseData = JsonConvert.DeserializeObject<dynamic>(responseContent);
+            string responseErrorMessage = ExtractErrorMessage(responseContent);
 
             if (!responseMessage.IsSuccessStatusCode)
-                throw new Exception(responseData.Message);
+                throw new Exception(responseErrorMessage);
 
             // sale = saleRepository.GetByNetId(createdSale.NetUid);
 
@@ -1279,7 +1240,7 @@ public sealed class OrderService : IOrderService {
             // URI
 
             if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+                EcommerceCrmConfig data = ReadEcommerceCrmConfig();
 #if DEBUG
                 //crmApiUrl = new UriBuilder($"http://localhost:35981/api/v1/{CultureInfo.CurrentCulture}/sales/payment/save");
                 crmApiUrl = new UriBuilder($"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/payment/save");
@@ -1292,9 +1253,7 @@ public sealed class OrderService : IOrderService {
 
             crmApiUrl.Query = $"saleNetId={saleNetId}&clientNetId={clientNetId}";
 
-            string payload = JsonConvert.SerializeObject(paymentImage, Formatting.None, new JsonSerializerSettings {
-                ContractResolver = new DefaultContractResolver()
-            });
+            string payload = JsonSerializer.Serialize(paymentImage);
 
         using HttpClient httpClient = _httpClientFactory.CreateClient();
         HttpResponseMessage responseMessage =
@@ -1304,10 +1263,10 @@ public sealed class OrderService : IOrderService {
             );
 
         string responseContent = await responseMessage.Content.ReadAsStringAsync();
-        dynamic responseData = JsonConvert.DeserializeObject<dynamic>(responseContent);
+        string responseErrorMessage = ExtractErrorMessage(responseContent);
 
         if (!responseMessage.IsSuccessStatusCode)
-            throw new Exception(responseData.Message);
+            throw new Exception(responseErrorMessage);
     }
 
     public Task<SaleStatistic> GetSaleByNetId(Guid netId) {
@@ -1332,6 +1291,37 @@ public sealed class OrderService : IOrderService {
         };
 
         return Task.FromResult(saleInfo);
+    }
+
+    private static EcommerceCrmConfig ReadEcommerceCrmConfig() {
+        try {
+            string configPath = NoltFolderManager.GetEcommerceCrmConfigJsonFilePath();
+            if (!File.Exists(configPath)) {
+                return new EcommerceCrmConfig();
+            }
+
+            return JsonSerializer.Deserialize<EcommerceCrmConfig>(File.ReadAllText(configPath), _jsonSerializerOptions)
+                   ?? new EcommerceCrmConfig();
+        } catch {
+            return new EcommerceCrmConfig();
+        }
+    }
+
+    private static string ExtractErrorMessage(string responseContent) {
+        try {
+            using JsonDocument document = JsonDocument.Parse(responseContent);
+            if (document.RootElement.TryGetProperty("Message", out JsonElement messageElement)) {
+                return messageElement.GetString() ?? "Request failed";
+            }
+
+            if (document.RootElement.TryGetProperty("message", out messageElement)) {
+                return messageElement.GetString() ?? "Request failed";
+            }
+        } catch {
+            // ignore parse errors and fallback to default message
+        }
+
+        return "Request failed";
     }
 
     private static void CalculatePricingsForSaleWithDynamicPrices(

@@ -1,11 +1,11 @@
-﻿namespace GBA.Domain.EntityHelpers.SalesModels.Models;
+namespace GBA.Domain.EntityHelpers.SalesModels.Models;
 
 public sealed class SaleIdsWithTotalRows {
     public SaleIdsWithTotalRows() { }
 
-    public SaleIdsWithTotalRows(long id, long TotalRowsQty) {
+    public SaleIdsWithTotalRows(long id, long totalRowsQty) {
         Id = id;
-        TotalRowsQty = TotalRowsQty;
+        TotalRowsQty = totalRowsQty;
     }
 
     public long Id { get; set; }

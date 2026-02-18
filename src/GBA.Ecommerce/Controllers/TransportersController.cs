@@ -1,12 +1,10 @@
-﻿using System;
-using System.Net;
+using System;
 using System.Threading.Tasks;
 using GBA.Common.ResponseBuilder.Contracts;
 using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
 using GBA.Services.Services.Transporters.Contracts;
 using Microsoft.AspNetCore.Mvc;
-using NLog;
 
 namespace GBA.Ecommerce.Controllers;
 
@@ -18,22 +16,12 @@ public sealed class TransportersController(
     [HttpGet]
     [AssignActionRoute(TransporterTypesSegments.ECOMMERCE_GET_ALL)]
     public async Task<IActionResult> GetAllTransporterTypesAsync() {
-        try {
-            return Ok(SuccessResponseBody(await transporterService.GetAllTransporterTypes()));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(await transporterService.GetAllTransporterTypes()));
     }
 
     [HttpGet]
     [AssignActionRoute(TransportersSegments.GET_ALL_BY_TRANSPORTER_TYPE_NET_ID)]
     public async Task<IActionResult> GetAllTransportersByTransporterTypeNetIdAsync([FromQuery] Guid netId) {
-        try {
-            return Ok(SuccessResponseBody(await transporterService.GetAllTransportersByTransporterTypeNetId(netId)));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(await transporterService.GetAllTransportersByTransporterTypeNetId(netId)));
     }
 }

@@ -1,31 +1,31 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using Newtonsoft.Json;
+using System.Text.Json.Serialization;
 
 namespace GBA.Domain.EntityHelpers.ClientPredictionsDtos;
 
 public class ProductRecommendation {
-    [JsonProperty("customer_id")]
+    [JsonPropertyName("customer_id")]
     public long CustomerId { get; set; }
 
-    [JsonProperty("recommendations")]
+    [JsonPropertyName("recommendations")]
     public List<Recommendation> Recommendations { get; set; }
 
-    [JsonProperty("count")]
+    [JsonPropertyName("count")]
     public int Count { get; set; }
 
-    [JsonProperty("discovery_count")]
+    [JsonPropertyName("discovery_count")]
     public int DiscoveryCount { get; set; }
 
-    [JsonProperty("precision_estimate")]
+    [JsonPropertyName("precision_estimate")]
     public double PrecisionEstimate { get; set; }
 
-    [JsonProperty("latency_ms")]
+    [JsonPropertyName("latency_ms")]
     public double LatencyMs { get; set; }
 
-    [JsonProperty("cached")]
+    [JsonPropertyName("cached")]
     public bool Cached { get; set; }
 
-    [JsonProperty("timestamp")]
+    [JsonPropertyName("timestamp")]
     public DateTime Timestamp { get; set; }
 }

@@ -1,27 +1,27 @@
-﻿using System;
-using Newtonsoft.Json;
+using System;
+using System.Text.Json.Serialization;
 
 namespace GBA.Domain.EntityHelpers.ProductForecastApi;
 
 public class ExpectedCustomer {
-    [JsonProperty("customer_id")]
+    [JsonPropertyName("customer_id")]
     public long CustomerId { get; set; }
 
-    [JsonProperty("customer_name")]
+    [JsonPropertyName("customer_name")]
     public string CustomerName { get; set; }
 
-    [JsonProperty("probability")]
+    [JsonPropertyName("probability")]
     public double Probability { get; set; }
 
-    [JsonProperty("expected_quantity")]
+    [JsonPropertyName("expected_quantity")]
     public double ExpectedQuantity { get; set; }
 
-    [JsonProperty("expected_date")]
+    [JsonPropertyName("expected_date")]
     public DateTime ExpectedDate { get; set; }
 
-    [JsonProperty("days_since_last_order")]
+    [JsonPropertyName("days_since_last_order")]
     public int DaysSinceLastOrder { get; set; }
 
-    [JsonProperty("avg_reorder_cycle")]
+    [JsonPropertyName("avg_reorder_cycle")]
     public double AvgReorderCycle { get; set; }
 }

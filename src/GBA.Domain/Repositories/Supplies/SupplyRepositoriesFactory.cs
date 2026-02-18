@@ -1,4 +1,4 @@
-﻿using System.Data;
+using System.Data;
 using GBA.Domain.Repositories.Supplies.ActProvidingServices;
 using GBA.Domain.Repositories.Supplies.ActProvidingServices.Contracts;
 using GBA.Domain.Repositories.Supplies.Contracts;
@@ -52,10 +52,6 @@ public sealed class SupplyRepositoriesFactory : ISupplyRepositoriesFactory {
 
     public ISupplyOrderPaymentDeliveryProtocolRepository NewSupplyOrderPaymentDeliveryProtocolRepository(IDbConnection connection) {
         return new SupplyOrderPaymentDeliveryProtocolRepository(connection);
-    }
-
-    public ISupplyOrderRepository NewSupplyOrderRepository(IDbConnection connection) {
-        return new SupplyOrderRepository(connection);
     }
 
     public ISupplyPaymentTaskRepository NewSupplyPaymentTaskRepository(IDbConnection connection) {

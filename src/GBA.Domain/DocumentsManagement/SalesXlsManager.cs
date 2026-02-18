@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
@@ -9830,26 +9830,6 @@ NIP {sale.ClientAgreement.Client.TIN}";
                     int fullNumber = Convert.ToInt32(Math.Round(decimal.Round(totalAmount, 2, MidpointRounding.AwayFromZero) % 1, 2) * 100);
                     int endNumber = Convert.ToInt32(fullNumber.ToString().Last().ToString());
 
-                    string endKeyWord;
-
-                    if (fullNumber > 10 && fullNumber < 20)
-                        endKeyWord = "копійок";
-                    else
-                        switch (endNumber) {
-                            case 1:
-                                endKeyWord = "копійка";
-                                break;
-                            case 2:
-                            case 3:
-                            case 4:
-                                endKeyWord = "копійки";
-                                break;
-                            default:
-                                endKeyWord = "копійок";
-                                break;
-                        }
-
-                    // if (sale.ClientAgreement.Agreement.Currency.Code.ToLower().Equals("uah"))
                     range.Value = $"{totalAmount.ToCompleteText(sale.ClientAgreement.Agreement.Currency.Code, true, true, true)}";
                     //range.Value =
                     //    $"{decimal.Round(totalAmount, 2, MidpointRounding.AwayFromZero).ToText(true, true)} гривень {(Math.Round(totalAmount % 1, 2) * 100).ToText(false, true, false)} {endKeyWord}";
@@ -10931,25 +10911,6 @@ NIP {sale.ClientAgreement.Client.TIN}";
                     using (ExcelRange range = worksheet.Cells[row, 2, row, 51]) {
                         int fullNumber = Convert.ToInt32(Math.Round(decimal.Round(totalAmount, 2, MidpointRounding.AwayFromZero) % 1, 2) * 100);
                         int endNumber = Convert.ToInt32(fullNumber.ToString().Last().ToString());
-
-                        string endKeyWord;
-
-                        if (fullNumber > 10 && fullNumber < 20)
-                            endKeyWord = "копійок";
-                        else
-                            switch (endNumber) {
-                                case 1:
-                                    endKeyWord = "копійка";
-                                    break;
-                                case 2:
-                                case 3:
-                                case 4:
-                                    endKeyWord = "копійки";
-                                    break;
-                                default:
-                                    endKeyWord = "копійок";
-                                    break;
-                            }
 
                         vatInString = $" У т.ч. ПДВ: {totalVat.ToCompleteText(sale.ClientAgreement.Agreement.Currency.Code, true, true, true)}";
 

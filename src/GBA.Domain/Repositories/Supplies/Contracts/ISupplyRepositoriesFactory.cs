@@ -1,4 +1,4 @@
-﻿using System.Data;
+using System.Data;
 using GBA.Domain.Repositories.Supplies.ActProvidingServices.Contracts;
 using GBA.Domain.Repositories.Supplies.DeliveryProductProtocols.Contracts;
 using GBA.Domain.Repositories.Supplies.Documents.Contracts;
@@ -50,8 +50,6 @@ public interface ISupplyRepositoriesFactory {
     IPackingListDocumentRepository NewPackingListDocumentRepository(IDbConnection connection);
 
     IResponsibilityDeliveryProtocolRepository NewResponsibilityDeliveryProtocolRepository(IDbConnection connection);
-
-    ISupplyOrderRepository NewSupplyOrderRepository(IDbConnection connection);
 
     ISupplyOrderNumberRepository NewSupplyOrderNumberRepository(IDbConnection connection);
 

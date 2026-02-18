@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -479,8 +479,7 @@ public sealed class ClientXlsManager : BaseXlsManager, IClientXlsManager {
             }
 
             return SaveFiles(fileName);
-        } catch (Exception e) {
-            Console.WriteLine(e);
+        } catch {
             throw;
         }
     }

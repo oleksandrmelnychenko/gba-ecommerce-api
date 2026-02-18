@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -105,8 +105,7 @@ using Microsoft.Net.Http.Headers;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Serialization;
+using System.Text.Json.Serialization;
 using GBA.Common.Configuration;
 using GBA.Search.Extensions;
 using Microsoft.Data.SqlClient;
@@ -134,7 +133,7 @@ public class Startup {
         ConfigurationManager.SetAppSettingsProperties(Configuration);
         ConfigurationManager.SetAppEnvironmentRootPath(env.ContentRootPath);
 
-        SecuritySettings securitySettings = Configuration.GetSection("Security").Get<SecuritySettings>();
+        SecuritySettings securitySettings = Configuration.GetSection("Security").Get<SecuritySettings>() ?? new SecuritySettings();
         SecuritySettings.Initialize(securitySettings);
 
 #if DEBUG
@@ -170,13 +169,28 @@ public class Startup {
         });
 
         services.Configure<GzipCompressionProviderOptions>(options => {
-            options.Level = CompressionLevel.Optimal;
+            options.Level = CompressionLevel.Fastest;
         });
 
         services.AddMemoryCache();
         services.AddHttpClient();
         services.AddRequestDecompression();
-        services.AddHealthChecks();
+        services.AddHealthChecks()
+            .AddCheck("db-main", () => {
+                try {
+                    using var conn = new SqlConnection(Configuration.GetConnectionString(
+#if DEBUG
+                        ConnectionStringNames.Local
+#else
+                        ConnectionStringNames.Remote
+#endif
+                    ));
+                    conn.Open();
+                    return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy();
+                } catch (Exception ex) {
+                    return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Unhealthy(ex.Message);
+                }
+            });
         services.AddRateLimiter(options => {
             options.RejectionStatusCode = 429;
 
@@ -258,15 +272,11 @@ public class Startup {
                 new CacheProfile {
                     Duration = 43200
                 });
-        }).AddNewtonsoftJson(options => {
-            options.SerializerSettings.ContractResolver = new DefaultContractResolver();
-            options.SerializerSettings.ReferenceLoopHandling = ReferenceLoopHandling.Ignore;
-            options.SerializerSettings.NullValueHandling = NullValueHandling.Ignore;
-            options.SerializerSettings.DefaultValueHandling = DefaultValueHandling.Include;
-            options.SerializerSettings.DateParseHandling = DateParseHandling.None;
-            options.SerializerSettings.FloatParseHandling = FloatParseHandling.Double;
-            options.SerializerSettings.MetadataPropertyHandling = MetadataPropertyHandling.Ignore;
-            options.SerializerSettings.TypeNameHandling = TypeNameHandling.None;
+        }).AddJsonOptions(options => {
+            options.JsonSerializerOptions.PropertyNamingPolicy = null;
+            options.JsonSerializerOptions.DictionaryKeyPolicy = null;
+            options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+            options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
         }).AddDataAnnotationsLocalization();
 
         services.AddScoped<IResponseFactory, ResponseFactory>();
@@ -317,7 +327,6 @@ public class Startup {
         services.AddScoped<IOfferService, OfferService>();
         services.AddScoped<IPreOrderService, PreOrderService>();
         services.AddScoped<IDeliveryRecipientService, DeliveryRecipientService>();
-        services.AddScoped<IProductCoPurchaseRecommendationsService, ProductCoPurchaseRecommendationsService>();
         services.AddScoped<IProductMostPurchasedService, ProductMostPurchasedService>();
         services.AddScoped<ICarBrandService, CarBrandService>();
         services.AddScoped<ISeoPageService, SeoPageService>();
@@ -355,8 +364,8 @@ public class Startup {
             app.UseHsts();
         }
 
-        app.UseRouting();
         app.UseHttpsRedirection();
+        app.UseRouting();
         app.UseResponseCaching();
         app.UseOutputCache();
         app.UseRateLimiter();
@@ -379,7 +388,11 @@ public class Startup {
 
         app.UseExceptionHandler(builder => {
             builder.Run(async context => {
-                IExceptionHandlerFeature error = context.Features.Get<IExceptionHandlerFeature>();
+                IExceptionHandlerFeature? error = context.Features.Get<IExceptionHandlerFeature>();
+                if (error?.Error == null) {
+                    context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                    return;
+                }
                 IGlobalExceptionHandler globalExceptionHandler = globalExceptionFactory.New();
 
                 await globalExceptionHandler.HandleException(context, error, _environment.IsDevelopment());
@@ -387,11 +400,14 @@ public class Startup {
         });
 
         app.UseMiddleware<ReflectionTypeLoadExceptionLoggingMiddleware>();
-        app.UseSwagger();
-        app.UseSwaggerUI(options => {
-            options.SwaggerEndpoint("/swagger/v1/swagger.json", "v1");
-            options.RoutePrefix = string.Empty;
-        });
+
+        if (_environment.IsDevelopment()) {
+            app.UseSwagger();
+            app.UseSwaggerUI(options => {
+                options.SwaggerEndpoint("/swagger/v1/swagger.json", "v1");
+                options.RoutePrefix = string.Empty;
+            });
+        }
 
         app.UseEndpoints(endpoints => {
             endpoints.MapControllerRoute("default", "{controller=Home}/{action=Index}");
@@ -451,13 +467,22 @@ public class Startup {
             options.UseSqlServer(Configuration.GetConnectionString(ConnectionStringNames.LocalIdentity), sqlOptions => {
                 sqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: null);
                 sqlOptions.CommandTimeout(30);
+                sqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+                sqlOptions.MinBatchSize(1);
+                sqlOptions.MaxBatchSize(50);
             });
+            options.EnableDetailedErrors();
+            options.EnableSensitiveDataLogging();
 #else
             options.UseSqlServer(Configuration.GetConnectionString(ConnectionStringNames.RemoteIdentity), sqlOptions => {
                 sqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: null);
                 sqlOptions.CommandTimeout(30);
+                sqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+                sqlOptions.MinBatchSize(1);
+                sqlOptions.MaxBatchSize(50);
             });
 #endif
+            options.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
         }, poolSize: 64);
     }
 

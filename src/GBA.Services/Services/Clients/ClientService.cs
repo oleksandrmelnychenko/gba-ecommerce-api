@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
@@ -16,11 +17,16 @@ using GBA.Domain.Repositories.Products.Contracts;
 using GBA.Domain.Repositories.Storages.Contracts;
 using GBA.Services.Services.Clients.Contracts;
 using GBA.Services.Services.Orders.Contracts;
-using Newtonsoft.Json;
+using NLog;
 
 namespace GBA.Services.Services.Clients;
 
 public sealed class ClientService : IClientService {
+    private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
+    private static readonly JsonSerializerOptions _jsonSerializerOptions = new() {
+        PropertyNameCaseInsensitive = true
+    };
+
     private readonly IClientRepositoriesFactory _clientRepositoriesFactory;
     private readonly IDbConnectionFactory _connectionFactory;
     private readonly IExchangeRateRepositoriesFactory _exchangeRateRepositoriesFactory;
@@ -113,19 +119,19 @@ public sealed class ClientService : IClientService {
             IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
 
             Storage storage = storageRepository.GetWithHighestPriority();
-            List<OrderItem> orderItems = JsonConvert.DeserializeObject<List<OrderItem>>(client.ShoppingCartJson);
+            List<OrderItem> orderItems = JsonSerializer.Deserialize<List<OrderItem>>(client.ShoppingCartJson, _jsonSerializerOptions) ?? new List<OrderItem>();
             List<OrderItem> anyOrderItems = new();
 
             foreach (OrderItem orderItem in orderItems.Where(i => i.IsNew() && i.Qty > 0)) {
                 ProductAvailability productAvailability =
                     productAvailabilityRepository.GetByProductAndStorageIds(orderItem.Product.Id, storage.Id);
-                if (!productAvailability.Amount.Equals(0)) {
+                if (productAvailability != null && !productAvailability.Amount.Equals(0)) {
                     orderItem.IsMisplacedItem = true;
                     anyOrderItems.Add(orderItem);
                 }
             }
 
-            client.ShoppingCartJson = JsonConvert.SerializeObject(anyOrderItems);
+            client.ShoppingCartJson = JsonSerializer.Serialize(anyOrderItems);
 
             return Task.FromResult(client);
     }
@@ -138,7 +144,7 @@ public sealed class ClientService : IClientService {
             IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
 
             Storage storage = storageRepository.GetWithHighestPriority();
-            List<OrderItem> orderItems = JsonConvert.DeserializeObject<List<OrderItem>>(client.ShoppingCartJson);
+            List<OrderItem> orderItems = JsonSerializer.Deserialize<List<OrderItem>>(client.ShoppingCartJson, _jsonSerializerOptions) ?? new List<OrderItem>();
             List<OrderItem> anyOrderItems = new();
             List<OrderItem> notHaveOrderItems = new();
             string notHaveOrderItemsInfo = string.Empty;
@@ -147,7 +153,7 @@ public sealed class ClientService : IClientService {
             foreach (OrderItem orderItem in orderItems.Where(i => i.IsNew() && i.Qty > 0)) {
                 ProductAvailability productAvailability =
                     productAvailabilityRepository.GetByProductAndStorageIds(orderItem.Product.Id, storage.Id);
-                if (!productAvailability.Amount.Equals(0))
+                if (productAvailability != null && !productAvailability.Amount.Equals(0))
                     anyOrderItems.Add(orderItem);
                 else
                     notHaveOrderItems.Add(orderItem);
@@ -155,7 +161,7 @@ public sealed class ClientService : IClientService {
 
             foreach (OrderItem orderItem in notHaveOrderItems) notHaveOrderItemsInfo += $"������� {orderItem.Product.VendorCode} �������� �� �����;";
 
-            client.ShoppingCartJson = JsonConvert.SerializeObject(anyOrderItems);
+            client.ShoppingCartJson = JsonSerializer.Serialize(anyOrderItems);
 
             _retailClientRepositoriesFactory.NewRetailClientRepository(connection).Update(client);
 
@@ -169,7 +175,7 @@ public sealed class ClientService : IClientService {
 
             RetailClient exists = retailClientRepository.GetByPhoneNumber(client.PhoneNumber);
 
-            List<OrderItem> orderItems = JsonConvert.DeserializeObject<List<OrderItem>>(client.ShoppingCartJson);
+            List<OrderItem> orderItems = JsonSerializer.Deserialize<List<OrderItem>>(client.ShoppingCartJson, _jsonSerializerOptions) ?? new List<OrderItem>();
 
             if (exists != null) {
                 orderItems = await _orderService.RemoveUnavailableProducts(orderItems, exists.Id);
@@ -184,7 +190,7 @@ public sealed class ClientService : IClientService {
                         .Where(o => !o.IsMisplacedItem)
                         .Sum(o => o.Product.CurrentLocalPrice * Convert.ToInt32(o.Qty));
 
-                client.ShoppingCartJson = JsonConvert.SerializeObject(orderItems);
+                client.ShoppingCartJson = JsonSerializer.Serialize(orderItems);
 
                 retailClientRepository.Update(client);
             } else {
@@ -199,14 +205,14 @@ public sealed class ClientService : IClientService {
                         .Where(o => !o.IsMisplacedItem)
                         .Sum(o => o.Product.CurrentLocalPrice * Convert.ToInt32(o.Qty));
 
-                client.ShoppingCartJson = JsonConvert.SerializeObject(orderItems);
+                client.ShoppingCartJson = JsonSerializer.Serialize(orderItems);
 
                 retailClientRepository.Update(client);
             }
 
             return retailClientRepository.GetRetailClientById(client.Id);
-        } catch (Exception) {
-            // Ignored
+        } catch (Exception exc) {
+            _logger.Error(exc, "Failed to add retail client");
             return null;
         }
     }

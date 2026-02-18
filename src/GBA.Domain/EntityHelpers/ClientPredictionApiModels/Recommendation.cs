@@ -1,20 +1,20 @@
-﻿using Newtonsoft.Json;
+using System.Text.Json.Serialization;
 
 namespace GBA.Domain.EntityHelpers.ClientPredictionsDtos;
 
 public class Recommendation {
-    [JsonProperty("product_id")]
+    [JsonPropertyName("product_id")]
     public long ProductId { get; set; }
 
-    [JsonProperty("score")]
+    [JsonPropertyName("score")]
     public double Score { get; set; }
 
-    [JsonProperty("rank")]
+    [JsonPropertyName("rank")]
     public double Rank { get; set; }
 
-    [JsonProperty("segment")]
+    [JsonPropertyName("segment")]
     public string Segment { get; set; }
 
-    [JsonProperty("source")]
+    [JsonPropertyName("source")]
     public string Source { get; set; }
 }

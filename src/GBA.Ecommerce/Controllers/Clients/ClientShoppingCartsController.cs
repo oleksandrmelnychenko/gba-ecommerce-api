@@ -1,6 +1,5 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.Net;
 using System.Threading.Tasks;
 using GBA.Common.Exceptions.CustomExceptions;
 using GBA.Common.IdentityConfiguration.Roles;
@@ -13,7 +12,6 @@ using GBA.Services.Services.Clients.Contracts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Localization;
-using NLog;
 
 namespace GBA.Ecommerce.Controllers.Clients;
 
@@ -27,13 +25,8 @@ public sealed class ClientShoppingCartsController(
     [HttpPost]
     [AssignActionRoute(ClientShoppingCartItemsSegments.ADD_NEW)]
     public async Task<IActionResult> AddNewOrderItemAsync([FromBody] OrderItem orderItem, [FromQuery] int withVat) {
-        try {
-            Guid userNetId = GetUserNetId();
-            return Ok(SuccessResponseBody(await clientShoppingCartService.Add(orderItem, userNetId, withVat.Equals(1))));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, localizer[exc.Message]);
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        Guid userNetId = GetUserNetId();
+        return Ok(SuccessResponseBody(await clientShoppingCartService.Add(orderItem, userNetId, withVat.Equals(1))));
     }
 
     [HttpPost]
@@ -51,113 +44,73 @@ public sealed class ClientShoppingCartsController(
         } catch (LocalizedException locExc) {
             return Ok(SuccessResponseBody(
                 new {
-                    orderItem = (OrderItem)null,
+                    orderItem = (OrderItem?)null,
                     qtyRemainderProduct = locExc.UnlocalizeElementMessage,
                     message = string.Format(localizer[locExc.LocalizedMessageKey].Value, locExc.UnlocalizeElementMessage),
                     statusCode = TypeOfStatusCode.Error
                 }));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-
-            return BadRequest(ErrorResponseBody(localizer[exc.Message], HttpStatusCode.BadRequest));
         }
     }
 
     [HttpPost]
     [AssignActionRoute(ClientShoppingCartItemsSegments.VERIFY)]
     public async Task<IActionResult> VerifyOrderItem([FromBody] OrderItem orderItem) {
-        try {
-            (bool success, string message) = await clientShoppingCartService.VerifyProductAvailability(orderItem);
+        (bool success, string message) = await clientShoppingCartService.VerifyProductAvailability(orderItem);
 
-            if (!success) return BadRequest(ErrorResponseBody(message, HttpStatusCode.BadRequest));
+        if (!success) return BadRequest(ErrorResponseBody(message, System.Net.HttpStatusCode.BadRequest));
 
-            return Ok(SuccessResponseBody(orderItem));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-
-            return BadRequest(ErrorResponseBody(localizer[exc.Message], HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(orderItem));
     }
 
     [HttpPost]
     [AssignActionRoute(ClientShoppingCartItemsSegments.ADD_NEW_MANY)]
     public async Task<IActionResult> AddNewOrderItemAsync([FromBody] List<OrderItem> orderItems, [FromQuery] int withVat) {
-        try {
-            Guid userNetId = GetUserNetId();
+        Guid userNetId = GetUserNetId();
 
-            return Ok(SuccessResponseBody(await clientShoppingCartService.Add(orderItems, userNetId, withVat.Equals(1))));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(await clientShoppingCartService.Add(orderItems, userNetId, withVat.Equals(1))));
     }
 
     [HttpPost]
     [AssignActionRoute(ClientShoppingCartItemsSegments.UPDATE)]
     public async Task<IActionResult> UpdateOrderItemAsync([FromBody] OrderItem orderItem, [FromQuery] int withVat) {
-        try {
-            Guid userNetId = GetUserNetId();
+        Guid userNetId = GetUserNetId();
 
-            return Ok(SuccessResponseBody(await clientShoppingCartService.Update(orderItem, userNetId, withVat.Equals(1))));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(await clientShoppingCartService.Update(orderItem, userNetId, withVat.Equals(1))));
     }
 
     [HttpPost]
     [AssignActionRoute(ClientShoppingCartItemsSegments.UPDATE_MANY)]
     public async Task<IActionResult> UpdateOrderItemAsync([FromBody] List<OrderItem> orderItems, [FromQuery] int withVat) {
-        try {
-            Guid userNetId = GetUserNetId();
+        Guid userNetId = GetUserNetId();
 
-            return Ok(SuccessResponseBody(await clientShoppingCartService.Update(orderItems, userNetId, withVat.Equals(1))));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(await clientShoppingCartService.Update(orderItems, userNetId, withVat.Equals(1))));
     }
 
     [HttpGet]
     [AssignActionRoute(ClientShoppingCartItemsSegments.GET_ALL)]
     public async Task<IActionResult> GetAllItemsFromCurrentShoppingCartAsync([FromQuery] int withVat) {
-        try {
-            Guid userNetId = GetUserNetId();
+        Guid userNetId = GetUserNetId();
 
-            return Ok(SuccessResponseBody(await clientShoppingCartService.GetAllItemsFromCurrentShoppingCartByClientNetId(userNetId, withVat.Equals(1))));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(await clientShoppingCartService.GetAllItemsFromCurrentShoppingCartByClientNetId(userNetId, withVat.Equals(1))));
     }
 
     [HttpDelete]
     [AssignActionRoute(ClientShoppingCartItemsSegments.DELETE)]
     public async Task<IActionResult> DeleteItemFromShoppingCartByNetId([FromQuery] Guid netId, [FromQuery] int withVat) {
-        try {
-            Guid userNetId = GetUserNetId();
+        Guid userNetId = GetUserNetId();
 
-            await clientShoppingCartService.DeleteItemFromShoppingCartByNetId(netId, userNetId, withVat.Equals(1));
+        await clientShoppingCartService.DeleteItemFromShoppingCartByNetId(netId, userNetId, withVat.Equals(1));
 
-            return Ok(SuccessResponseBody(netId));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(netId));
     }
 
     [HttpDelete]
     [AssignActionRoute(ClientShoppingCartItemsSegments.DELETE_ALL)]
     public async Task<IActionResult> DeleteAllItemsFromShoppingCartByNetId([FromQuery] int withVat) {
-        try {
-            Guid userNetId = GetUserNetId();
+        Guid userNetId = GetUserNetId();
 
-            await clientShoppingCartService.DeleteAllItemsFromShoppingCartByClientNetId(userNetId, withVat.Equals(1));
+        await clientShoppingCartService.DeleteAllItemsFromShoppingCartByClientNetId(userNetId, withVat.Equals(1));
 
-            return Ok(SuccessResponseBody(null));
-        } catch (Exception exc) {
-            Logger.Log(LogLevel.Error, exc);
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(null));
     }
 }

@@ -1,4 +1,3 @@
-using System;
 using System.Threading;
 using System.Threading.Tasks;
 using GBA.Common.ResponseBuilder.Contracts;
@@ -59,8 +58,6 @@ public sealed class ElasticsearchController(
         [FromQuery] int offset = 0,
         CancellationToken ct = default) {
 
-            Guid netId = GetUserNetId();
-            Console.WriteLine($"UserNetId: {netId}");
         string locale = RouteData.Values["culture"]?.ToString() ?? "uk";
         var result = await searchService.SearchAsync(query, locale, limit, offset, ct);
         return Ok(SuccessResponseBody(result));

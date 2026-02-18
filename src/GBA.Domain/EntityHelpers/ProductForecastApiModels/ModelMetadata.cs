@@ -1,24 +1,24 @@
-﻿using System.Collections.Generic;
-using Newtonsoft.Json;
+using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace GBA.Domain.EntityHelpers.ProductForecastApi;
 
 public class ModelMetadata {
-    [JsonProperty("model_type")]
+    [JsonPropertyName("model_type")]
     public string ModelType { get; set; }
 
-    [JsonProperty("training_customers")]
+    [JsonPropertyName("training_customers")]
     public int TrainingCustomers { get; set; }
 
-    [JsonProperty("forecast_accuracy_estimate")]
+    [JsonPropertyName("forecast_accuracy_estimate")]
     public double ForecastAccuracyEstimate { get; set; }
 
-    [JsonProperty("seasonality_detected")]
+    [JsonPropertyName("seasonality_detected")]
     public bool SeasonalityDetected { get; set; }
 
-    [JsonProperty("model_version")]
+    [JsonPropertyName("model_version")]
     public string ModelVersion { get; set; }
 
-    [JsonProperty("statistical_methods")]
+    [JsonPropertyName("statistical_methods")]
     public List<string> StatisticalMethods { get; set; }
 }

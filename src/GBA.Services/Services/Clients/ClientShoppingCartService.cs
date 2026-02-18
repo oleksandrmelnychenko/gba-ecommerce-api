@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Text.Json;
 using System.Threading.Tasks;
 using GBA.Common.Exceptions.CustomExceptions;
 using GBA.Common.Helpers;
@@ -22,13 +23,18 @@ using GBA.Domain.Repositories.Pricings.Contracts;
 using GBA.Domain.Repositories.Products.Contracts;
 using GBA.Domain.Repositories.Sales.Contracts;
 using GBA.Domain.Repositories.Storages.Contracts;
+using GBA.Services.Infrastructure;
 using GBA.Services.Services.Clients.Contracts;
 using Microsoft.Extensions.Http;
-using Newtonsoft.Json;
+using GBA.Common.Models;
 
 namespace GBA.Services.Services.Clients;
 
 public sealed class ClientShoppingCartService : IClientShoppingCartService {
+    private static readonly JsonSerializerOptions _jsonSerializerOptions = new() {
+        PropertyNameCaseInsensitive = true
+    };
+
     private readonly IAgreementRepositoriesFactory _agreementRepositoriesFactory;
     private readonly IClientRepositoriesFactory _clientRepositoriesFactory;
     private readonly IDbConnectionFactory _connectionFactory;
@@ -673,26 +679,24 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 productReservationRepository.Delete(reservation.NetUid);
             }
 
-            _ = Task.Run(async () => {
-                try {
-                    string saleSyncCrmUrl;
+            BackgroundSyncRunner.Run(async cancellationToken => {
+                string saleSyncCrmUrl;
 
-                    if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                        dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+                if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                    EcommerceCrmConfig data = JsonSerializer.Deserialize<EcommerceCrmConfig>(
+                        File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()),
+                        _jsonSerializerOptions);
 
-                        saleSyncCrmUrl =
-                            $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                    } else {
-                        saleSyncCrmUrl =
-                            $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                    }
-
-                    using HttpClient httpClient = _httpClientFactory.CreateClient();
-                    await httpClient.GetAsync(saleSyncCrmUrl);
-                } catch (Exception) {
-                    // ignored
+                    saleSyncCrmUrl =
+                        $"{data?.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+                } else {
+                    saleSyncCrmUrl =
+                        $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
                 }
-            });
+
+                using HttpClient httpClient = _httpClientFactory.CreateClient();
+                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+            }, "Cart item delete availability sync");
 
             return Task.CompletedTask;
     }
@@ -724,26 +728,24 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                         productReservationRepository.Delete(reservation.NetUid);
                     }
 
-                    _ = Task.Run(async () => {
-                        try {
-                            string saleSyncCrmUrl;
+                    BackgroundSyncRunner.Run(async cancellationToken => {
+                        string saleSyncCrmUrl;
 
-                            if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                                dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+                        if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                            EcommerceCrmConfig data = JsonSerializer.Deserialize<EcommerceCrmConfig>(
+                                File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()),
+                                _jsonSerializerOptions);
 
-                                saleSyncCrmUrl =
-                                    $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                            } else {
-                                saleSyncCrmUrl =
-                                    $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                            }
-
-                            using HttpClient httpClient = _httpClientFactory.CreateClient();
-                            await httpClient.GetAsync(saleSyncCrmUrl);
-                        } catch (Exception) {
-                            // ignored
+                            saleSyncCrmUrl =
+                                $"{data?.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+                        } else {
+                            saleSyncCrmUrl =
+                                $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
                         }
-                    });
+
+                        using HttpClient httpClient = _httpClientFactory.CreateClient();
+                        await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                    }, "Cart clear availability sync");
                 }
             }
 
@@ -871,24 +873,22 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             productAvailabilityRepository.Update(productAvailability);
         }
 
-        _ = Task.Run(async () => {
-            try {
-                string saleSyncCrmUrl;
+        BackgroundSyncRunner.Run(async cancellationToken => {
+            string saleSyncCrmUrl;
 
-                if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                    dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+            if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                EcommerceCrmConfig data = JsonSerializer.Deserialize<EcommerceCrmConfig>(
+                    File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()),
+                    _jsonSerializerOptions);
 
-                    saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                } else {
-                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                }
-
-                using HttpClient httpClient = _httpClientFactory.CreateClient();
-                await httpClient.GetAsync(saleSyncCrmUrl);
-            } catch (Exception) {
-                // ignored
+                saleSyncCrmUrl = $"{data?.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+            } else {
+                saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
             }
-        });
+
+            using HttpClient httpClient = _httpClientFactory.CreateClient();
+            await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+        }, "Cart update availability sync");
 
         return orderItemRepository.GetByIdAndClientAgreementNetIdWithIncludes(existingOrderItem.Id, clientAgreementNetId.Value, currencyId.Value);
         ;
@@ -938,24 +938,22 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             productAvailabilityRepository.Update(productAvailability);
         }
 
-        _ = Task.Run(async () => {
-            try {
-                string saleSyncCrmUrl;
+        BackgroundSyncRunner.Run(async cancellationToken => {
+            string saleSyncCrmUrl;
 
-                if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                    dynamic data = JsonConvert.DeserializeObject<dynamic>(File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()));
+            if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                EcommerceCrmConfig data = JsonSerializer.Deserialize<EcommerceCrmConfig>(
+                    File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()),
+                    _jsonSerializerOptions);
 
-                    saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                } else {
-                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                }
-
-                using HttpClient httpClient = _httpClientFactory.CreateClient();
-                await httpClient.GetAsync(saleSyncCrmUrl);
-            } catch (Exception) {
-                // ignored
+                saleSyncCrmUrl = $"{data?.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+            } else {
+                saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
             }
-        });
+
+            using HttpClient httpClient = _httpClientFactory.CreateClient();
+            await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+        }, "Cart add availability sync");
 
         return orderItemRepository.GetByIdAndClientAgreementNetIdWithIncludes(orderItem.Id, clientAgreementNetId.Value, currencyId.Value);
     }

@@ -1,20 +1,20 @@
-﻿using Newtonsoft.Json;
+using System.Text.Json.Serialization;
 
 namespace GBA.Domain.EntityHelpers.ProductForecastApi;
 
 public class Summary {
-    [JsonProperty("total_predicted_quantity")]
+    [JsonPropertyName("total_predicted_quantity")]
     public double TotalPredictedQuantity { get; set; }
 
-    [JsonProperty("total_predicted_revenue")]
+    [JsonPropertyName("total_predicted_revenue")]
     public double TotalPredictedRevenue { get; set; }
 
-    [JsonProperty("total_predicted_orders")]
+    [JsonPropertyName("total_predicted_orders")]
     public double TotalPredictedOrders { get; set; }
 
-    [JsonProperty("active_customers")]
+    [JsonPropertyName("active_customers")]
     public int ActiveCustomers { get; set; }
 
-    [JsonProperty("at_risk_customers")]
+    [JsonPropertyName("at_risk_customers")]
     public int AtRiskCustomers { get; set; }
 }

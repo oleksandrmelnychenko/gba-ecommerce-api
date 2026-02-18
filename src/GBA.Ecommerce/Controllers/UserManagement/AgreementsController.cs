@@ -18,20 +18,12 @@ public sealed class AgreementsController(
     [HttpGet]
     [AssignActionRoute(AgreementsSegments.GET_ALL_TOTAL_BY_CLIENT)]
     public async Task<IActionResult> GetAllAgreementsByClientNetIdAsync([FromQuery] Guid netId) {
-        try {
-            return Ok(SuccessResponseBody(await agreementService.GetAllAgreementsByClientNetId(netId)));
-        } catch (Exception exc) {
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(await agreementService.GetAllAgreementsByClientNetId(netId)));
     }
 
     [HttpGet]
     [AssignActionRoute(AgreementsSegments.GET_TOTAL_AGREEMENT_DEBT_AFTER_DAYS)]
     public async Task<IActionResult> GetDebtAfterDaysByClientAgreementNetIdAsync([FromQuery] Guid netId, [FromQuery] int days) {
-        try {
-            return Ok(SuccessResponseBody(await agreementService.GetDebtAfterDaysByClientAgreementNetId(netId, days)));
-        } catch (Exception exc) {
-            return BadRequest(ErrorResponseBody(exc.Message, HttpStatusCode.BadRequest));
-        }
+        return Ok(SuccessResponseBody(await agreementService.GetDebtAfterDaysByClientAgreementNetId(netId, days)));
     }
 }

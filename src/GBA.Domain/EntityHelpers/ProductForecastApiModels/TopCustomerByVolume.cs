@@ -1,17 +1,17 @@
-﻿using Newtonsoft.Json;
+using System.Text.Json.Serialization;
 
 namespace GBA.Domain.EntityHelpers.ProductForecastApi;
 
 public class TopCustomerByVolume {
-    [JsonProperty("customer_id")]
+    [JsonPropertyName("customer_id")]
     public long CustomerId { get; set; }
 
-    [JsonProperty("customer_name")]
+    [JsonPropertyName("customer_name")]
     public string CustomerName { get; set; }
 
-    [JsonProperty("predicted_quantity")]
+    [JsonPropertyName("predicted_quantity")]
     public double PredictedQuantity { get; set; }
 
-    [JsonProperty("contribution_pct")]
+    [JsonPropertyName("contribution_pct")]
     public double ContributionPct { get; set; }
 }

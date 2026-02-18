@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using GBA.Domain.Entities.Products;
 
@@ -15,7 +15,6 @@ public sealed class FromSearchProduct {
     /// Search result row number for ordering. Used internally, not serialized to API response.
     /// </summary>
     [System.Text.Json.Serialization.JsonIgnore]
-    [Newtonsoft.Json.JsonIgnore]
     public long SearchRowNumber { get; set; }
 
     public Guid NetUid { get; set; }

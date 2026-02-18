@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using GBA.Common;
 using GBA.Common.Helpers;
@@ -14,11 +15,14 @@ using GBA.Domain.Repositories.Ecommerce.Contracts;
 using GBA.Domain.Repositories.PaymentOrders.Contracts;
 using GBA.Domain.Repositories.Pricings.Contracts;
 using GBA.Services.Services.Ecommerce.Contracts;
-using Newtonsoft.Json;
 
 namespace GBA.Services.Services.Ecommerce;
 
 public sealed class SeoPageService : ISeoPageService {
+    private static readonly JsonSerializerOptions _jsonSerializerOptions = new() {
+        PropertyNameCaseInsensitive = true
+    };
+
     private readonly IEcommerceAdminPanelRepositoriesFactory _adminPanelRepositoriesFactory;
     private readonly IDbConnectionFactory _connectionFactory;
     private readonly IPaymentOrderRepositoriesFactory _paymentOrderRepositoriesFactory;
@@ -46,21 +50,21 @@ public sealed class SeoPageService : ISeoPageService {
             if (!pageRepository.GetAll(SharedStrings.UK).Any()) {
                 using StreamReader reader = new(NoltFolderManager.GetPagesLocalePath());
                 string json = reader.ReadToEnd();
-                List<SeoPage> seoPage = JsonConvert.DeserializeObject<List<SeoPage>>(json);
+                List<SeoPage> seoPage = JsonSerializer.Deserialize<List<SeoPage>>(json, _jsonSerializerOptions) ?? new List<SeoPage>();
                 pageRepository.AddList(seoPage);
             }
 
             if (contactInfoRepository.GetLast() == null) {
                 using StreamReader reader = new(NoltFolderManager.GetContactInfoPath());
                 string json = reader.ReadToEnd();
-                List<EcommerceContactInfo> contactInfos = JsonConvert.DeserializeObject<List<EcommerceContactInfo>>(json);
+                List<EcommerceContactInfo> contactInfos = JsonSerializer.Deserialize<List<EcommerceContactInfo>>(json, _jsonSerializerOptions) ?? new List<EcommerceContactInfo>();
                 foreach (EcommerceContactInfo contactInfo in contactInfos) contactInfoRepository.Add(contactInfo);
             }
 
             if (!pageRepository.GetAll(SharedStrings.UK).Any()) {
                 using StreamReader reader = new(NoltFolderManager.GetPagesLocalePath());
                 string json = reader.ReadToEnd();
-                List<SeoPage> ecommercePages = JsonConvert.DeserializeObject<List<SeoPage>>(json);
+                List<SeoPage> ecommercePages = JsonSerializer.Deserialize<List<SeoPage>>(json, _jsonSerializerOptions) ?? new List<SeoPage>();
                 pageRepository.AddList(ecommercePages);
             }
 
