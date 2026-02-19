@@ -1046,7 +1046,7 @@ public sealed class ProductService : IProductService {
 
             value = StringOptimizations.NormalizeForSearch(value);
 
-            var optimizedSearch = new ProductSearchServiceOptimized();
+            ProductSearchServiceOptimized optimizedSearch = new ProductSearchServiceOptimized();
             List<SearchResult> ids = optimizedSearch.GetSearchResults(connection, value, limit, offset);
 
             if (ids.Count == 0) return Task.FromResult(new List<FromSearchProduct>());
@@ -1264,9 +1264,9 @@ public sealed class ProductService : IProductService {
 
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
 
-        var culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName;
+        string culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName;
         IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-        var optimizedRepo = new OptimizedProductRepository(connection);
+        OptimizedProductRepository optimizedRepo = new OptimizedProductRepository(connection);
 
         List<FromSearchProduct> products;
 
@@ -1295,7 +1295,7 @@ public sealed class ProductService : IProductService {
             if (clientAgreement == null) {
                 clientAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
                 if (clientAgreement != null) {
-                    var agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
+                    IAgreementRepository agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
                     clientAgreement.Agreement.IsSelected = true;
                     agreementRepository.Update(clientAgreement.Agreement);
                 }
@@ -1316,11 +1316,11 @@ public sealed class ProductService : IProductService {
 
         // Fetch original numbers for all products
         if (products.Count > 0) {
-            var fetchedIds = products.Select(p => p.Id).ToList();
-            var originalNumbers = GetOriginalNumbersForProducts(connection, fetchedIds);
+            List<long> fetchedIds = products.Select(p => p.Id).ToList();
+            Dictionary<long, List<string>> originalNumbers = GetOriginalNumbersForProducts(connection, fetchedIds);
 
-            foreach (var product in products) {
-                if (originalNumbers.TryGetValue(product.Id, out var numbers)) {
+            foreach (FromSearchProduct product in products) {
+                if (originalNumbers.TryGetValue(product.Id, out List<string>? numbers)) {
                     product.OriginalNumbers = numbers;
                 }
             }
@@ -1339,7 +1339,7 @@ public sealed class ProductService : IProductService {
 
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
         IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-        var optimizedRepo = new OptimizedProductRepository(connection);
+        OptimizedProductRepository optimizedRepo = new OptimizedProductRepository(connection);
 
         if (currentClientNetId.Equals(Guid.Empty)) {
             // Retail user - match V1 behavior: use storage.ForVatProducts for agreement selection
@@ -1365,7 +1365,7 @@ public sealed class ProductService : IProductService {
             if (clientAgreement == null) {
                 clientAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
                 if (clientAgreement != null) {
-                    var agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
+                    IAgreementRepository agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
                     clientAgreement.Agreement.IsSelected = true;
                     agreementRepository.Update(clientAgreement.Agreement);
                 }
@@ -1455,11 +1455,11 @@ public sealed class ProductService : IProductService {
 
         // Fetch original numbers for all products
         if (products.Count > 0) {
-            var fetchedIds = products.Select(p => p.Id).ToList();
-            var originalNumbers = GetOriginalNumbersForProducts(connection, fetchedIds);
+            List<long> fetchedIds = products.Select(p => p.Id).ToList();
+            Dictionary<long, List<string>> originalNumbers = GetOriginalNumbersForProducts(connection, fetchedIds);
 
-            foreach (var product in products) {
-                if (originalNumbers.TryGetValue(product.Id, out var numbers)) {
+            foreach (FromSearchProduct product in products) {
+                if (originalNumbers.TryGetValue(product.Id, out List<string>? numbers)) {
                     product.OriginalNumbers = numbers;
                 }
             }
@@ -1479,16 +1479,16 @@ INNER JOIN OriginalNumber onum ON onum.ID = pon.OriginalNumberID
 WHERE pon.Deleted = 0 AND pon.ProductID IN @ProductIds
 ORDER BY pon.ProductID, pon.IsMainOriginalNumber DESC";
 
-        var result = new Dictionary<long, List<string>>();
+        Dictionary<long, List<string>> result = new Dictionary<long, List<string>>();
 
         // Batch to avoid 2100 parameter limit
         const int batchSize = 2000;
         for (int i = 0; i < productIds.Count; i += batchSize) {
-            var batch = productIds.Skip(i).Take(batchSize).ToList();
-            var rows = connection.Query<(long ProductId, string Number)>(sql, new { ProductIds = batch });
+            List<long> batch = productIds.Skip(i).Take(batchSize).ToList();
+            IEnumerable<(long ProductId, string Number)> rows = connection.Query<(long ProductId, string Number)>(sql, new { ProductIds = batch });
 
-            foreach (var (productId, number) in rows) {
-                if (!result.TryGetValue(productId, out var list)) {
+            foreach ((long productId, string number) in rows) {
+                if (!result.TryGetValue(productId, out List<string>? list)) {
                     list = new List<string>();
                     result[productId] = list;
                 }

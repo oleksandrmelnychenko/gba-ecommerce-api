@@ -51,7 +51,7 @@ public abstract class WebApiControllerBase : Controller {
     /// </summary>
     /// <returns>The user's NetId as Guid, or Guid.Empty if not authenticated.</returns>
     protected Guid GetUserNetId() {
-        if (HttpContext.Items.TryGetValue(UserNetIdMiddleware.NetIdKey, out var value) && value is Guid netId) {
+        if (HttpContext.Items.TryGetValue(UserNetIdMiddleware.NetIdKey, out object value) && value is Guid netId) {
             return netId;
         }
         return Guid.Empty;

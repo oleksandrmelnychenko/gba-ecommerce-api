@@ -4,6 +4,8 @@ using GBA.Common.ResponseBuilder.Contracts;
 using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
 using GBA.Search.Elasticsearch;
+using GBA.Search.Models;
+using GBA.Search.Sync;
 using Microsoft.AspNetCore.Mvc;
 
 namespace GBA.Ecommerce.Controllers;
@@ -39,14 +41,14 @@ public sealed class ElasticsearchController(
     [HttpPost]
     [Route("sync/full")]
     public async Task<IActionResult> FullSyncAsync(CancellationToken ct) {
-        var result = await syncService.FullRebuildAsync(ct);
+        SyncResult result = await syncService.FullRebuildAsync(ct);
         return Ok(SuccessResponseBody(result));
     }
 
     [HttpPost]
     [Route("sync/incremental")]
     public async Task<IActionResult> IncrementalSyncAsync(CancellationToken ct) {
-        var result = await syncService.IncrementalSyncAsync(ct);
+        SyncResult result = await syncService.IncrementalSyncAsync(ct);
         return Ok(SuccessResponseBody(result));
     }
 
@@ -59,7 +61,7 @@ public sealed class ElasticsearchController(
         CancellationToken ct = default) {
 
         string locale = RouteData.Values["culture"]?.ToString() ?? "uk";
-        var result = await searchService.SearchAsync(query, locale, limit, offset, ct);
+        ProductSearchResult result = await searchService.SearchAsync(query, locale, limit, offset, ct);
         return Ok(SuccessResponseBody(result));
     }
 
@@ -72,7 +74,7 @@ public sealed class ElasticsearchController(
         CancellationToken ct = default) {
 
         string locale = RouteData.Values["culture"]?.ToString() ?? "uk";
-        var result = await searchService.SearchDebugAsync(query, locale, limit, offset, ct);
+        ElasticsearchDebugResult result = await searchService.SearchDebugAsync(query, locale, limit, offset, ct);
         return Ok(SuccessResponseBody(result));
     }
 }

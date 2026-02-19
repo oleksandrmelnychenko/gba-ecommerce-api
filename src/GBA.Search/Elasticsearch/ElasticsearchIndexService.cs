@@ -39,7 +39,7 @@ public sealed class ElasticsearchIndexService : IElasticsearchIndexService {
 
     public async Task<bool> IsHealthyAsync(CancellationToken ct = default) {
         try {
-            var response = await _http.GetAsync("_cluster/health", ct);
+            HttpResponseMessage response = await _http.GetAsync("_cluster/health", ct);
             return response.IsSuccessStatusCode;
         } catch {
             return false;
@@ -47,12 +47,12 @@ public sealed class ElasticsearchIndexService : IElasticsearchIndexService {
     }
 
     public async Task<bool> IndexExistsAsync(CancellationToken ct = default) {
-        var response = await _http.GetAsync(_settings.IndexName, ct);
+        HttpResponseMessage response = await _http.GetAsync(_settings.IndexName, ct);
         return response.IsSuccessStatusCode;
     }
 
     public async Task<bool> DeleteIndexAsync(CancellationToken ct = default) {
-        var response = await _http.DeleteAsync(_settings.IndexName, ct);
+        HttpResponseMessage response = await _http.DeleteAsync(_settings.IndexName, ct);
         if (response.IsSuccessStatusCode) {
             _log.LogInformation("Deleted index {Index}", _settings.IndexName);
             return true;
@@ -61,18 +61,18 @@ public sealed class ElasticsearchIndexService : IElasticsearchIndexService {
     }
 
     public async Task<bool> CreateIndexAsync(CancellationToken ct = default) {
-        var indexSettings = BuildIndexSettings();
-        var json = JsonSerializer.Serialize(indexSettings, JsonOptions);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
+        object indexSettings = BuildIndexSettings();
+        string json = JsonSerializer.Serialize(indexSettings, JsonOptions);
+        StringContent content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        var response = await _http.PutAsync(_settings.IndexName, content, ct);
+        HttpResponseMessage response = await _http.PutAsync(_settings.IndexName, content, ct);
 
         if (response.IsSuccessStatusCode) {
             _log.LogInformation("Created index {Index}", _settings.IndexName);
             return true;
         }
 
-        var error = await response.Content.ReadAsStringAsync(ct);
+        string error = await response.Content.ReadAsStringAsync(ct);
         _log.LogError("Failed to create index {Index}: {Error}", _settings.IndexName, error);
         return false;
     }

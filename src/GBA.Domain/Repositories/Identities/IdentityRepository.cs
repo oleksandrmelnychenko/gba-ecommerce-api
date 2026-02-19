@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
@@ -38,7 +38,12 @@ public sealed class IdentityRepository : IIdentityRepository {
 
         if (!IsUserEnabled(user)) return new Tuple<ClaimsIdentity, string, UserIdentity>(null, _localizer[SharedResourceNames.USER_DISABLED], null);
 
-        if (!await _userManager.CheckPasswordAsync(user, password)) throw new Exception("The password you entered is incorrect");
+        if (!await _userManager.CheckPasswordAsync(user, password)) {
+            await _userManager.AccessFailedAsync(user);
+            return new Tuple<ClaimsIdentity, string, UserIdentity>(null, _localizer[SharedResourceNames.INVALID_PASSWORD], null);
+        }
+
+        await _userManager.ResetAccessFailedCountAsync(user);
 
         IList<string> roles = await _userManager.GetRolesAsync(user);
         IList<Claim> claims = await _userManager.GetClaimsAsync(user);
@@ -56,8 +61,12 @@ public sealed class IdentityRepository : IIdentityRepository {
 
         if (!IsUserEnabled(user)) return new Tuple<ClaimsIdentity, string, UserIdentity>(null, _localizer[SharedResourceNames.USER_DISABLED], null);
 
-        if (!await _userManager.CheckPasswordAsync(user, password))
+        if (!await _userManager.CheckPasswordAsync(user, password)) {
+            await _userManager.AccessFailedAsync(user);
             return new Tuple<ClaimsIdentity, string, UserIdentity>(null, _localizer[SharedResourceNames.INVALID_PASSWORD], null);
+        }
+
+        await _userManager.ResetAccessFailedCountAsync(user);
 
         IList<string> roles = await _userManager.GetRolesAsync(user);
         IList<Claim> claims = await _userManager.GetClaimsAsync(user);
@@ -77,8 +86,12 @@ public sealed class IdentityRepository : IIdentityRepository {
 
         if (!IsUserEnabled(user)) return new Tuple<ClaimsIdentity, string, UserIdentity>(null, _localizer[SharedResourceNames.USER_DISABLED], null);
 
-        if (!await _userManager.CheckPasswordAsync(user, password))
+        if (!await _userManager.CheckPasswordAsync(user, password)) {
+            await _userManager.AccessFailedAsync(user);
             return new Tuple<ClaimsIdentity, string, UserIdentity>(null, _localizer[SharedResourceNames.INVALID_PASSWORD], null);
+        }
+
+        await _userManager.ResetAccessFailedCountAsync(user);
 
         IList<string> roles = await _userManager.GetRolesAsync(user);
         IList<Claim> claims = await _userManager.GetClaimsAsync(user);
@@ -135,6 +148,7 @@ public sealed class IdentityRepository : IIdentityRepository {
             }
         }
 
+        user.LockoutEnabled = true;
         IdentityResult result = await _userManager.CreateAsync(user, password);
 
         if (result.Succeeded) return new IdentityResponse { Succeeded = true };

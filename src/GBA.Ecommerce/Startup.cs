@@ -178,7 +178,7 @@ public class Startup {
         services.AddHealthChecks()
             .AddCheck("db-main", () => {
                 try {
-                    using var conn = new SqlConnection(Configuration.GetConnectionString(
+                    using SqlConnection conn = new SqlConnection(Configuration.GetConnectionString(
 #if DEBUG
                         ConnectionStringNames.Local
 #else
@@ -243,12 +243,16 @@ public class Startup {
         });
 
         services.AddIdentity<UserIdentity, IdentityRole>(options => {
-                options.Password.RequireUppercase = false;
-                options.Password.RequiredLength = 7;
-                options.Password.RequireDigit = false;
-                options.Password.RequiredUniqueChars = 0;
-                options.Password.RequireLowercase = false;
-                options.Password.RequireNonAlphanumeric = false;
+                options.Password.RequireUppercase = true;
+                options.Password.RequiredLength = 10;
+                options.Password.RequireDigit = true;
+                options.Password.RequiredUniqueChars = 4;
+                options.Password.RequireLowercase = true;
+                options.Password.RequireNonAlphanumeric = true;
+                options.Lockout.AllowedForNewUsers = true;
+                options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+                options.Lockout.MaxFailedAccessAttempts = 5;
+                options.User.RequireUniqueEmail = true;
             }).AddEntityFrameworkStores<ConcordIdentityContext>()
             .AddDefaultTokenProviders();
 
@@ -363,6 +367,21 @@ public class Startup {
         if (!_environment.IsDevelopment()) {
             app.UseHsts();
         }
+
+        app.Use(async (context, next) => {
+            context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            context.Response.Headers["X-Frame-Options"] = "DENY";
+            context.Response.Headers["Referrer-Policy"] = "no-referrer";
+            context.Response.Headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()";
+
+            // Strict API-only CSP to avoid impacting static pages.
+            if (context.Request.Path.StartsWithSegments("/api")) {
+                context.Response.Headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+            }
+
+            context.Response.Headers.Remove("Server");
+            await next();
+        });
 
         app.UseHttpsRedirection();
         app.UseRouting();

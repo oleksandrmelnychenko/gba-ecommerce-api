@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
@@ -23,10 +23,10 @@ public sealed class AgreementRepository : IAgreementRepository {
                 "INSERT INTO Agreement (Name, IsManagementAccounting, IsAccounting, WithVATAccounting, IsControlAmountDebt, IsControlNumberDaysDebt, IsActive, AmountDebt, " +
                 "NumberDaysDebt, CurrencyId, OrganizationId, PricingId, ProviderPricingId, DeferredPayment, TermsOfPayment, PrePaymentPercentages, IsPrePaymentFull, IsPrePayment, " +
                 "IsDefault, Number, Updated, TaxAccountingSchemeID, [FromDate], [ToDate], [PromotionalPricingID], [IsSelected], [ForReSale], [WithAgreementLine]) " +
+                "OUTPUT INSERTED.ID " +
                 "VALUES (@Name, @IsManagementAccounting, @IsAccounting, @WithVATAccounting, @IsControlAmountDebt, @IsControlNumberDaysDebt, @IsActive, @AmountDebt, " +
                 "@NumberDaysDebt, @CurrencyId, @OrganizationId, @PricingId, @ProviderPricingId, @DeferredPayment, @TermsOfPayment, @PrePaymentPercentages, @IsPrePaymentFull, " +
-                "@IsPrePayment, @IsDefault, @Number, getutcdate(), @TaxAccountingSchemeId, @FromDate, @ToDate, @PromotionalPricingId, @IsSelected, @ForReSale, @WithAgreementLine); " +
-                "SELECT SCOPE_IDENTITY() ",
+                "@IsPrePayment, @IsDefault, @Number, getutcdate(), @TaxAccountingSchemeId, @FromDate, @ToDate, @PromotionalPricingId, @IsSelected, @ForReSale, @WithAgreementLine)",
                 agreement
             )
             .Single();

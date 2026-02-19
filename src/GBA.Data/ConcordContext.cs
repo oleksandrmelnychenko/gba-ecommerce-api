@@ -727,7 +727,9 @@ public class ConcordContext : DbContext {
     public virtual DbSet<CustomersOwnTtn> CustomersOwnTtns { get; set; }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
-        optionsBuilder.UseSqlServer(ConfigurationManager.LocalDatabaseConnectionString);
+        if (!optionsBuilder.IsConfigured) {
+            optionsBuilder.UseSqlServer(ConfigurationManager.LocalDatabaseConnectionString);
+        }
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) {

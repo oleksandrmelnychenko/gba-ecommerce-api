@@ -15,12 +15,12 @@ public sealed class AuthOptions {
     public static string KEY => SecuritySettings.Instance.JwtKey;
 
 #if DEBUG
-    public const int LIFETIME = 32400;
+    public const int LIFETIME = 15;
 #else
-    public const int LIFETIME = 32400;
+    public const int LIFETIME = 15;
 #endif
 
-    public const int REFRESH_LIFETIME = 43200;
+    public const int REFRESH_LIFETIME = 10080;
 
     public static SymmetricSecurityKey GetSymmetricSecurityKey() {
         return new SymmetricSecurityKey(Encoding.ASCII.GetBytes(KEY));

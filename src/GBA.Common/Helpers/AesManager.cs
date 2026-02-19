@@ -56,7 +56,7 @@ public static class AesManager {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static string EncryptBytes(ReadOnlySpan<byte> clearBytes) {
-        var (key, iv) = GetKeyAndIv();
+        (byte[] key, byte[] iv) = GetKeyAndIv();
 
         using Aes encryptor = Aes.Create();
         encryptor.Key = key;
@@ -100,7 +100,7 @@ public static class AesManager {
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static string DecryptBytes(byte[] cipherBytes) {
-        var (key, iv) = GetKeyAndIv();
+        (byte[] key, byte[] iv) = GetKeyAndIv();
 
         using Aes encryptor = Aes.Create();
         encryptor.Key = key;

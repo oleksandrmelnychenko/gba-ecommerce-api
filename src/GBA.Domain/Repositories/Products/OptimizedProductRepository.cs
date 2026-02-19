@@ -38,13 +38,13 @@ public sealed class OptimizedProductRepository {
         if (productIds == null || productIds.Count == 0)
             return new Dictionary<long, ProductPriceInfo>();
 
-        var tempTableSql = new System.Text.StringBuilder();
+        System.Text.StringBuilder tempTableSql = new System.Text.StringBuilder();
         tempTableSql.AppendLine("CREATE TABLE #ProductIds (Id BIGINT PRIMARY KEY);");
 
         const int batchSize = 1000;
         for (int i = 0; i < productIds.Count; i += batchSize) {
-            var batch = productIds.Skip(i).Take(batchSize).ToList();
-            var values = string.Join(",", batch.Select(id => $"({id})"));
+            List<long> batch = productIds.Skip(i).Take(batchSize).ToList();
+            string values = string.Join(",", batch.Select(id => $"({id})"));
             tempTableSql.AppendLine($"INSERT INTO #ProductIds (Id) VALUES {values};");
         }
 
@@ -63,9 +63,9 @@ WHERE p.Deleted = 0;
 
 DROP TABLE #ProductIds;";
 
-        var fullSql = tempTableSql.ToString() + sql;
+        string fullSql = tempTableSql.ToString() + sql;
 
-        var results = _connection.Query<dynamic>(fullSql, new {
+        List<dynamic> results = _connection.Query<dynamic>(fullSql, new {
             ClientAgreementNetId = clientAgreementNetId,
             Culture = culture,
             WithVat = withVat
@@ -93,13 +93,13 @@ DROP TABLE #ProductIds;";
         if (productIds == null || productIds.Count == 0)
             return new Dictionary<long, ProductPriceInfo>();
 
-        var tempTableSql = new System.Text.StringBuilder();
+        System.Text.StringBuilder tempTableSql = new System.Text.StringBuilder();
         tempTableSql.AppendLine("CREATE TABLE #ProductIds (Id BIGINT PRIMARY KEY);");
 
         const int batchSize = 1000;
         for (int i = 0; i < productIds.Count; i += batchSize) {
-            var batch = productIds.Skip(i).Take(batchSize).ToList();
-            var values = string.Join(",", batch.Select(id => $"({id})"));
+            List<long> batch = productIds.Skip(i).Take(batchSize).ToList();
+            string values = string.Join(",", batch.Select(id => $"({id})"));
             tempTableSql.AppendLine($"INSERT INTO #ProductIds (Id) VALUES {values};");
         }
 
@@ -115,9 +115,9 @@ WHERE p.Deleted = 0;
 
 DROP TABLE #ProductIds;";
 
-        var fullSql = tempTableSql.ToString() + sql;
+        string fullSql = tempTableSql.ToString() + sql;
 
-        var results = _connection.Query<dynamic>(fullSql, new {
+        List<dynamic> results = _connection.Query<dynamic>(fullSql, new {
             ClientAgreementNetId = retailAgreementNetId,
             CurrencyId = currencyId,
             Culture = culture,
@@ -151,13 +151,13 @@ DROP TABLE #ProductIds;";
             return new List<FromSearchProduct>();
 
         // Build temp table creation and inserts
-        var tempTableSql = new System.Text.StringBuilder();
+        System.Text.StringBuilder tempTableSql = new System.Text.StringBuilder();
         tempTableSql.AppendLine("CREATE TABLE #ProductIds (Id BIGINT PRIMARY KEY, RowNum INT);");
 
         const int batchSize = 1000;
         for (int i = 0; i < productIds.Count; i += batchSize) {
-            var batch = productIds.Skip(i).Take(batchSize).ToList();
-            var values = string.Join(",", batch.Select((id, idx) => $"({id},{i + idx + 1})"));
+            List<long> batch = productIds.Skip(i).Take(batchSize).ToList();
+            string values = string.Join(",", batch.Select((id, idx) => $"({id},{i + idx + 1})"));
             tempTableSql.AppendLine($"INSERT INTO #ProductIds (Id, RowNum) VALUES {values};");
         }
 
@@ -468,7 +468,7 @@ ORDER BY pd.SearchRowNumber;
 DROP TABLE #ProductIds;";
 
         // Get agreement data for parameters
-        var agreementData = _connection.QueryFirstOrDefault<dynamic>(@"
+        dynamic? agreementData = _connection.QueryFirstOrDefault<dynamic>(@"
 SELECT
     a.OrganizationID,
     a.CurrencyID
@@ -477,17 +477,17 @@ INNER JOIN Agreement a ON a.ID = ca.AgreementID
 WHERE ca.NetUID = @ClientAgreementNetId",
             new { ClientAgreementNetId = clientAgreementNetId });
 
-        var fullSql = tempTableSql.ToString() + sql;
+        string fullSql = tempTableSql.ToString() + sql;
 
-        var results = _connection.Query<dynamic>(fullSql, new {
+        List<dynamic> results = _connection.Query<dynamic>(fullSql, new {
             ClientAgreementNetId = clientAgreementNetId,
             Culture = culture,
             OrganizationId = organizationId ?? agreementData?.OrganizationID,
             WithVat = withVat
         }).ToList();
 
-        var products = results.Select(r => {
-            var product = new FromSearchProduct {
+        List<FromSearchProduct> products = results.Select(r => {
+            FromSearchProduct product = new FromSearchProduct {
                 Id = (long)r.ID,
                 NetUid = (Guid)r.NetUid,
                 VendorCode = r.VendorCode,
@@ -555,13 +555,13 @@ WHERE ca.NetUID = @ClientAgreementNetId",
         if (productIds == null || productIds.Count == 0)
             return new List<FromSearchProduct>();
 
-        var tempTableSql = new System.Text.StringBuilder();
+        System.Text.StringBuilder tempTableSql = new System.Text.StringBuilder();
         tempTableSql.AppendLine("CREATE TABLE #ProductIds (Id BIGINT PRIMARY KEY, RowNum INT);");
 
         const int batchSize = 1000;
         for (int i = 0; i < productIds.Count; i += batchSize) {
-            var batch = productIds.Skip(i).Take(batchSize).ToList();
-            var values = string.Join(",", batch.Select((id, idx) => $"({id},{i + idx + 1})"));
+            List<long> batch = productIds.Skip(i).Take(batchSize).ToList();
+            string values = string.Join(",", batch.Select((id, idx) => $"({id},{i + idx + 1})"));
             tempTableSql.AppendLine($"INSERT INTO #ProductIds (Id, RowNum) VALUES {values};");
         }
 
@@ -835,17 +835,17 @@ ORDER BY pd.SearchRowNumber;
 
 DROP TABLE #ProductIds;";
 
-        var fullSql = tempTableSql.ToString() + sql;
+        string fullSql = tempTableSql.ToString() + sql;
 
-        var results = _connection.Query<dynamic>(fullSql, new {
+        List<dynamic> results = _connection.Query<dynamic>(fullSql, new {
             ClientAgreementNetId = clientAgreementNetId,
             Culture = culture,
             OrganizationId = organizationId,
             CurrencyId = currencyId
         }).ToList();
 
-        var products = results.Select(r => {
-            var product = new FromSearchProduct {
+        List<FromSearchProduct> products = results.Select(r => {
+            FromSearchProduct product = new FromSearchProduct {
                 Id = (long)r.ID,
                 NetUid = (Guid)r.NetUid,
                 VendorCode = r.VendorCode,

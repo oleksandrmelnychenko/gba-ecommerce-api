@@ -1,4 +1,4 @@
-﻿using GBA.Common.Helpers;
+using GBA.Common.Helpers;
 using GBA.Data.MapConfigurations;
 using GBA.Data.TableMaps.ConcordDataAnalytic.HistoryOrderItems;
 using GBA.Domain.Entities.Sales;
@@ -16,7 +16,9 @@ public class ConcordDataAnalyticContext : DbContext {
     public virtual DbSet<ProductAvailabilityDataHistory> ProductAvailabilityDataHistory { get; set; }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
-        optionsBuilder.UseSqlServer(ConfigurationManager.LocalDataAnalyticConnectionString);
+        if (!optionsBuilder.IsConfigured) {
+            optionsBuilder.UseSqlServer(ConfigurationManager.LocalDataAnalyticConnectionString);
+        }
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) {

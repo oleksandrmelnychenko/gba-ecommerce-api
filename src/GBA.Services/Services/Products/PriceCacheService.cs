@@ -38,12 +38,12 @@ public sealed class PriceCacheService : IPriceCacheService {
         if (productIds == null || productIds.Count == 0)
             return new Dictionary<long, ProductPriceInfo>();
 
-        var result = new Dictionary<long, ProductPriceInfo>();
-        var missingIds = new List<long>();
+        Dictionary<long, ProductPriceInfo> result = new Dictionary<long, ProductPriceInfo>();
+        List<long> missingIds = new List<long>();
 
         // Check cache for each product
-        foreach (var productId in productIds) {
-            var cacheKey = BuildCacheKey(clientNetId, productId, withVat, locale);
+        foreach (long productId in productIds) {
+            string cacheKey = BuildCacheKey(clientNetId, productId, withVat, locale);
             if (_cache.TryGetValue(cacheKey, out ProductPriceInfo? cachedPrice) && cachedPrice != null) {
                 result[productId] = cachedPrice;
             } else {
@@ -53,13 +53,13 @@ public sealed class PriceCacheService : IPriceCacheService {
 
         // Fetch missing prices from DB
         if (missingIds.Count > 0) {
-            var fetchedPrices = fetchFromDb(missingIds);
+            Dictionary<long, ProductPriceInfo> fetchedPrices = fetchFromDb(missingIds);
 
-            foreach (var kvp in fetchedPrices) {
+            foreach (KeyValuePair<long, ProductPriceInfo> kvp in fetchedPrices) {
                 result[kvp.Key] = kvp.Value;
 
                 // Cache the fetched price
-                var cacheKey = BuildCacheKey(clientNetId, kvp.Key, withVat, locale);
+                string cacheKey = BuildCacheKey(clientNetId, kvp.Key, withVat, locale);
                 _cache.Set(cacheKey, kvp.Value, CacheDuration);
             }
 

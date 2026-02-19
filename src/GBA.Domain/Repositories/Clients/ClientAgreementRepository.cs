@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
@@ -32,8 +32,8 @@ public sealed class ClientAgreementRepository : IClientAgreementRepository {
     public long Add(ClientAgreement clientAgreement) {
         return _connection.Query<long>(
             "INSERT INTO ClientAgreement (ProductReservationTerm, ClientId, AgreementId, Updated) " +
-            "VALUES (@ProductReservationTerm, @ClientId, @AgreementId, getutcdate()); " +
-            "SELECT SCOPE_IDENTITY()",
+            "OUTPUT INSERTED.ID " +
+            "VALUES (@ProductReservationTerm, @ClientId, @AgreementId, getutcdate())",
             clientAgreement
         ).Single();
     }

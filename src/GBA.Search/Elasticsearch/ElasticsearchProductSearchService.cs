@@ -49,8 +49,8 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         if (string.IsNullOrWhiteSpace(query))
             return ProductSearchResult.Empty;
 
-        var esQuery = BuildSearchQuery(query, locale, limit, offset);
-        var result = await ExecuteSearchAsync(esQuery, ct);
+        object esQuery = BuildSearchQuery(query, locale, limit, offset);
+        SearchResult result = await ExecuteSearchAsync(esQuery, ct);
 
         return new ProductSearchResult {
             ProductIds = result.Ids,
@@ -66,8 +66,8 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         if (string.IsNullOrWhiteSpace(query))
             return ProductSearchResultWithDocs.Empty;
 
-        var esQuery = BuildSearchQuery(query, locale, limit, offset);
-        var result = await ExecuteSearchWithDocsAsync(esQuery, ct);
+        object esQuery = BuildSearchQuery(query, locale, limit, offset);
+        SearchResultWithDocs result = await ExecuteSearchWithDocsAsync(esQuery, ct);
 
         return new ProductSearchResultWithDocs {
             Documents = result.Documents,
@@ -79,7 +79,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
 
     public async Task<bool> IsHealthyAsync(CancellationToken ct = default) {
         try {
-            var response = await _http.GetAsync("_cluster/health", ct);
+            HttpResponseMessage response = await _http.GetAsync("_cluster/health", ct);
             return response.IsSuccessStatusCode;
         } catch {
             return false;
@@ -89,7 +89,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
     public async Task<ElasticsearchDebugResult> SearchDebugAsync(
         string query, string locale = "uk", int limit = 20, int offset = 0, CancellationToken ct = default) {
 
-        var debug = new ElasticsearchDebugResult {
+        ElasticsearchDebugResult debug = new ElasticsearchDebugResult {
             OriginalQuery = query,
             Locale = locale
         };
@@ -98,16 +98,16 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             return debug;
         }
 
-        var normalized = NumberNormalizer.NormalizeQuery(query);
-        var terms = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string normalized = NumberNormalizer.NormalizeQuery(query);
+        string[] terms = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
         debug.NormalizedQuery = normalized;
         debug.Terms = terms.ToList();
 
-        var esQuery = BuildSearchQuery(query, locale, limit, offset);
+        object esQuery = BuildSearchQuery(query, locale, limit, offset);
         debug.ElasticsearchQuery = JsonSerializer.Serialize(esQuery, new JsonSerializerOptions { WriteIndented = true });
 
-        var result = await ExecuteSearchAsync(esQuery, ct);
+        SearchResult result = await ExecuteSearchAsync(esQuery, ct);
 
         debug.TotalFound = result.Total;
         debug.SearchTimeMs = result.TookMs;
@@ -117,13 +117,13 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
     }
 
     private object BuildSearchQuery(string query, string locale, int limit, int offset) {
-        var normalized = NumberNormalizer.NormalizeQuery(query);
-        var normalizedLower = normalized.ToLowerInvariant();
-        var terms = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+        string normalized = NumberNormalizer.NormalizeQuery(query);
+        string normalizedLower = normalized.ToLowerInvariant();
+        string[] terms = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Select(t => EscapeElasticsearchQuery(t.ToLowerInvariant()))
             .ToArray();
         // Keep original terms for size field (preserves "=" and other special chars)
-        var originalTerms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+        string[] originalTerms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Select(t => t.ToLowerInvariant())
             .ToArray();
 
@@ -131,9 +131,9 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             return BuildMatchAllQuery(limit, offset);
 
         // Build must clauses - each term must match somewhere (AND logic between terms)
-        var mustClauses = new List<object>();
+        List<object> mustClauses = new List<object>();
         for (int i = 0; i < terms.Length; i++) {
-            var originalTerm = i < originalTerms.Length ? originalTerms[i] : terms[i];
+            string originalTerm = i < originalTerms.Length ? originalTerms[i] : terms[i];
             mustClauses.Add(BuildTermMatchQuery(terms[i], locale, originalTerm));
         }
 
@@ -147,7 +147,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         // 6. (OriginalNumber OR SearchName OR SearchNameUA) DESC
         // 7. (SearchDescription OR SearchDescriptionUA) DESC
         // 8. SearchSize_Match DESC
-        var functions = new List<object>();
+        List<object> functions = new List<object>();
 
         // Analyze terms to determine scoring strategy
         bool hasCyrillicTerms = terms.Any(t => t.Any(c =>
@@ -187,18 +187,18 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             weight = 40000
         });
 
-        var (primarySearchName, secondarySearchName) = locale == "uk"
+        (string primarySearchName, string secondarySearchName) = locale == "uk"
             ? ("searchNameUA", "searchName")
             : ("searchName", "searchNameUA");
-        var (primaryDesc, secondaryDesc) = locale == "uk"
+        (string primaryDesc, string secondaryDesc) = locale == "uk"
             ? ("searchDescriptionUA", "searchDescription")
             : ("searchDescription", "searchDescriptionUA");
 
         // Per-term scoring with different weights based on term type
         for (int i = 0; i < terms.Length; i++) {
-            var term = terms[i];
-            var originalTerm = i < originalTerms.Length ? originalTerms[i] : term;
-            var termLower = term.ToLowerInvariant();
+            string term = terms[i];
+            string originalTerm = i < originalTerms.Length ? originalTerms[i] : term;
+            string termLower = term.ToLowerInvariant();
             bool isCyrillic = term.Any(c =>
                 (c >= 'а' && c <= 'я') || (c >= 'А' && c <= 'Я') ||
                 c == 'і' || c == 'ї' || c == 'є' || c == 'ґ' ||
@@ -346,13 +346,13 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             int sizeWeight = isDimensionTerm ? 8000 : 100;
 
             // Search original size field using originalTerm (preserves "=", "x" etc.)
-            var originalTermLowerForSize = originalTerm.ToLowerInvariant();
+            string originalTermLowerForSize = originalTerm.ToLowerInvariant();
             functions.Add(new {
                 filter = new { wildcard = new Dictionary<string, object> { ["size"] = new { value = $"*{originalTermLowerForSize}*", case_insensitive = true } } },
                 weight = sizeWeight
             });
             // Also search sizeClean with cleaned term
-            var termCleanForSize = Regex.Replace(termLower, @"[^a-z0-9а-яіїєґ]", "");
+            string termCleanForSize = Regex.Replace(termLower, @"[^a-z0-9а-яіїєґ]", "");
             if (!string.IsNullOrEmpty(termCleanForSize)) {
                 functions.Add(new {
                     filter = new { wildcard = new Dictionary<string, object> { ["sizeClean"] = new { value = $"*{termCleanForSize}*" } } },
@@ -390,11 +390,11 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
     private static object BuildTermMatchQuery(string term, string locale, string originalTerm = null) {
         // Each term can match in ANY of these fields (OR logic within term)
         // Using wildcard for PATINDEX-like behavior (substring anywhere in field)
-        var shouldClauses = new List<object>();
+        List<object> shouldClauses = new List<object>();
 
         // Lowercase for case-insensitive matching
-        var termLower = term.ToLowerInvariant();
-        var originalTermLower = (originalTerm ?? term).ToLowerInvariant();
+        string termLower = term.ToLowerInvariant();
+        string originalTermLower = (originalTerm ?? term).ToLowerInvariant();
 
         // For short terms (< 4 chars), use wildcard for exact substring match
         // For longer terms, ngram is fine
@@ -418,7 +418,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         }
 
         // Names - locale-aware, use wildcard for precise PATINDEX-like matching
-        var (primaryName, secondaryName) = locale == "uk"
+        (string primaryName, string secondaryName) = locale == "uk"
             ? ("searchNameUA", "searchName")
             : ("searchName", "searchNameUA");
 
@@ -431,7 +431,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         }
 
         // Descriptions
-        var (primaryDesc, secondaryDesc) = locale == "uk"
+        (string primaryDesc, string secondaryDesc) = locale == "uk"
             ? ("searchDescriptionUA", "searchDescription")
             : ("searchDescription", "searchDescriptionUA");
 
@@ -448,7 +448,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         // Use originalTermLower to preserve "=" and other special chars in size search
         shouldClauses.Add(new { wildcard = new Dictionary<string, object> { ["size"] = new { value = $"*{originalTermLower}*", case_insensitive = true } } });
         // Also search sizeClean for normalized matches (without special chars)
-        var termClean = Regex.Replace(termLower, @"[^a-z0-9а-яіїєґ]", "");
+        string termClean = Regex.Replace(termLower, @"[^a-z0-9а-яіїєґ]", "");
         if (!string.IsNullOrEmpty(termClean)) {
             shouldClauses.Add(new { wildcard = new Dictionary<string, object> { ["sizeClean"] = new { value = $"*{termClean}*" } } });
         }
@@ -480,29 +480,29 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
     }
 
     private async Task<SearchResult> ExecuteSearchAsync(object query, CancellationToken ct) {
-        var json = JsonSerializer.Serialize(query, JsonOptions);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
+        string json = JsonSerializer.Serialize(query, JsonOptions);
+        StringContent content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        var response = await _http.PostAsync($"{_settings.IndexName}/_search", content, ct);
+        HttpResponseMessage response = await _http.PostAsync($"{_settings.IndexName}/_search", content, ct);
 
         if (!response.IsSuccessStatusCode) {
-            var error = await response.Content.ReadAsStringAsync(ct);
+            string error = await response.Content.ReadAsStringAsync(ct);
             _log.LogError("Elasticsearch search failed: {Error}", error);
             return new SearchResult([], 0, 0);
         }
 
-        var responseJson = await response.Content.ReadAsStringAsync(ct);
-        using var doc = JsonDocument.Parse(responseJson);
-        var root = doc.RootElement;
+        string responseJson = await response.Content.ReadAsStringAsync(ct);
+        using JsonDocument doc = JsonDocument.Parse(responseJson);
+        JsonElement root = doc.RootElement;
 
-        var took = root.GetProperty("took").GetInt32();
-        var total = root.GetProperty("hits").GetProperty("total").GetProperty("value").GetInt32();
-        var hits = root.GetProperty("hits").GetProperty("hits");
+        int took = root.GetProperty("took").GetInt32();
+        int total = root.GetProperty("hits").GetProperty("total").GetProperty("value").GetInt32();
+        JsonElement hits = root.GetProperty("hits").GetProperty("hits");
 
-        var ids = new List<long>();
-        foreach (var hit in hits.EnumerateArray()) {
-            if (hit.TryGetProperty("_source", out var source) &&
-                source.TryGetProperty("id", out var idProp)) {
+        List<long> ids = new List<long>();
+        foreach (JsonElement hit in hits.EnumerateArray()) {
+            if (hit.TryGetProperty("_source", out JsonElement source) &&
+                source.TryGetProperty("id", out JsonElement idProp)) {
                 ids.Add(idProp.GetInt64());
             }
         }
@@ -511,29 +511,29 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
     }
 
     private async Task<SearchResultWithDocs> ExecuteSearchWithDocsAsync(object query, CancellationToken ct) {
-        var json = JsonSerializer.Serialize(query, JsonOptions);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
+        string json = JsonSerializer.Serialize(query, JsonOptions);
+        StringContent content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        var response = await _http.PostAsync($"{_settings.IndexName}/_search", content, ct);
+        HttpResponseMessage response = await _http.PostAsync($"{_settings.IndexName}/_search", content, ct);
 
         if (!response.IsSuccessStatusCode) {
-            var error = await response.Content.ReadAsStringAsync(ct);
+            string error = await response.Content.ReadAsStringAsync(ct);
             _log.LogError("Elasticsearch search failed: {Error}", error);
             return new SearchResultWithDocs([], 0, 0);
         }
 
-        var responseJson = await response.Content.ReadAsStringAsync(ct);
-        using var doc = JsonDocument.Parse(responseJson);
-        var root = doc.RootElement;
+        string responseJson = await response.Content.ReadAsStringAsync(ct);
+        using JsonDocument doc = JsonDocument.Parse(responseJson);
+        JsonElement root = doc.RootElement;
 
-        var took = root.GetProperty("took").GetInt32();
-        var total = root.GetProperty("hits").GetProperty("total").GetProperty("value").GetInt32();
-        var hits = root.GetProperty("hits").GetProperty("hits");
+        int took = root.GetProperty("took").GetInt32();
+        int total = root.GetProperty("hits").GetProperty("total").GetProperty("value").GetInt32();
+        JsonElement hits = root.GetProperty("hits").GetProperty("hits");
 
-        var documents = new List<ProductSearchDocument>();
-        foreach (var hit in hits.EnumerateArray()) {
-            if (hit.TryGetProperty("_source", out var source)) {
-                var document = ParseDocument(source);
+        List<ProductSearchDocument> documents = new List<ProductSearchDocument>();
+        foreach (JsonElement hit in hits.EnumerateArray()) {
+            if (hit.TryGetProperty("_source", out JsonElement source)) {
+                ProductSearchDocument document = ParseDocument(source);
                 documents.Add(document);
             }
         }
@@ -543,63 +543,63 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
 
     private static ProductSearchDocument ParseDocument(JsonElement source) {
         return new ProductSearchDocument {
-            Id = source.TryGetProperty("id", out var id) ? id.GetInt64().ToString() : "",
-            NetUid = source.TryGetProperty("netUid", out var netUid) ? netUid.GetString() ?? "" : "",
-            VendorCode = source.TryGetProperty("vendorCode", out var vc) ? vc.GetString() ?? "" : "",
-            VendorCodeClean = source.TryGetProperty("vendorCodeClean", out var vcc) ? vcc.GetString() ?? "" : "",
-            Name = source.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "",
-            NameUA = source.TryGetProperty("nameUA", out var nameUA) ? nameUA.GetString() ?? "" : "",
-            Description = source.TryGetProperty("description", out var desc) ? desc.GetString() ?? "" : "",
-            DescriptionUA = source.TryGetProperty("descriptionUA", out var descUA) ? descUA.GetString() ?? "" : "",
-            SearchName = source.TryGetProperty("searchName", out var sn) ? sn.GetString() ?? "" : "",
-            SearchNameUA = source.TryGetProperty("searchNameUA", out var snUA) ? snUA.GetString() ?? "" : "",
-            SearchDescription = source.TryGetProperty("searchDescription", out var sd) ? sd.GetString() ?? "" : "",
-            SearchDescriptionUA = source.TryGetProperty("searchDescriptionUA", out var sdUA) ? sdUA.GetString() ?? "" : "",
-            MainOriginalNumber = source.TryGetProperty("mainOriginalNumber", out var mon) ? mon.GetString() ?? "" : "",
-            MainOriginalNumberClean = source.TryGetProperty("mainOriginalNumberClean", out var monc) ? monc.GetString() ?? "" : "",
+            Id = source.TryGetProperty("id", out JsonElement id) ? id.GetInt64().ToString() : "",
+            NetUid = source.TryGetProperty("netUid", out JsonElement netUid) ? netUid.GetString() ?? "" : "",
+            VendorCode = source.TryGetProperty("vendorCode", out JsonElement vc) ? vc.GetString() ?? "" : "",
+            VendorCodeClean = source.TryGetProperty("vendorCodeClean", out JsonElement vcc) ? vcc.GetString() ?? "" : "",
+            Name = source.TryGetProperty("name", out JsonElement name) ? name.GetString() ?? "" : "",
+            NameUA = source.TryGetProperty("nameUA", out JsonElement nameUA) ? nameUA.GetString() ?? "" : "",
+            Description = source.TryGetProperty("description", out JsonElement desc) ? desc.GetString() ?? "" : "",
+            DescriptionUA = source.TryGetProperty("descriptionUA", out JsonElement descUA) ? descUA.GetString() ?? "" : "",
+            SearchName = source.TryGetProperty("searchName", out JsonElement sn) ? sn.GetString() ?? "" : "",
+            SearchNameUA = source.TryGetProperty("searchNameUA", out JsonElement snUA) ? snUA.GetString() ?? "" : "",
+            SearchDescription = source.TryGetProperty("searchDescription", out JsonElement sd) ? sd.GetString() ?? "" : "",
+            SearchDescriptionUA = source.TryGetProperty("searchDescriptionUA", out JsonElement sdUA) ? sdUA.GetString() ?? "" : "",
+            MainOriginalNumber = source.TryGetProperty("mainOriginalNumber", out JsonElement mon) ? mon.GetString() ?? "" : "",
+            MainOriginalNumberClean = source.TryGetProperty("mainOriginalNumberClean", out JsonElement monc) ? monc.GetString() ?? "" : "",
             OriginalNumbers = ParseStringArray(source, "originalNumbers"),
             OriginalNumbersClean = ParseStringArray(source, "originalNumbersClean"),
-            Size = source.TryGetProperty("size", out var size) ? size.GetString() ?? "" : "",
-            SizeClean = source.TryGetProperty("sizeClean", out var sc) ? sc.GetString() ?? "" : "",
-            PackingStandard = source.TryGetProperty("packingStandard", out var ps) ? ps.GetString() ?? "" : "",
-            OrderStandard = source.TryGetProperty("orderStandard", out var os) ? os.GetString() ?? "" : "",
-            Ucgfea = source.TryGetProperty("ucgfea", out var ucg) ? ucg.GetString() ?? "" : "",
-            Volume = source.TryGetProperty("volume", out var vol) ? vol.GetString() ?? "" : "",
-            Top = source.TryGetProperty("top", out var top) ? top.GetString() ?? "" : "",
-            Weight = source.TryGetProperty("weight", out var weight) ? weight.GetDouble() : 0,
-            HasAnalogue = source.TryGetProperty("hasAnalogue", out var ha) && ha.GetBoolean(),
-            HasComponent = source.TryGetProperty("hasComponent", out var hc) && hc.GetBoolean(),
-            HasImage = source.TryGetProperty("hasImage", out var hi) && hi.GetBoolean(),
-            Image = source.TryGetProperty("image", out var img) ? img.GetString() ?? "" : "",
-            MeasureUnitId = source.TryGetProperty("measureUnitId", out var mui) ? mui.GetInt64() : 0,
-            Available = source.TryGetProperty("available", out var avail) && avail.GetBoolean(),
-            AvailableQtyUk = source.TryGetProperty("availableQtyUk", out var aqUk) ? aqUk.GetDouble() : 0,
-            AvailableQtyUkVat = source.TryGetProperty("availableQtyUkVat", out var aqUkVat) ? aqUkVat.GetDouble() : 0,
-            AvailableQtyPl = source.TryGetProperty("availableQtyPl", out var aqPl) ? aqPl.GetDouble() : 0,
-            AvailableQtyPlVat = source.TryGetProperty("availableQtyPlVat", out var aqPlVat) ? aqPlVat.GetDouble() : 0,
-            AvailableQty = source.TryGetProperty("availableQty", out var aq) ? aq.GetDouble() : 0,
-            IsForWeb = source.TryGetProperty("isForWeb", out var ifw) && ifw.GetBoolean(),
-            IsForSale = source.TryGetProperty("isForSale", out var ifs) && ifs.GetBoolean(),
-            IsForZeroSale = source.TryGetProperty("isForZeroSale", out var ifzs) && ifzs.GetBoolean(),
-            SlugId = source.TryGetProperty("slugId", out var slugId) ? slugId.GetInt64() : 0,
-            SlugNetUid = source.TryGetProperty("slugNetUid", out var slugNetUid) ? slugNetUid.GetString() ?? "" : "",
-            SlugUrl = source.TryGetProperty("slugUrl", out var slugUrl) ? slugUrl.GetString() ?? "" : "",
-            SlugLocale = source.TryGetProperty("slugLocale", out var slugLocale) ? slugLocale.GetString() ?? "" : "",
-            RetailPrice = source.TryGetProperty("retailPrice", out var rp) ? rp.GetDecimal() : 0,
-            RetailPriceVat = source.TryGetProperty("retailPriceVat", out var rpv) ? rpv.GetDecimal() : 0,
-            RetailCurrencyCode = source.TryGetProperty("retailCurrencyCode", out var rcc) ? rcc.GetString() ?? "UAH" : "UAH",
-            UpdatedAt = source.TryGetProperty("updatedAt", out var updatedAt) && updatedAt.TryGetDateTime(out var dt)
+            Size = source.TryGetProperty("size", out JsonElement size) ? size.GetString() ?? "" : "",
+            SizeClean = source.TryGetProperty("sizeClean", out JsonElement sc) ? sc.GetString() ?? "" : "",
+            PackingStandard = source.TryGetProperty("packingStandard", out JsonElement ps) ? ps.GetString() ?? "" : "",
+            OrderStandard = source.TryGetProperty("orderStandard", out JsonElement os) ? os.GetString() ?? "" : "",
+            Ucgfea = source.TryGetProperty("ucgfea", out JsonElement ucg) ? ucg.GetString() ?? "" : "",
+            Volume = source.TryGetProperty("volume", out JsonElement vol) ? vol.GetString() ?? "" : "",
+            Top = source.TryGetProperty("top", out JsonElement top) ? top.GetString() ?? "" : "",
+            Weight = source.TryGetProperty("weight", out JsonElement weight) ? weight.GetDouble() : 0,
+            HasAnalogue = source.TryGetProperty("hasAnalogue", out JsonElement ha) && ha.GetBoolean(),
+            HasComponent = source.TryGetProperty("hasComponent", out JsonElement hc) && hc.GetBoolean(),
+            HasImage = source.TryGetProperty("hasImage", out JsonElement hi) && hi.GetBoolean(),
+            Image = source.TryGetProperty("image", out JsonElement img) ? img.GetString() ?? "" : "",
+            MeasureUnitId = source.TryGetProperty("measureUnitId", out JsonElement mui) ? mui.GetInt64() : 0,
+            Available = source.TryGetProperty("available", out JsonElement avail) && avail.GetBoolean(),
+            AvailableQtyUk = source.TryGetProperty("availableQtyUk", out JsonElement aqUk) ? aqUk.GetDouble() : 0,
+            AvailableQtyUkVat = source.TryGetProperty("availableQtyUkVat", out JsonElement aqUkVat) ? aqUkVat.GetDouble() : 0,
+            AvailableQtyPl = source.TryGetProperty("availableQtyPl", out JsonElement aqPl) ? aqPl.GetDouble() : 0,
+            AvailableQtyPlVat = source.TryGetProperty("availableQtyPlVat", out JsonElement aqPlVat) ? aqPlVat.GetDouble() : 0,
+            AvailableQty = source.TryGetProperty("availableQty", out JsonElement aq) ? aq.GetDouble() : 0,
+            IsForWeb = source.TryGetProperty("isForWeb", out JsonElement ifw) && ifw.GetBoolean(),
+            IsForSale = source.TryGetProperty("isForSale", out JsonElement ifs) && ifs.GetBoolean(),
+            IsForZeroSale = source.TryGetProperty("isForZeroSale", out JsonElement ifzs) && ifzs.GetBoolean(),
+            SlugId = source.TryGetProperty("slugId", out JsonElement slugId) ? slugId.GetInt64() : 0,
+            SlugNetUid = source.TryGetProperty("slugNetUid", out JsonElement slugNetUid) ? slugNetUid.GetString() ?? "" : "",
+            SlugUrl = source.TryGetProperty("slugUrl", out JsonElement slugUrl) ? slugUrl.GetString() ?? "" : "",
+            SlugLocale = source.TryGetProperty("slugLocale", out JsonElement slugLocale) ? slugLocale.GetString() ?? "" : "",
+            RetailPrice = source.TryGetProperty("retailPrice", out JsonElement rp) ? rp.GetDecimal() : 0,
+            RetailPriceVat = source.TryGetProperty("retailPriceVat", out JsonElement rpv) ? rpv.GetDecimal() : 0,
+            RetailCurrencyCode = source.TryGetProperty("retailCurrencyCode", out JsonElement rcc) ? rcc.GetString() ?? "UAH" : "UAH",
+            UpdatedAt = source.TryGetProperty("updatedAt", out JsonElement updatedAt) && updatedAt.TryGetDateTime(out DateTime dt)
                 ? new DateTimeOffset(dt).ToUnixTimeSeconds()
                 : 0
         };
     }
 
     private static List<string> ParseStringArray(JsonElement source, string propertyName) {
-        if (!source.TryGetProperty(propertyName, out var prop) || prop.ValueKind != JsonValueKind.Array)
+        if (!source.TryGetProperty(propertyName, out JsonElement prop) || prop.ValueKind != JsonValueKind.Array)
             return [];
 
-        var result = new List<string>();
-        foreach (var item in prop.EnumerateArray()) {
+        List<string> result = new List<string>();
+        foreach (JsonElement item in prop.EnumerateArray()) {
             if (item.ValueKind == JsonValueKind.String) {
                 result.Add(item.GetString() ?? "");
             }

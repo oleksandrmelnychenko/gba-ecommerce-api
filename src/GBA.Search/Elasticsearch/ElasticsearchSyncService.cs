@@ -50,7 +50,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
     }
 
     public async Task<SyncResult> FullRebuildAsync(CancellationToken ct = default) {
-        var sw = Stopwatch.StartNew();
+        Stopwatch sw = Stopwatch.StartNew();
 
         try {
             _log.LogInformation("Starting Elasticsearch full rebuild");
@@ -65,23 +65,23 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             }
 
             // Fetch all products
-            var products = await _repository.GetAllProductsAsync();
+            List<ProductSyncData> products = await _repository.GetAllProductsAsync();
             _log.LogInformation("Fetched {Count} products from SQL", products.Count);
 
-            var productIds = products.Select(p => p.Id).ToList();
-            var originalNumbers = await _repository.GetOriginalNumbersForProductsAsync(productIds);
+            List<long> productIds = products.Select(p => p.Id).ToList();
+            Dictionary<long, List<string>> originalNumbers = await _repository.GetOriginalNumbersForProductsAsync(productIds);
             _log.LogInformation("Fetched original numbers for {Count} products", originalNumbers.Count);
 
             // Index in batches
             int totalIndexed = 0;
-            var batch = new List<ProductDocument>(_syncSettings.BatchSize);
+            List<ProductDocument> batch = new List<ProductDocument>(_syncSettings.BatchSize);
 
-            foreach (var product in products) {
-                var doc = CreateDocument(product, originalNumbers.GetValueOrDefault(product.Id));
+            foreach (ProductSyncData product in products) {
+                ProductDocument doc = CreateDocument(product, originalNumbers.GetValueOrDefault(product.Id));
                 batch.Add(doc);
 
                 if (batch.Count >= _syncSettings.BatchSize) {
-                    var indexed = await BulkIndexAsync(batch, ct);
+                    int indexed = await BulkIndexAsync(batch, ct);
                     totalIndexed += indexed;
                     batch.Clear();
                     _log.LogDebug("Indexed batch, total: {Total}", totalIndexed);
@@ -89,7 +89,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             }
 
             if (batch.Count > 0) {
-                var indexed = await BulkIndexAsync(batch, ct);
+                int indexed = await BulkIndexAsync(batch, ct);
                 totalIndexed += indexed;
             }
 
@@ -119,7 +119,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
     }
 
     public async Task<SyncResult> IncrementalSyncAsync(CancellationToken ct = default) {
-        var sw = Stopwatch.StartNew();
+        Stopwatch sw = Stopwatch.StartNew();
 
         DateTime syncSince;
         lock (_syncLock) {
@@ -132,8 +132,8 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         }
 
         try {
-            var changedProducts = await _repository.GetChangedProductsAsync(syncSince);
-            var deletedIds = await _repository.GetDeletedProductIdsAsync(syncSince);
+            List<ProductSyncData> changedProducts = await _repository.GetChangedProductsAsync(syncSince);
+            List<long> deletedIds = await _repository.GetDeletedProductIdsAsync(syncSince);
 
             if (changedProducts.Count == 0 && deletedIds.Count == 0) {
                 lock (_syncLock) {
@@ -147,10 +147,10 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
                 };
             }
 
-            var productIds = changedProducts.Select(p => p.Id).ToList();
-            var originalNumbers = await _repository.GetOriginalNumbersForProductsAsync(productIds);
+            List<long> productIds = changedProducts.Select(p => p.Id).ToList();
+            Dictionary<long, List<string>> originalNumbers = await _repository.GetOriginalNumbersForProductsAsync(productIds);
 
-            var documents = changedProducts
+            List<ProductDocument> documents = changedProducts
                 .Select(p => CreateDocument(p, originalNumbers.GetValueOrDefault(p.Id)))
                 .ToList();
 
@@ -184,36 +184,36 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
     private async Task<int> BulkIndexAsync(List<ProductDocument> documents, CancellationToken ct) {
         if (documents.Count == 0) return 0;
 
-        var sb = new StringBuilder();
-        foreach (var doc in documents) {
+        StringBuilder sb = new StringBuilder();
+        foreach (ProductDocument doc in documents) {
             sb.AppendLine(JsonSerializer.Serialize(new { index = new { _index = _settings.IndexName, _id = doc.Id } }, JsonOptions));
             sb.AppendLine(JsonSerializer.Serialize(doc, JsonOptions));
         }
 
-        var content = new StringContent(sb.ToString(), Encoding.UTF8, "application/x-ndjson");
-        var response = await _http.PostAsync("_bulk", content, ct);
+        StringContent content = new StringContent(sb.ToString(), Encoding.UTF8, "application/x-ndjson");
+        HttpResponseMessage response = await _http.PostAsync("_bulk", content, ct);
 
         if (!response.IsSuccessStatusCode) {
-            var error = await response.Content.ReadAsStringAsync(ct);
+            string error = await response.Content.ReadAsStringAsync(ct);
             _log.LogError("Bulk index failed with HTTP error: {Error}", error);
             return 0;
         }
 
-        var responseBody = await response.Content.ReadAsStringAsync(ct);
-        using var jsonDoc = JsonDocument.Parse(responseBody);
-        var root = jsonDoc.RootElement;
+        string responseBody = await response.Content.ReadAsStringAsync(ct);
+        using JsonDocument jsonDoc = JsonDocument.Parse(responseBody);
+        JsonElement root = jsonDoc.RootElement;
 
-        if (root.TryGetProperty("errors", out var errorsElement) && errorsElement.GetBoolean()) {
+        if (root.TryGetProperty("errors", out JsonElement errorsElement) && errorsElement.GetBoolean()) {
             int successCount = 0;
             int errorCount = 0;
-            if (root.TryGetProperty("items", out var items)) {
-                foreach (var item in items.EnumerateArray()) {
-                    if (item.TryGetProperty("index", out var indexResult)) {
-                        if (indexResult.TryGetProperty("status", out var status) && status.GetInt32() < 300) {
+            if (root.TryGetProperty("items", out JsonElement items)) {
+                foreach (JsonElement item in items.EnumerateArray()) {
+                    if (item.TryGetProperty("index", out JsonElement indexResult)) {
+                        if (indexResult.TryGetProperty("status", out JsonElement status) && status.GetInt32() < 300) {
                             successCount++;
                         } else {
                             errorCount++;
-                            if (errorCount <= 3 && indexResult.TryGetProperty("error", out var errorInfo)) {
+                            if (errorCount <= 3 && indexResult.TryGetProperty("error", out JsonElement errorInfo)) {
                                 _log.LogWarning("Bulk index document error: {Error}", errorInfo.ToString());
                             }
                         }
@@ -232,16 +232,16 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
     private async Task<int> BulkDeleteAsync(List<long> ids, CancellationToken ct) {
         if (ids.Count == 0) return 0;
 
-        var sb = new StringBuilder();
-        foreach (var id in ids) {
+        StringBuilder sb = new StringBuilder();
+        foreach (long id in ids) {
             sb.AppendLine(JsonSerializer.Serialize(new { delete = new { _index = _settings.IndexName, _id = id } }, JsonOptions));
         }
 
-        var content = new StringContent(sb.ToString(), Encoding.UTF8, "application/x-ndjson");
-        var response = await _http.PostAsync("_bulk", content, ct);
+        StringContent content = new StringContent(sb.ToString(), Encoding.UTF8, "application/x-ndjson");
+        HttpResponseMessage response = await _http.PostAsync("_bulk", content, ct);
 
         if (!response.IsSuccessStatusCode) {
-            var error = await response.Content.ReadAsStringAsync(ct);
+            string error = await response.Content.ReadAsStringAsync(ct);
             _log.LogError("Bulk delete failed: {Error}", error);
             return 0;
         }

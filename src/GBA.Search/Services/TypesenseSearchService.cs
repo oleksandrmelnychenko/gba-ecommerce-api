@@ -74,12 +74,12 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
         offset = Math.Max(0, offset);
 
         try {
-            var ctx = PrepareContext(query, locale);
+            SearchContext ctx = PrepareContext(query, locale);
             if (ctx.IsEmpty) return ProductSearchResult.Empty;
 
-            var responses = await ExecuteAllPassesAsync(ctx, ct);
-            var ranked = RankAndMerge(ctx.SearchQuery.AsSpan(), responses);
-            var paged = Paginate(ranked, offset, limit);
+            List<TypesenseResponse?> responses = await ExecuteAllPassesAsync(ctx, ct);
+            List<long> ranked = RankAndMerge(ctx.SearchQuery.AsSpan(), responses);
+            List<long> paged = Paginate(ranked, offset, limit);
 
             return new ProductSearchResult {
                 ProductIds = paged,
@@ -103,14 +103,14 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
         offset = Math.Max(0, offset);
 
         try {
-            var ctx = PrepareContext(query, locale);
+            SearchContext ctx = PrepareContext(query, locale);
             if (ctx.IsEmpty) return ProductSearchResultWithDocs.Empty;
 
-            var responses = await ExecuteAllPassesFullAsync(ctx, ct);
-            var (ranked, docs) = RankAndMergeWithDocs(ctx.SearchQuery.AsSpan(), responses, locale);
-            var pagedIds = Paginate(ranked, offset, limit);
+            List<TypesenseResponse?> responses = await ExecuteAllPassesFullAsync(ctx, ct);
+            (List<long> ranked, Dictionary<long, ProductSearchDocument> docs) = RankAndMergeWithDocs(ctx.SearchQuery.AsSpan(), responses, locale);
+            List<long> pagedIds = Paginate(ranked, offset, limit);
 
-            var pagedDocs = pagedIds
+            List<ProductSearchDocument> pagedDocs = pagedIds
                 .Where(id => docs.ContainsKey(id))
                 .Select(id => docs[id])
                 .ToList();
@@ -137,14 +137,14 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
         limit = Math.Max(1, limit);
         offset = Math.Max(0, offset);
 
-        var ctx = PrepareContext(query, locale);
+        SearchContext ctx = PrepareContext(query, locale);
         if (ctx.IsEmpty)
             return new ProductSearchDebugResult { OriginalQuery = query, NormalizedQuery = ctx.NormalizedQuery };
 
-        var collection = await ResolveCollectionAsync(ct);
-        var exactResult = await ExecutePassAsync(ctx, PassType.Exact, collection, ct);
+        string collection = await ResolveCollectionAsync(ct);
+        ExecResult exactResult = await ExecutePassAsync(ctx, PassType.Exact, collection, ct);
 
-        var debug = new ProductSearchDebugResult {
+        ProductSearchDebugResult debug = new ProductSearchDebugResult {
             OriginalQuery = query,
             NormalizedQuery = ctx.NormalizedQuery,
             SynonymAppliedQuery = ctx.SearchQuery,
@@ -161,7 +161,7 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
         List<TypesenseResponse?> all = [exactResult.Response];
 
         if (ctx.HasStemPass) {
-            var stem = await ExecutePassAsync(ctx, PassType.Stem, collection, ct);
+            ExecResult stem = await ExecutePassAsync(ctx, PassType.Stem, collection, ct);
             debug.StemPass = BuildPassDebug(stem);
             all.Add(stem.Response);
         }
@@ -172,7 +172,7 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
         if (ctx.Type != QType.PartNumber)
             all.Add((await ExecutePassAsync(ctx, PassType.Keywords, collection, ct)).Response);
 
-        var ranked = RankAndMerge(ctx.SearchQuery.AsSpan(), all);
+        List<long> ranked = RankAndMerge(ctx.SearchQuery.AsSpan(), all);
         debug.MergedIds = ranked;
         debug.PagedIds = Paginate(ranked, offset, limit);
         debug.TotalFoundMerged = ranked.Count;
@@ -183,7 +183,7 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
 
     public async Task<bool> IsHealthyAsync(CancellationToken ct = default) {
         try {
-            using var resp = await _http.GetAsync("health", ct);
+            using HttpResponseMessage resp = await _http.GetAsync("health", ct);
             return resp.IsSuccessStatusCode;
         } catch {
             return false;
@@ -191,17 +191,17 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
     }
 
     private SearchContext PrepareContext(string query, string locale) {
-        var (text, sizes) = ExtractSizeSpecs(query.AsSpan());
-        var normalized = NumberNormalizer.NormalizeQuery(text);
+        (string text, List<string> sizes) = ExtractSizeSpecs(query.AsSpan());
+        string normalized = NumberNormalizer.NormalizeQuery(text);
 
         if (string.IsNullOrWhiteSpace(normalized) && sizes.Count == 0)
             return SearchContext.Empty;
 
-        var qType = string.IsNullOrWhiteSpace(normalized) ? QType.Mixed : DetectType(normalized.AsSpan());
-        var isUkr = qType == QType.ProductName && HasUkrainianChars(normalized.AsSpan());
-        var searchQuery = isUkr ? normalized : _synonyms.Apply(normalized);
-        var stemmed = _tuning.EnableStemming ? _textProcessor.StemText(searchQuery) : "";
-        var hasStem = _tuning.EnableStemming && !string.IsNullOrWhiteSpace(stemmed) && stemmed != searchQuery;
+        QType qType = string.IsNullOrWhiteSpace(normalized) ? QType.Mixed : DetectType(normalized.AsSpan());
+        bool isUkr = qType == QType.ProductName && HasUkrainianChars(normalized.AsSpan());
+        string searchQuery = isUkr ? normalized : _synonyms.Apply(normalized);
+        string stemmed = _tuning.EnableStemming ? _textProcessor.StemText(searchQuery) : "";
+        bool hasStem = _tuning.EnableStemming && !string.IsNullOrWhiteSpace(stemmed) && stemmed != searchQuery;
 
         return new SearchContext {
             OriginalQuery = query,
@@ -217,12 +217,12 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
     }
 
     private static (string text, List<string> sizes) ExtractSizeSpecs(ReadOnlySpan<char> query) {
-        var str = query.ToString();
-        var matches = SizeSpecRegex().Matches(str);
+        string str = query.ToString();
+        MatchCollection matches = SizeSpecRegex().Matches(str);
         if (matches.Count == 0) return (str, []);
 
-        var sizes = new List<string>(matches.Count);
-        var result = str;
+        List<string> sizes = new List<string>(matches.Count);
+        string result = str;
 
         foreach (Match m in matches) {
             sizes.Add(m.Value.ToLowerInvariant().Replace("=", "").Replace(",", "."));
@@ -234,7 +234,7 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool HasUkrainianChars(ReadOnlySpan<char> s) {
-        foreach (var c in s)
+        foreach (char c in s)
             if (c is 'і' or 'І' or 'ї' or 'Ї' or 'є' or 'Є' or 'ґ' or 'Ґ') return true;
         return false;
     }
@@ -242,7 +242,7 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
     private static QType DetectType(ReadOnlySpan<char> query) {
         int cyr = 0, dig = 0, lat = 0, tot = 0;
 
-        foreach (var c in query) {
+        foreach (char c in query) {
             if (c == ' ') continue;
             tot++;
             if (char.IsAsciiDigit(c)) dig++;
@@ -252,8 +252,8 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
 
         if (tot == 0) return QType.Mixed;
 
-        var digR = (double)dig / tot;
-        var cyrR = (double)cyr / tot;
+        double digR = (double)dig / tot;
+        double cyrR = (double)cyr / tot;
 
         if (digR > 0.6) return QType.PartNumber;
         if (cyr > 0 && lat > 0) return QType.Mixed;
@@ -269,50 +269,50 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
         c is (>= 'а' and <= 'я') or (>= 'А' and <= 'Я') or 'і' or 'І' or 'ї' or 'Ї' or 'є' or 'Є' or 'ґ' or 'Ґ';
 
     private async Task<List<TypesenseResponse?>> ExecuteAllPassesAsync(SearchContext ctx, CancellationToken ct) {
-        var col = await ResolveCollectionAsync(ct);
-        var tasks = new List<Task<ExecResult>> { ExecutePassAsync(ctx, PassType.Exact, col, ct) };
+        string col = await ResolveCollectionAsync(ct);
+        List<Task<ExecResult>> tasks = new List<Task<ExecResult>> { ExecutePassAsync(ctx, PassType.Exact, col, ct) };
 
         if (ctx.HasStemPass) tasks.Add(ExecutePassAsync(ctx, PassType.Stem, col, ct));
         if (ctx.SizeSpecs.Count > 0) tasks.Add(ExecutePassAsync(ctx, PassType.Size, col, ct));
         if (ctx.Type != QType.PartNumber && !string.IsNullOrWhiteSpace(ctx.SearchQuery))
             tasks.Add(ExecutePassAsync(ctx, PassType.Keywords, col, ct));
 
-        var results = await Task.WhenAll(tasks);
+        ExecResult[] results = await Task.WhenAll(tasks);
         return results.Select(r => r.Response).ToList();
     }
 
     private async Task<List<TypesenseResponse?>> ExecuteAllPassesFullAsync(SearchContext ctx, CancellationToken ct) {
-        var col = await ResolveCollectionAsync(ct);
-        var tasks = new List<Task<ExecResult>> { ExecutePassFullAsync(ctx, PassType.Exact, col, ct) };
+        string col = await ResolveCollectionAsync(ct);
+        List<Task<ExecResult>> tasks = new List<Task<ExecResult>> { ExecutePassFullAsync(ctx, PassType.Exact, col, ct) };
 
         if (ctx.HasStemPass) tasks.Add(ExecutePassFullAsync(ctx, PassType.Stem, col, ct));
         if (ctx.SizeSpecs.Count > 0) tasks.Add(ExecutePassFullAsync(ctx, PassType.Size, col, ct));
         if (ctx.Type != QType.PartNumber && !string.IsNullOrWhiteSpace(ctx.SearchQuery))
             tasks.Add(ExecutePassFullAsync(ctx, PassType.Keywords, col, ct));
 
-        var results = await Task.WhenAll(tasks);
+        ExecResult[] results = await Task.WhenAll(tasks);
         return results.Select(r => r.Response).ToList();
     }
 
     private async Task<ExecResult> ExecutePassAsync(SearchContext ctx, PassType pass, string col, CancellationToken ct) {
-        var p = BuildParams(ctx, pass);
-        var qs = string.Join("&", p.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
+        Dictionary<string, string> p = BuildParams(ctx, pass);
+        string qs = string.Join("&", p.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
 
-        using var resp = await _http.GetAsync($"collections/{col}/documents/search?{qs}", ct);
+        using HttpResponseMessage resp = await _http.GetAsync($"collections/{col}/documents/search?{qs}", ct);
         resp.EnsureSuccessStatusCode();
 
-        var parsed = await resp.Content.ReadFromJsonAsync<TypesenseResponse>(Json, ct);
+        TypesenseResponse? parsed = await resp.Content.ReadFromJsonAsync<TypesenseResponse>(Json, ct);
         return new ExecResult(col, parsed, p);
     }
 
     private async Task<ExecResult> ExecutePassFullAsync(SearchContext ctx, PassType pass, string col, CancellationToken ct) {
-        var p = BuildParamsFull(ctx, pass);
-        var qs = string.Join("&", p.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
+        Dictionary<string, string> p = BuildParamsFull(ctx, pass);
+        string qs = string.Join("&", p.Select(kv => $"{Uri.EscapeDataString(kv.Key)}={Uri.EscapeDataString(kv.Value)}"));
 
-        using var resp = await _http.GetAsync($"collections/{col}/documents/search?{qs}", ct);
+        using HttpResponseMessage resp = await _http.GetAsync($"collections/{col}/documents/search?{qs}", ct);
         resp.EnsureSuccessStatusCode();
 
-        var parsed = await resp.Content.ReadFromJsonAsync<TypesenseResponse>(Json, ct);
+        TypesenseResponse? parsed = await resp.Content.ReadFromJsonAsync<TypesenseResponse>(Json, ct);
         return new ExecResult(col, parsed, p);
     }
 
@@ -325,13 +325,13 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
     };
 
     private Dictionary<string, string> BuildParamsFull(SearchContext ctx, PassType pass) {
-        var p = BuildParams(ctx, pass);
+        Dictionary<string, string> p = BuildParams(ctx, pass);
         p["include_fields"] = IncludeFieldsFull;
         return p;
     }
 
     private Dictionary<string, string> BuildMainParams(SearchContext ctx, bool stem) {
-        var q = stem ? ctx.StemmedQuery : ctx.SearchQuery;
+        string q = stem ? ctx.StemmedQuery : ctx.SearchQuery;
         if (ctx.SizeSpecs.Count > 0 || ctx.Type == QType.Mixed) return BuildMixedParams(ctx, q, stem);
         return ctx.Type == QType.PartNumber ? BuildPartNumParams(q, ctx.MergeLimit) : BuildNameParams(ctx, q, stem);
     }
@@ -351,9 +351,9 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
     };
 
     private Dictionary<string, string> BuildNameParams(SearchContext ctx, string q, bool stem) {
-        var (pri, sec) = ctx.Locale == "uk" ? ("nameUA", "name") : ("name", "nameUA");
-        var (priSearch, secSearch) = ctx.Locale == "uk" ? ("searchNameUA", "searchName") : ("searchName", "searchNameUA");
-        var qb = stem ? $"{pri}Stem,{sec}Stem,synonymsStem" : $"{priSearch},{secSearch},{pri},{sec},synonyms";
+        (string pri, string sec) = ctx.Locale == "uk" ? ("nameUA", "name") : ("name", "nameUA");
+        (string priSearch, string secSearch) = ctx.Locale == "uk" ? ("searchNameUA", "searchName") : ("searchName", "searchNameUA");
+        string qb = stem ? $"{pri}Stem,{sec}Stem,synonymsStem" : $"{priSearch},{secSearch},{pri},{sec},synonyms";
 
         return new Dictionary<string, string> {
             ["q"] = q,
@@ -377,23 +377,23 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
     }
 
     private Dictionary<string, string> BuildMixedParams(SearchContext ctx, string q, bool stem) {
-        var (pn, sn) = ctx.Locale == "uk" ? ("nameUA", "name") : ("name", "nameUA");
-        var (psn, ssn) = ctx.Locale == "uk" ? ("searchNameUA", "searchName") : ("searchName", "searchNameUA");
-        var (pd, sd) = ctx.Locale == "uk" ? ("descriptionUA", "description") : ("description", "descriptionUA");
-        var hasSize = ctx.SizeSpecs.Count > 0;
-        var effQ = hasSize ? $"{q} {string.Join(' ', ctx.SizeSpecs)}".Trim() : q;
+        (string pn, string sn) = ctx.Locale == "uk" ? ("nameUA", "name") : ("name", "nameUA");
+        (string psn, string ssn) = ctx.Locale == "uk" ? ("searchNameUA", "searchName") : ("searchName", "searchNameUA");
+        (string pd, string sd) = ctx.Locale == "uk" ? ("descriptionUA", "description") : ("description", "descriptionUA");
+        bool hasSize = ctx.SizeSpecs.Count > 0;
+        string effQ = hasSize ? $"{q} {string.Join(' ', ctx.SizeSpecs)}".Trim() : q;
 
-        var qb = stem
+        string qb = stem
             ? $"{pn}Stem,{sn}Stem,synonymsStem,fullTextStem,{pd}Stem,{sd}Stem,sizeClean"
             : $"{psn},{ssn},{pn},{sn},synonyms,fullText,mainOriginalNumberClean,originalNumbersClean,vendorCodeClean,{pd},{sd},sizeClean";
 
-        var w = stem
+        string w = stem
             ? (hasSize ? "110,90,60,100,20,15,150" : "110,90,60,100,20,15,30")
             : (hasSize ? "130,125,127,100,70,120,50,45,40,20,15,150" : "130,125,127,100,70,120,50,45,40,20,15,30");
 
-        var pfx = stem ? "true,true,true,true,true,true,true" : "true,true,true,true,true,true,true,true,true,true,true,true";
-        var inf = stem ? "off,off,off,off,off,off,always" : "always,always,off,off,off,off,always,always,always,off,off,always";
-        var drop = hasSize ? Math.Max(_tuning.DropTokensThreshold, ctx.SizeSpecs.Count + 1) : _tuning.DropTokensThreshold;
+        string pfx = stem ? "true,true,true,true,true,true,true" : "true,true,true,true,true,true,true,true,true,true,true,true";
+        string inf = stem ? "off,off,off,off,off,off,always" : "always,always,off,off,off,off,always,always,always,off,off,always";
+        int drop = hasSize ? Math.Max(_tuning.DropTokensThreshold, ctx.SizeSpecs.Count + 1) : _tuning.DropTokensThreshold;
 
         return new Dictionary<string, string> {
             ["q"] = effQ, ["query_by"] = qb, ["query_by_weights"] = w, ["prefix"] = pfx, ["infix"] = inf,
@@ -421,10 +421,10 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
     };
 
     private List<long> RankAndMerge(ReadOnlySpan<char> query, List<TypesenseResponse?> responses) {
-        var unique = new Dictionary<string, Hit>(StringComparer.Ordinal);
-        foreach (var r in responses) {
+        Dictionary<string, Hit> unique = new Dictionary<string, Hit>(StringComparer.Ordinal);
+        foreach (TypesenseResponse? r in responses) {
             if (r?.Hits == null) continue;
-            foreach (var h in r.Hits)
+            foreach (Hit h in r.Hits)
                 if (!string.IsNullOrEmpty(h.Document?.Id)) unique.TryAdd(h.Document.Id, h);
         }
         return RankProducts(unique.Values, query, _textProcessor);
@@ -432,18 +432,18 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
 
     private (List<long> ids, Dictionary<long, ProductSearchDocument> docs) RankAndMergeWithDocs(
         ReadOnlySpan<char> query, List<TypesenseResponse?> responses, string locale) {
-        var unique = new Dictionary<string, Hit>(StringComparer.Ordinal);
-        foreach (var r in responses) {
+        Dictionary<string, Hit> unique = new Dictionary<string, Hit>(StringComparer.Ordinal);
+        foreach (TypesenseResponse? r in responses) {
             if (r?.Hits == null) continue;
-            foreach (var h in r.Hits)
+            foreach (Hit h in r.Hits)
                 if (!string.IsNullOrEmpty(h.Document?.Id)) unique.TryAdd(h.Document.Id, h);
         }
 
-        var ranked = RankProducts(unique.Values, query, _textProcessor);
-        var docs = new Dictionary<long, ProductSearchDocument>();
+        List<long> ranked = RankProducts(unique.Values, query, _textProcessor);
+        Dictionary<long, ProductSearchDocument> docs = new Dictionary<long, ProductSearchDocument>();
 
-        foreach (var hit in unique.Values) {
-            if (hit.Document?.Id == null || !long.TryParse(hit.Document.Id, out var id)) continue;
+        foreach (Hit hit in unique.Values) {
+            if (hit.Document?.Id == null || !long.TryParse(hit.Document.Id, out long id)) continue;
             docs[id] = DocToSearchDocument(hit.Document, locale);
         }
 
@@ -451,7 +451,7 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
     }
 
     private static ProductSearchDocument DocToSearchDocument(Doc d, string locale) {
-        var isUk = locale == "uk";
+        bool isUk = locale == "uk";
         return new ProductSearchDocument {
             Id = d.Id ?? "",
             NetUid = d.NetUid ?? "",
@@ -495,16 +495,16 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
     }
 
     private static List<long> RankProducts(IEnumerable<Hit> hits, ReadOnlySpan<char> querySpan, SearchTextProcessor textProcessor) {
-        var query = querySpan.ToString().ToLowerInvariant();
-        var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var stemmedTerms = textProcessor.StemText(query).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string query = querySpan.ToString().ToLowerInvariant();
+        string[] terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string[] stemmedTerms = textProcessor.StemText(query).Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
-        var ranked = new List<Ranked>();
+        List<Ranked> ranked = new List<Ranked>();
 
-        foreach (var h in hits) {
-            if (h.Document?.Id == null || !long.TryParse(h.Document.Id, out var id)) continue;
+        foreach (Hit h in hits) {
+            if (h.Document?.Id == null || !long.TryParse(h.Document.Id, out long id)) continue;
 
-            var f = new Fields(h.Document, textProcessor);
+            Fields f = new Fields(h.Document, textProcessor);
             if (!AllTermsPresent(f, terms, stemmedTerms)) continue;
 
             ranked.Add(new Ranked {
@@ -542,8 +542,8 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
     private static int CountTermsInName(Fields f, string[] terms, string[] stemmedTerms) {
         int count = 0;
         for (int i = 0; i < terms.Length; i++) {
-            var t = terms[i];
-            var stemmed = i < stemmedTerms.Length ? stemmedTerms[i] : t;
+            string t = terms[i];
+            string stemmed = i < stemmedTerms.Length ? stemmedTerms[i] : t;
 
             bool inName = f.SearchNameUA.Span.Contains(t.AsSpan(), StringComparison.Ordinal) ||
                           f.SearchName.Span.Contains(t.AsSpan(), StringComparison.Ordinal) ||
@@ -563,10 +563,10 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool AllTermsPresent(Fields f, string[] terms, string[] stemmedTerms) {
         for (int i = 0; i < terms.Length; i++) {
-            var t = terms[i];
-            var ts = t.AsSpan();
-            var stemmed = i < stemmedTerms.Length ? stemmedTerms[i] : t;
-            var stemmedSpan = stemmed.AsSpan();
+            string t = terms[i];
+            ReadOnlySpan<char> ts = t.AsSpan();
+            string stemmed = i < stemmedTerms.Length ? stemmedTerms[i] : t;
+            ReadOnlySpan<char> stemmedSpan = stemmed.AsSpan();
 
             bool found = f.MainOrig.Span.Contains(ts, StringComparison.Ordinal) ||
                          f.Vendor.Span.Contains(ts, StringComparison.Ordinal) ||
@@ -595,32 +595,32 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool HasOrigNumContains(List<string> origNums, string term) {
-        foreach (var n in origNums)
+        foreach (string n in origNums)
             if (n.AsSpan().Contains(term.AsSpan(), StringComparison.Ordinal)) return true;
         return false;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool HasOrigNumTerm(List<string> origNums, string[] terms) {
-        foreach (var n in origNums)
-            foreach (var t in terms)
+        foreach (string n in origNums)
+            foreach (string t in terms)
                 if (n.AsSpan().Contains(t.AsSpan(), StringComparison.Ordinal)) return true;
         return false;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int ComputeHundredPct(Fields f, string q) {
-        var qs = q.AsSpan();
+        ReadOnlySpan<char> qs = q.AsSpan();
         if (f.NameUA.Span.SequenceEqual(qs) || f.Vendor.Span.SequenceEqual(qs) || f.MainOrig.Span.SequenceEqual(qs))
             return 1;
-        foreach (var n in f.OrigNums)
+        foreach (string n in f.OrigNums)
             if (n.AsSpan().SequenceEqual(qs)) return 1;
         return 0;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool HasAnyTerm(ReadOnlySpan<char> field, string[] terms) {
-        foreach (var t in terms)
+        foreach (string t in terms)
             if (field.Contains(t.AsSpan(), StringComparison.Ordinal)) return true;
         return false;
     }
@@ -628,8 +628,8 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static List<long> Paginate(List<long> ids, int off, int lim) {
         if (off <= 0 && ids.Count <= lim) return ids;
-        var start = Math.Min(Math.Max(off, 0), ids.Count);
-        var count = Math.Min(lim, Math.Max(0, ids.Count - start));
+        int start = Math.Min(Math.Max(off, 0), ids.Count);
+        int count = Math.Min(lim, Math.Max(0, ids.Count - start));
         return ids.GetRange(start, count);
     }
 
@@ -640,11 +640,11 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
             (DateTime.UtcNow - _aliasResolvedAt).TotalSeconds < AliasCacheSec)
             return _resolvedCollection!;
 
-        using var resp = await _http.GetAsync($"aliases/{_settings.CollectionName}", ct);
+        using HttpResponseMessage resp = await _http.GetAsync($"aliases/{_settings.CollectionName}", ct);
         if (!resp.IsSuccessStatusCode) return _settings.CollectionName;
 
-        var alias = await resp.Content.ReadFromJsonAsync<AliasResponse>(Json, ct);
-        var resolved = string.IsNullOrWhiteSpace(alias?.CollectionName) ? _settings.CollectionName : alias.CollectionName;
+        AliasResponse? alias = await resp.Content.ReadFromJsonAsync<AliasResponse>(Json, ct);
+        string resolved = string.IsNullOrWhiteSpace(alias?.CollectionName) ? _settings.CollectionName : alias.CollectionName;
 
         _resolvedCollection = resolved;
         _aliasResolvedAt = DateTime.UtcNow;
@@ -655,7 +655,7 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
         Query = r.Params.GetValueOrDefault("q", ""),
         Found = r.Response?.Found ?? 0,
         SearchTimeMs = r.Response?.SearchTimeMs ?? 0,
-        Ids = r.Response?.Hits?.Select(h => long.TryParse(h.Document?.Id, out var id) ? id : 0).Where(id => id > 0).ToList() ?? [],
+        Ids = r.Response?.Hits?.Select(h => long.TryParse(h.Document?.Id, out long id) ? id : 0).Where(id => id > 0).ToList() ?? [],
         QueryBy = r.Params.GetValueOrDefault("query_by", ""),
         Weights = r.Params.GetValueOrDefault("query_by_weights", ""),
         TokenOrder = r.Params.GetValueOrDefault("token_order", ""),
@@ -703,14 +703,14 @@ public sealed partial class TypesenseSearchService : IProductSearchService, IPro
         public Fields(Doc d, SearchTextProcessor textProcessor) {
             MainOrig = (d.MainOriginalNumberClean ?? "").ToLowerInvariant().AsMemory();
             Vendor = (d.VendorCodeClean ?? d.VendorCode ?? "").ToLowerInvariant().AsMemory();
-            var nameUA = d.NameUA ?? "";
-            var name = d.Name ?? "";
-            var descUA = d.DescriptionUA ?? "";
-            var desc = d.Description ?? "";
-            var searchNameUA = d.SearchNameUA ?? "";
-            var searchName = d.SearchName ?? "";
-            var searchDescUA = d.SearchDescriptionUA ?? "";
-            var searchDesc = d.SearchDescription ?? "";
+            string nameUA = d.NameUA ?? "";
+            string name = d.Name ?? "";
+            string descUA = d.DescriptionUA ?? "";
+            string desc = d.Description ?? "";
+            string searchNameUA = d.SearchNameUA ?? "";
+            string searchName = d.SearchName ?? "";
+            string searchDescUA = d.SearchDescriptionUA ?? "";
+            string searchDesc = d.SearchDescription ?? "";
             NameUA = nameUA.ToLowerInvariant().AsMemory();
             Name = name.ToLowerInvariant().AsMemory();
             DescUA = descUA.ToLowerInvariant().AsMemory();

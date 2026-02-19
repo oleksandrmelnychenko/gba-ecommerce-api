@@ -78,13 +78,13 @@ public sealed class ProductsController(
         [FromQuery] int withVat = 0,
         [FromQuery] bool benchmark = false,
         CancellationToken cancellationToken = default) {
-        var totalSw = System.Diagnostics.Stopwatch.StartNew();
-        var timings = new Dictionary<string, double>();
+        System.Diagnostics.Stopwatch totalSw = System.Diagnostics.Stopwatch.StartNew();
+        Dictionary<string, double> timings = new Dictionary<string, double>();
 
         if (string.IsNullOrWhiteSpace(value))
             return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
         Guid userNetId = GetUserNetId();
         timings["1_GetUserNetId"] = sw.Elapsed.TotalMilliseconds;
 
@@ -124,10 +124,10 @@ public sealed class ProductsController(
             if (useEsPrices) {
                 // Use retail price from ES (pre-calculated with Retail Client pricing)
                 decimal esPrice = withVat == 1 ? doc.RetailPriceVat : doc.RetailPrice;
-                var esInfo = new ProductPriceInfo { Price = esPrice, CurrencyCode = doc.RetailCurrencyCode };
+                ProductPriceInfo esInfo = new ProductPriceInfo { Price = esPrice, CurrencyCode = doc.RetailCurrencyCode };
                 return DocToProtectedProduct(doc, esInfo, locale, timestamp);
             } else {
-                prices!.TryGetValue(id, out var priceInfo);
+                prices!.TryGetValue(id, out ProductPriceInfo? priceInfo);
                 return DocToProtectedProduct(doc, priceInfo, locale, timestamp);
             }
         }).ToList();
@@ -163,7 +163,7 @@ public sealed class ProductsController(
         [FromQuery] int offset = 0,
         CancellationToken cancellationToken = default) {
         string locale = RouteData.Values["culture"]?.ToString() ?? "uk";
-        var debug = await esSearchService.SearchDebugAsync(value, locale, limit, offset, cancellationToken);
+        ElasticsearchDebugResult debug = await esSearchService.SearchDebugAsync(value, locale, limit, offset, cancellationToken);
         return Ok(new { Body = debug, StatusCode = 200 });
     }
 
@@ -278,7 +278,7 @@ public sealed class ProductsController(
 
         return new ProtectedSearchProduct {
             Id = long.Parse(doc.Id),
-            NetUid = Guid.TryParse(doc.NetUid, out var netUid) ? netUid : Guid.Empty,
+            NetUid = Guid.TryParse(doc.NetUid, out Guid netUid) ? netUid : Guid.Empty,
             VendorCode = doc.VendorCode,
             Name = isUk ? (doc.NameUA.Length > 0 ? doc.NameUA : doc.Name) : (doc.Name.Length > 0 ? doc.Name : doc.NameUA),
             Description = isUk ? (doc.DescriptionUA.Length > 0 ? doc.DescriptionUA : doc.Description) : (doc.Description.Length > 0 ? doc.Description : doc.DescriptionUA),
@@ -310,7 +310,7 @@ public sealed class ProductsController(
             T = timestamp,
             ProductSlug = doc.SlugId > 0 ? new ProductSlug {
                 Id = doc.SlugId,
-                NetUid = Guid.TryParse(doc.SlugNetUid, out var slugNetUid) ? slugNetUid : Guid.Empty,
+                NetUid = Guid.TryParse(doc.SlugNetUid, out Guid slugNetUid) ? slugNetUid : Guid.Empty,
                 Url = doc.SlugUrl,
                 Locale = doc.SlugLocale,
                 ProductId = long.Parse(doc.Id)

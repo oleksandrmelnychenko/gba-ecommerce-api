@@ -41,7 +41,7 @@ public class ProductSearchServiceOptimized {
         long limit,
         long offset) {
 
-        var parameters = new DynamicParameters();
+        DynamicParameters parameters = new DynamicParameters();
         parameters.Add("@Term", $"%{term}%");
         parameters.Add("@ExactTerm", term);
         parameters.Add("@Offset", offset);
@@ -175,7 +175,7 @@ ORDER BY RowNumber;
         long limit,
         long offset) {
 
-        var parameters = new DynamicParameters();
+        DynamicParameters parameters = new DynamicParameters();
         parameters.Add("@FullValue", fullValue);
         parameters.Add("@Offset", offset);
         parameters.Add("@Limit", limit);

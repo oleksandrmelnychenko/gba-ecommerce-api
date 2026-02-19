@@ -4,6 +4,8 @@ using System.Data;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -50,12 +52,22 @@ public sealed class RequestTokenService : IRequestTokenService {
 
     public async Task<Tuple<bool, string, CompleteAccessToken>> RefreshToken(string refreshToken) {
         try {
+            if (string.IsNullOrEmpty(refreshToken))
+                return new Tuple<bool, string, CompleteAccessToken>(false, "Refresh token invalid", null);
+
             using IDbConnection connection = _connectionFactory.NewIdentitySqlConnection();
             string decryptedToken = AesManager.Decrypt(refreshToken);
 
             RefreshToken deserializedRefreshToken = JsonSerializer.Deserialize<RefreshToken>(decryptedToken, _jsonSerializerOptions);
+            if (deserializedRefreshToken == null || string.IsNullOrEmpty(deserializedRefreshToken.UserId))
+                throw new Exception("Refresh token invalid");
 
-            if (deserializedRefreshToken.ExpireAt < DateTime.Now) throw new Exception("Refresh token expired");
+            if (deserializedRefreshToken.ExpireAt < DateTime.UtcNow) throw new Exception("Refresh token expired");
+
+            IUserTokenRepository userTokenRepository = _identityRepositoriesFactory.NewUserTokenRepository(connection);
+            UserToken currentToken = userTokenRepository.GetByUserId(deserializedRefreshToken.UserId);
+            if (currentToken == null || !IsRefreshTokenMatch(currentToken.Token, refreshToken))
+                throw new Exception("Refresh token invalid");
 
             Tuple<ClaimsIdentity, UserIdentity> result = await _identityRepositoriesFactory.NewIdentityRepository()
                 .AuthAndGetClaimsIdentityByUserId(deserializedRefreshToken.UserId);
@@ -65,7 +77,7 @@ public sealed class RequestTokenService : IRequestTokenService {
             return new Tuple<bool, string, CompleteAccessToken>(
                 true,
                 string.Empty,
-                GenerateAccessAndRefreshToken(_identityRepositoriesFactory.NewUserTokenRepository(connection), result.Item1.Claims, result.Item2)
+                GenerateAccessAndRefreshToken(userTokenRepository, result.Item1.Claims, result.Item2)
             );
         } catch (Exception) {
             return new Tuple<bool, string, CompleteAccessToken>(false, "Refresh token invalid", null);
@@ -129,8 +141,8 @@ public sealed class RequestTokenService : IRequestTokenService {
                     )
                 );
             }
-        } catch (Exception exc) {
-            return new Tuple<bool, string, CompleteAccessToken>(false, exc.Message, null);
+        } catch (Exception) {
+            return new Tuple<bool, string, CompleteAccessToken>(false, _localizer[SharedResourceNames.INVALID_CREDENTIALS], null);
         }
     }
 
@@ -152,20 +164,21 @@ public sealed class RequestTokenService : IRequestTokenService {
 
         RefreshToken newRefreshToken = new() {
             UserId = user.Id,
-            ExpireAt = DateTime.Now.AddMinutes(AuthOptions.REFRESH_LIFETIME)
+            ExpireAt = DateTime.UtcNow.AddMinutes(AuthOptions.REFRESH_LIFETIME)
         };
 
         string encryptedRefreshToken = AesManager.Encrypt(JsonSerializer.Serialize(newRefreshToken));
+        string hashedRefreshToken = HashRefreshToken(encryptedRefreshToken);
 
         if (userTokensRepository.IsTokenExistForUser(user.Id)) {
             UserToken userToken = userTokensRepository.GetByUserId(user.Id);
 
-            userToken.Token = encryptedRefreshToken;
+            userToken.Token = hashedRefreshToken;
 
             userTokensRepository.Update(userToken);
         } else {
             UserToken userToken = new() {
-                Token = encryptedRefreshToken,
+                Token = hashedRefreshToken,
                 UserId = user.Id
             };
 
@@ -177,5 +190,25 @@ public sealed class RequestTokenService : IRequestTokenService {
             RefreshToken = encryptedRefreshToken,
             UserNetUid = user.NetId
         };
+    }
+
+    private static bool IsRefreshTokenMatch(string storedToken, string presentedToken) {
+        if (string.IsNullOrEmpty(storedToken) || string.IsNullOrEmpty(presentedToken))
+            return false;
+
+        // Backward compatibility: older rows may still contain raw encrypted token.
+        return SecureEquals(storedToken, HashRefreshToken(presentedToken)) || SecureEquals(storedToken, presentedToken);
+    }
+
+    private static string HashRefreshToken(string token) {
+        byte[] tokenBytes = Encoding.UTF8.GetBytes(token);
+        byte[] hashBytes = SHA256.HashData(tokenBytes);
+        return Convert.ToHexString(hashBytes);
+    }
+
+    private static bool SecureEquals(string left, string right) {
+        byte[] leftHash = SHA256.HashData(Encoding.UTF8.GetBytes(left));
+        byte[] rightHash = SHA256.HashData(Encoding.UTF8.GetBytes(right));
+        return CryptographicOperations.FixedTimeEquals(leftHash, rightHash);
     }
 }

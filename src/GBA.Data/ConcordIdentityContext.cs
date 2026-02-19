@@ -1,4 +1,4 @@
-﻿using GBA.Common.Helpers;
+using GBA.Common.Helpers;
 using GBA.Common.IdentityConfiguration.Entities;
 using GBA.Data.MapConfigurations;
 using GBA.Data.TableMaps.ConcordContext.UserManagement;
@@ -15,7 +15,9 @@ public class ConcordIdentityContext : IdentityDbContext<UserIdentity> {
     public virtual DbSet<UserToken> UserToken { get; set; }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
-        optionsBuilder.UseSqlServer(ConfigurationManager.LocalIdentityConnectionString);
+        if (!optionsBuilder.IsConfigured) {
+            optionsBuilder.UseSqlServer(ConfigurationManager.LocalIdentityConnectionString);
+        }
     }
 
     protected override void OnModelCreating(ModelBuilder builder) {

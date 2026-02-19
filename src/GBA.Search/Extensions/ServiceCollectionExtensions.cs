@@ -91,7 +91,7 @@ public static class ServiceCollectionExtensions {
         // Elasticsearch HTTP client
         services.AddHttpClient<IElasticsearchIndexService, ElasticsearchIndexService>()
             .ConfigureHttpClient((sp, client) => {
-                var settings = configuration
+                ElasticsearchSettings? settings = configuration
                     .GetSection("Elasticsearch")
                     .Get<ElasticsearchSettings>() ?? new ElasticsearchSettings();
 
@@ -101,7 +101,7 @@ public static class ServiceCollectionExtensions {
 
         services.AddHttpClient<ElasticsearchProductSearchService>()
             .ConfigureHttpClient((sp, client) => {
-                var settings = configuration
+                ElasticsearchSettings? settings = configuration
                     .GetSection("Elasticsearch")
                     .Get<ElasticsearchSettings>() ?? new ElasticsearchSettings();
 
@@ -116,7 +116,7 @@ public static class ServiceCollectionExtensions {
 
         services.AddHttpClient<IElasticsearchSyncService, ElasticsearchSyncService>()
             .ConfigureHttpClient((sp, client) => {
-                var settings = configuration
+                ElasticsearchSettings? settings = configuration
                     .GetSection("Elasticsearch")
                     .Get<ElasticsearchSettings>() ?? new ElasticsearchSettings();
 

@@ -124,12 +124,12 @@ public static class NoltFolderManager {
         Path.GetExtension(fileName).TrimStart('.');
 
     public static async Task SaveFile(string path, IFormFile file) {
-        await using var stream = new FileStream(path, FileMode.Create);
+        await using FileStream stream = new FileStream(path, FileMode.Create);
         await file.CopyToAsync(stream);
     }
 
     public static async Task SaveFile(string path, byte[] file) {
-        await using var stream = new FileStream(path, FileMode.Create);
+        await using FileStream stream = new FileStream(path, FileMode.Create);
         await stream.WriteAsync(file);
     }
 

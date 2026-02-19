@@ -2,7 +2,6 @@ using System;
 using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
-using GBA.Common.IdentityConfiguration;
 using GBA.Common.IdentityConfiguration.Entities;
 using GBA.Common.ResponseBuilder.Contracts;
 using GBA.Common.WebApi;
@@ -29,38 +28,32 @@ public sealed class UserManagementController(
     [HttpPost]
     [AssignActionRoute(UserManagementSegments.SIGN_UP)]
     [EnableRateLimiting("auth")]
-    public async Task<IActionResult> SignUp([FromBody] Client client, [FromQuery] string password, [FromQuery] string login, [FromQuery] int isLocalPayment) {
-        if (string.IsNullOrEmpty(password)) {
-            Random random = new();
-
-            password = new string(Enumerable.Repeat(AuthOptions.DEFAULT_PASSWORD_CHARS, 12)
-                .Select(s => s[random.Next(s.Length)]).ToArray());
-
-            //ToDo: send password to email after success registration.
+    public async Task<IActionResult> SignUp([FromBody] SignUpRequest request) {
+        if (request?.Client == null) {
+            return BadRequest(ErrorResponseBody("Client payload is required", HttpStatusCode.BadRequest));
         }
 
-        Tuple<IdentityResponse, Client> identityResponse = await signUpService.SignUp(client, password, login, isLocalPayment.Equals(1));
+        if (string.IsNullOrWhiteSpace(request.Password))
+            return BadRequest(ErrorResponseBody("Password is required", HttpStatusCode.BadRequest));
+
+        string password = request.Password;
+
+        Tuple<IdentityResponse, Client> identityResponse = await signUpService.SignUp(
+            request.Client,
+            password,
+            request.Login,
+            request.IsLocalPayment.Equals(1)
+        );
 
         if (identityResponse.Item1.Succeeded) {
             await clientRegistrationTaskService.Add(identityResponse.Item2);
 
-            Tuple<bool, string, CompleteAccessToken> result = await requestTokenService.RequestToken(client.EmailAddress, password);
+            Tuple<bool, string, CompleteAccessToken> result = await requestTokenService.RequestToken(request.Client.EmailAddress, password);
 
             return Ok(SuccessResponseBody(result.Item3));
         }
 
         return BadRequest(ErrorResponseBody(identityResponse.Item1.Errors.FirstOrDefault()?.Description, HttpStatusCode.BadRequest));
-    }
-
-    [HttpGet]
-    [AssignActionRoute(UserManagementSegments.GET_TOKEN)]
-    [EnableRateLimiting("auth")]
-    public async Task<IActionResult> GetTokenAsync([FromQuery] string username, [FromQuery] string password) {
-        Tuple<bool, string, CompleteAccessToken> result = await requestTokenService.RequestToken(username, password);
-
-        if (!result.Item1) return BadRequest(ErrorResponseBody(result.Item2, HttpStatusCode.BadRequest));
-
-        return Ok(SuccessResponseBody(result.Item3));
     }
 
     [HttpPost]
@@ -77,20 +70,34 @@ public sealed class UserManagementController(
         return Ok(SuccessResponseBody(result.Item3));
     }
 
-    public class LoginRequest {
-        public string? Username { get; set; }
-        public string? Password { get; set; }
+    public sealed class LoginRequest {
+        public string Username { get; set; } = string.Empty;
+        public string Password { get; set; } = string.Empty;
     }
 
-    [HttpGet]
+    public sealed class SignUpRequest {
+        public Client Client { get; set; } = new();
+        public string Password { get; set; } = string.Empty;
+        public string Login { get; set; } = string.Empty;
+        public int IsLocalPayment { get; set; }
+    }
+
+    [HttpPost]
     [AssignActionRoute(UserManagementSegments.REFRESH_TOKEN)]
     [EnableRateLimiting("auth")]
-    public async Task<IActionResult> RefreshTokenAsync([FromQuery] string token) {
-        Tuple<bool, string, CompleteAccessToken> result = await requestTokenService.RefreshToken(token);
+    public async Task<IActionResult> RefreshTokenAsync([FromBody] RefreshTokenRequest request) {
+        if (string.IsNullOrEmpty(request?.Token))
+            return BadRequest(ErrorResponseBody("Refresh token is required", HttpStatusCode.BadRequest));
+
+        Tuple<bool, string, CompleteAccessToken> result = await requestTokenService.RefreshToken(request.Token);
 
         if (!result.Item1) return BadRequest(ErrorResponseBody(result.Item2, HttpStatusCode.BadRequest));
 
         return Ok(SuccessResponseBody(result.Item3));
+    }
+
+    public sealed class RefreshTokenRequest {
+        public string Token { get; set; } = string.Empty;
     }
 
     [HttpGet]

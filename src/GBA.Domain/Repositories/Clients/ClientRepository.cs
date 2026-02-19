@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
@@ -42,13 +42,13 @@ public sealed class ClientRepository : IClientRepository {
                 "RegionCodeId, CountryID, ClientBankDetailsID, TermsOfDeliveryID, PackingMarkingID, PackingMarkingPaymentID, IsIndividual, IsActive, IsSubClient, " +
                 "IsBlocked, IsTradePoint, IsPayForDelivery, IsIncotermsElse, IsTemporaryClient, FirstName, MiddleName, LastName, Street, " +
                 "ZipCode, HouseNumber, IsFromECommerce, Updated, [Manager], IsForRetail, [IsNotResident], [OrderExpireDays], [ClearCartAfterDays]) " +
+                "OUTPUT INSERTED.ID " +
                 "VALUES (@TIN, @USREOU, @SROI, @Name, @FullName, @SupplierName, @SupplierContactName, @SupplierCode, @Manufacturer, @Brand, @Comment, " +
                 "@MobileNumber, @ClientNumber, @SMSNumber, @FaxNumber, @AccountantNumber, @DirectorNumber, @ICQ, @EmailAddress, @DeliveryAddress, " +
                 "@LegalAddress, @ActualAddress, @IncotermsElse, @RegionId, @RegionCodeId, @CountryID, @ClientBankDetailsID, @TermsOfDeliveryID, " +
                 "@PackingMarkingID, @PackingMarkingPaymentID, @IsIndividual, @IsActive, @IsSubClient, @IsBlocked, @IsTradePoint, @IsPayForDelivery, " +
                 "@IsIncotermsElse, @IsTemporaryClient, @FirstName, @MiddleName, @LastName, @Street, @ZipCode, @HouseNumber, @IsFromECommerce, getutcdate(), " +
-                "@Manager, @IsForRetail, @IsNotResident, @OrderExpireDays, @ClearCartAfterDays); " +
-                "SELECT SCOPE_IDENTITY() ",
+                "@Manager, @IsForRetail, @IsNotResident, @OrderExpireDays, @ClearCartAfterDays)",
                 client
             )
             .Single();
