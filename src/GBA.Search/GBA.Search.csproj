@@ -14,10 +14,10 @@
 
   <ItemGroup>
     <!-- Polly for Circuit Breaker -->
-    <PackageReference Include="Polly" Version="8.5.2" />
+    <PackageReference Include="Polly" Version="8.6.6" />
 
     <!-- Dapper for sync queries -->
-    <PackageReference Include="Dapper" Version="2.1.66" />
+    <PackageReference Include="Dapper" Version="2.1.79" />
 
     <!-- Russian stemming (Lucene.NET) -->
     <PackageReference Include="Lucene.Net.Analysis.Common" Version="4.8.0-beta00016" />
