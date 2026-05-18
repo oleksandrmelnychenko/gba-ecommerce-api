@@ -56,6 +56,7 @@
 
     <ItemGroup>
         <Content Include="..\GBA.Search\search_synonyms.txt" CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="Documents\**" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
 
 </Project>

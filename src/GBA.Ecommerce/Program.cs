@@ -33,7 +33,7 @@ builder.WebHost.ConfigureKestrel(options => {
     options.Limits.Http2.MaxFrameSize = 32 * 1024; // 32KB
     options.Limits.Http2.MaxRequestHeaderFieldSize = 16 * 1024; // 16KB
 
-    options.ListenLocalhost(62506, listenOptions => {
+    options.ListenAnyIP(62506, listenOptions => {
         listenOptions.Protocols = HttpProtocols.Http1AndHttp2;
         if (builder.Environment.IsDevelopment()) {
             listenOptions.UseConnectionLogging();
