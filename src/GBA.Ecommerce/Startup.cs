@@ -340,12 +340,7 @@ public class Startup {
         services.AddScoped<ISqlContextFactory, SqlContextFactory>();
         services.AddScoped<ISqlDbContext>(t => new SqlDbContext(t.GetRequiredService<ConcordContext>()));
 
-        // Product search with Typesense (with SQL fallback)
-        services.AddProductSearch(
-            Configuration,
-            () => new SqlConnection(ConfigurationManager.LocalDatabaseConnectionString));
-
-        // Elasticsearch search (V4)
+        // Elasticsearch search
         services.AddElasticsearchSearch(
             Configuration,
             () => new SqlConnection(ConfigurationManager.LocalDatabaseConnectionString));

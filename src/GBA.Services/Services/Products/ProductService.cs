@@ -1331,7 +1331,7 @@ public sealed class ProductService : IProductService {
 
     /// <summary>
     /// Gets only calculated prices for products (lightweight query for V3 search).
-    /// Product data comes from Typesense, this only calculates client-specific prices.
+    /// Product data comes from Elasticsearch, this only calculates client-specific prices.
     /// </summary>
     public Dictionary<long, ProductPriceInfo> GetPricesOnly(List<long> productIds, Guid currentClientNetId, bool withVat, string culture = "uk") {
         if (productIds == null || productIds.Count == 0)

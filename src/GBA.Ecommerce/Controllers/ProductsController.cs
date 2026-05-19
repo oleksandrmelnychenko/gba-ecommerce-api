@@ -27,7 +27,6 @@ namespace GBA.Ecommerce.Controllers;
 [AssignControllerRoute(WebApiEnvironmnet.Current, WebApiVersion.ApiVersion1, ApplicationSegments.Products)]
 public sealed class ProductsController(
     IProductService productService,
-    IProductSearchService searchService,
     IElasticsearchProductSearchService esSearchService,
     IPriceCacheService priceCacheService,
     IResponseFactory responseFactory) : WebApiControllerBase(responseFactory) {
@@ -35,72 +34,25 @@ public sealed class ProductsController(
     [AssignActionRoute(ProductsSegments.SEARCH)]
     [OutputCache(PolicyName = "Products", VaryByQueryKeys = ["value", "limit", "offset", "withVat"])]
     [EnableRateLimiting("search")]
-    public async Task<IActionResult> GetAllFromSearchAsync([FromQuery] string value, [FromQuery] long limit, [FromQuery] long offset, [FromQuery] int withVat = 0) {
-        Guid userNetId = GetUserNetId();
-        List<FromSearchProduct> products = await productService.GetAllFromSearch(value, userNetId, limit, offset, withVat.Equals(1));
-
-        long timestamp = PriceObfuscator.GetTimestamp();
-        List<ProtectedSearchProduct> protectedProducts = products.Select(p =>
-            ProtectedSearchProduct.FromSearchProduct(p, PriceObfuscator.EncodeMultiple, timestamp)
-        ).ToList();
-
-        return Ok(SuccessResponseBody(protectedProducts));
+    public async Task<IActionResult> GetAllFromSearchAsync([FromQuery] string value, [FromQuery] long limit, [FromQuery] long offset, [FromQuery] int withVat = 0, CancellationToken cancellationToken = default) {
+        return await SearchWithElasticsearchAsync(value, limit, offset, withVat, cancellationToken);
     }
 
-    [HttpGet]
-    [AssignActionRoute(ProductsSegments.SEARCH_V2)]
-    [OutputCache(PolicyName = "Products", VaryByQueryKeys = ["value", "limit", "offset", "withVat"])]
-    [EnableRateLimiting("search")]
-    public async Task<IActionResult> GetAllFromSearchV2Async([FromQuery] string value, [FromQuery] long limit, [FromQuery] long offset, [FromQuery] int withVat = 0) {
-        Guid userNetId = GetUserNetId();
-        List<FromSearchProduct> products = await productService.GetAllFromSearchV2(value, userNetId, limit, offset, withVat.Equals(1));
-
-        long timestamp = PriceObfuscator.GetTimestamp();
-        List<ProtectedSearchProduct> protectedProducts = products.Select(p =>
-            ProtectedSearchProduct.FromSearchProduct(p, PriceObfuscator.EncodeMultiple, timestamp)
-        ).ToList();
-
-        return Ok(SuccessResponseBody(protectedProducts));
-    }
-
-    /// <summary>
-    /// Search V3 - Elasticsearch-backed search with SQL prices only.
-    /// Product data from Elasticsearch, only prices from SQL.
-    /// </summary>
-    [HttpGet]
-    [AssignActionRoute(ProductsSegments.SEARCH_V3)]
-    [OutputCache(PolicyName = "Products", VaryByQueryKeys = ["value", "limit", "offset", "withVat"])]
-    [EnableRateLimiting("search")]
-    public async Task<IActionResult> GetAllFromSearchV3Async(
-        [FromQuery] string value,
-        [FromQuery] int limit = 20,
-        [FromQuery] int offset = 0,
-        [FromQuery] int withVat = 0,
-        [FromQuery] bool benchmark = false,
-        CancellationToken cancellationToken = default) {
-        System.Diagnostics.Stopwatch totalSw = System.Diagnostics.Stopwatch.StartNew();
-        Dictionary<string, double> timings = new Dictionary<string, double>();
-
+    private async Task<IActionResult> SearchWithElasticsearchAsync(string value, long limit, long offset, int withVat, CancellationToken cancellationToken) {
         if (string.IsNullOrWhiteSpace(value))
             return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
 
-        System.Diagnostics.Stopwatch sw = System.Diagnostics.Stopwatch.StartNew();
         Guid userNetId = GetUserNetId();
-        timings["1_GetUserNetId"] = sw.Elapsed.TotalMilliseconds;
-
         string locale = RouteData.Values["culture"]?.ToString() ?? "uk";
 
-        // Search via Elasticsearch - returns full product documents
-        sw.Restart();
-        ProductSearchResultWithDocs searchResult = await searchService.SearchWithDocsAsync(value, locale, limit, offset, cancellationToken);
-        timings["2_ElasticsearchSearch"] = sw.Elapsed.TotalMilliseconds;
+        int esLimit = limit <= 0 ? 20 : (int)limit;
+        int esOffset = offset < 0 ? 0 : (int)offset;
+
+        ProductSearchResultWithDocs searchResult = await esSearchService.SearchWithDocsAsync(value, locale, esLimit, esOffset, cancellationToken);
 
         if (searchResult.Documents.Count == 0)
             return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
 
-        // For anonymous users, use pre-calculated prices from ES (uses Retail Client pricing)
-        // For logged-in users, fetch client-specific prices from SQL
-        sw.Restart();
         Dictionary<long, ProductPriceInfo>? prices = null;
         bool useEsPrices = userNetId == Guid.Empty;
 
@@ -113,16 +65,11 @@ public sealed class ProductsController(
                 locale,
                 ids => productService.GetPricesOnly(ids, userNetId, withVat.Equals(1), locale));
         }
-        timings["3_SqlFetchPrices"] = sw.Elapsed.TotalMilliseconds;
-        timings["3_PriceSource"] = useEsPrices ? 0 : 1; // 0 = ES, 1 = SQL
 
-        // Merge ES docs with prices and apply obfuscation
-        sw.Restart();
         long timestamp = PriceObfuscator.GetTimestamp();
         List<ProtectedSearchProduct> protectedProducts = searchResult.Documents.Select(doc => {
             long id = long.Parse(doc.Id);
             if (useEsPrices) {
-                // Use retail price from ES (pre-calculated with Retail Client pricing)
                 decimal esPrice = withVat == 1 ? doc.RetailPriceVat : doc.RetailPrice;
                 ProductPriceInfo esInfo = new ProductPriceInfo { Price = esPrice, CurrencyCode = doc.RetailCurrencyCode };
                 return DocToProtectedProduct(doc, esInfo, locale, timestamp);
@@ -131,40 +78,8 @@ public sealed class ProductsController(
                 return DocToProtectedProduct(doc, priceInfo, locale, timestamp);
             }
         }).ToList();
-        timings["4_MergeAndObfuscate"] = sw.Elapsed.TotalMilliseconds;
-
-        totalSw.Stop();
-        timings["5_Total"] = totalSw.Elapsed.TotalMilliseconds;
-
-        if (benchmark) {
-            return Ok(new {
-                Body = protectedProducts,
-                Benchmark = timings,
-                ProductCount = protectedProducts.Count,
-                SearchSource = searchResult.IsFallback ? "SQL" : "Elasticsearch",
-                SearchTimeMs = searchResult.SearchTimeMs,
-                TotalMatchingDocs = searchResult.TotalCount,
-                StatusCode = 200
-            });
-        }
 
         return Ok(SuccessResponseBody(protectedProducts));
-    }
-
-    /// <summary>
-    /// Search V3 debug - returns internal details (exact vs stem pass).
-    /// </summary>
-    [HttpGet]
-    [AssignActionRoute(ProductsSegments.SEARCH_V3_DEBUG)]
-    [EnableRateLimiting("search")]
-    public async Task<IActionResult> GetAllFromSearchV3DebugAsync(
-        [FromQuery] string value,
-        [FromQuery] int limit = 20,
-        [FromQuery] int offset = 0,
-        CancellationToken cancellationToken = default) {
-        string locale = RouteData.Values["culture"]?.ToString() ?? "uk";
-        ElasticsearchDebugResult debug = await esSearchService.SearchDebugAsync(value, locale, limit, offset, cancellationToken);
-        return Ok(new { Body = debug, StatusCode = 200 });
     }
 
     [HttpGet]

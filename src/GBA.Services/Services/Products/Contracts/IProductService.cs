@@ -34,13 +34,13 @@ public interface IProductService {
 
     /// <summary>
     /// Gets products by IDs with calculated prices for the specified client.
-    /// Used by Typesense search to fetch full product data after getting IDs from search index.
+    /// Used by search to fetch full product data after getting IDs from search index.
     /// </summary>
     Task<List<FromSearchProduct>> GetAllByIds(List<long> productIds, Guid currentClientNetId, bool withVat);
 
     /// <summary>
     /// Gets only calculated prices for products (lightweight query for V3 search).
-    /// Product data comes from Typesense, this only calculates client-specific prices.
+    /// Product data comes from Elasticsearch, this only calculates client-specific prices.
     /// </summary>
     Dictionary<long, ProductPriceInfo> GetPricesOnly(List<long> productIds, Guid currentClientNetId, bool withVat, string culture = "uk");
 }
