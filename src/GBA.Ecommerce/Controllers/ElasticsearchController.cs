@@ -6,11 +6,14 @@ using GBA.Common.WebApi.RoutingConfiguration.Maps;
 using GBA.Search.Elasticsearch;
 using GBA.Search.Models;
 using GBA.Search.Sync;
+using GBA.Common.IdentityConfiguration.Roles;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace GBA.Ecommerce.Controllers;
 
 [AssignControllerRoute(WebApiEnvironmnet.Current, WebApiVersion.ApiVersion1, "elasticsearch")]
+[Authorize(Roles = IdentityRoles.Administrator)]
 public sealed class ElasticsearchController(
     IElasticsearchIndexService indexService,
     IElasticsearchSyncService syncService,
@@ -19,6 +22,7 @@ public sealed class ElasticsearchController(
 
     [HttpGet]
     [Route("health")]
+    [AllowAnonymous]
     public async Task<IActionResult> HealthAsync(CancellationToken ct) {
         bool healthy = await indexService.IsHealthyAsync(ct);
         return Ok(SuccessResponseBody(new { healthy }));
@@ -54,6 +58,7 @@ public sealed class ElasticsearchController(
 
     [HttpGet]
     [Route("search")]
+    [AllowAnonymous]
     public async Task<IActionResult> SearchAsync(
         [FromQuery] string query,
         [FromQuery] int limit = 20,

@@ -232,7 +232,7 @@ public class Startup {
 
         services.AddCors(options => {
             options.AddPolicy(_corsPolicy, builder => builder
-                .WithOrigins("http://localhost:3000", "http://localhost:7000", "http://78.152.175.67:15026", "http://new.concord-shop.com", "https://new.concord-shop.com")
+                .WithOrigins("http://localhost:3000", "http://localhost:7000", "https://new.concord-shop.com")
                 .AllowAnyMethod().AllowAnyHeader()
                 .AllowCredentials());
         });
