@@ -57,7 +57,7 @@ public sealed class ProductsController(
         bool useEsPrices = userNetId == Guid.Empty;
 
         if (!useEsPrices) {
-            List<long> productIds = searchResult.Documents.Select(d => long.Parse(d.Id)).ToList();
+            List<long> productIds = searchResult.Documents.Select(d => d.Id).ToList();
             prices = priceCacheService.GetPrices(
                 productIds,
                 userNetId,
@@ -68,7 +68,7 @@ public sealed class ProductsController(
 
         long timestamp = PriceObfuscator.GetTimestamp();
         List<ProtectedSearchProduct> protectedProducts = searchResult.Documents.Select(doc => {
-            long id = long.Parse(doc.Id);
+            long id = doc.Id;
             if (useEsPrices) {
                 decimal esPrice = withVat == 1 ? doc.RetailPriceVat : doc.RetailPrice;
                 ProductPriceInfo esInfo = new ProductPriceInfo { Price = esPrice, CurrencyCode = doc.RetailCurrencyCode };
@@ -192,7 +192,7 @@ public sealed class ProductsController(
         bool isUk = locale == "uk";
 
         return new ProtectedSearchProduct {
-            Id = long.Parse(doc.Id),
+            Id = doc.Id,
             NetUid = Guid.TryParse(doc.NetUid, out Guid netUid) ? netUid : Guid.Empty,
             VendorCode = doc.VendorCode,
             Name = isUk ? (doc.NameUA.Length > 0 ? doc.NameUA : doc.Name) : (doc.Name.Length > 0 ? doc.Name : doc.NameUA),
@@ -228,7 +228,7 @@ public sealed class ProductsController(
                 NetUid = Guid.TryParse(doc.SlugNetUid, out Guid slugNetUid) ? slugNetUid : Guid.Empty,
                 Url = doc.SlugUrl,
                 Locale = doc.SlugLocale,
-                ProductId = long.Parse(doc.Id)
+                ProductId = doc.Id
             } : null
         };
     }

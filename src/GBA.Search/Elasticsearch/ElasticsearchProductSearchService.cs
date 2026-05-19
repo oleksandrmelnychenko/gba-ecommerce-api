@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -31,6 +33,20 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
     };
 
     private static readonly Regex SpecialCharsRegex = new(@"[+\-=&|><!(){}\[\]^""~*?:\\/]", RegexOptions.Compiled);
+
+    private static readonly string[] SourceFields = {
+        "id", "netUid", "vendorCode", "vendorCodeClean", "name", "nameUA",
+        "description", "descriptionUA", "searchName", "searchNameUA",
+        "searchDescription", "searchDescriptionUA", "mainOriginalNumber",
+        "mainOriginalNumberClean", "originalNumbers", "originalNumbersClean",
+        "size", "sizeClean", "packingStandard", "orderStandard", "ucgfea",
+        "volume", "top", "weight", "hasAnalogue", "hasComponent", "hasImage",
+        "image", "measureUnitId", "available", "availableQtyUk",
+        "availableQtyUkVat", "availableQtyPl", "availableQtyPlVat",
+        "availableQty", "isForWeb", "isForSale", "isForZeroSale", "slugId",
+        "slugNetUid", "slugUrl", "slugLocale", "retailPrice", "retailPriceVat",
+        "retailCurrencyCode", "updatedAt"
+    };
 
     public ElasticsearchProductSearchService(
         HttpClient httpClient,
@@ -364,6 +380,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         return new {
             from = offset,
             size = limit,
+            _source = SourceFields,
             query = new {
                 function_score = new {
                     query = new {
@@ -465,6 +482,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         return new {
             from = offset,
             size = limit,
+            _source = SourceFields,
             query = new {
                 @bool = new {
                     filter = new[] {
@@ -480,8 +498,9 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
     }
 
     private async Task<SearchResult> ExecuteSearchAsync(object query, CancellationToken ct) {
-        string json = JsonSerializer.Serialize(query, JsonOptions);
-        StringContent content = new StringContent(json, Encoding.UTF8, "application/json");
+        byte[] json = JsonSerializer.SerializeToUtf8Bytes(query, JsonOptions);
+        ByteArrayContent content = new ByteArrayContent(json);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
         HttpResponseMessage response = await _http.PostAsync($"{_settings.IndexName}/_search", content, ct);
 
@@ -491,8 +510,8 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             return new SearchResult([], 0, 0);
         }
 
-        string responseJson = await response.Content.ReadAsStringAsync(ct);
-        using JsonDocument doc = JsonDocument.Parse(responseJson);
+        await using Stream responseStream = await response.Content.ReadAsStreamAsync(ct);
+        using JsonDocument doc = await JsonDocument.ParseAsync(responseStream, cancellationToken: ct);
         JsonElement root = doc.RootElement;
 
         int took = root.GetProperty("took").GetInt32();
@@ -511,8 +530,9 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
     }
 
     private async Task<SearchResultWithDocs> ExecuteSearchWithDocsAsync(object query, CancellationToken ct) {
-        string json = JsonSerializer.Serialize(query, JsonOptions);
-        StringContent content = new StringContent(json, Encoding.UTF8, "application/json");
+        byte[] json = JsonSerializer.SerializeToUtf8Bytes(query, JsonOptions);
+        ByteArrayContent content = new ByteArrayContent(json);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
         HttpResponseMessage response = await _http.PostAsync($"{_settings.IndexName}/_search", content, ct);
 
@@ -522,8 +542,8 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             return new SearchResultWithDocs([], 0, 0);
         }
 
-        string responseJson = await response.Content.ReadAsStringAsync(ct);
-        using JsonDocument doc = JsonDocument.Parse(responseJson);
+        await using Stream responseStream = await response.Content.ReadAsStreamAsync(ct);
+        using JsonDocument doc = await JsonDocument.ParseAsync(responseStream, cancellationToken: ct);
         JsonElement root = doc.RootElement;
 
         int took = root.GetProperty("took").GetInt32();
@@ -543,7 +563,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
 
     private static ProductSearchDocument ParseDocument(JsonElement source) {
         return new ProductSearchDocument {
-            Id = source.TryGetProperty("id", out JsonElement id) ? id.GetInt64().ToString() : "",
+            Id = source.TryGetProperty("id", out JsonElement id) ? id.GetInt64() : 0,
             NetUid = source.TryGetProperty("netUid", out JsonElement netUid) ? netUid.GetString() ?? "" : "",
             VendorCode = source.TryGetProperty("vendorCode", out JsonElement vc) ? vc.GetString() ?? "" : "",
             VendorCodeClean = source.TryGetProperty("vendorCodeClean", out JsonElement vcc) ? vcc.GetString() ?? "" : "",

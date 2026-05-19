@@ -3,7 +3,7 @@ using System.Collections.Generic;
 namespace GBA.Search.Models;
 
 public sealed class ProductSearchDocument {
-    public string Id { get; set; } = string.Empty;
+    public long Id { get; set; }
     public string NetUid { get; set; } = string.Empty;
     public string VendorCode { get; set; } = string.Empty;
     public string VendorCodeClean { get; set; } = string.Empty;
