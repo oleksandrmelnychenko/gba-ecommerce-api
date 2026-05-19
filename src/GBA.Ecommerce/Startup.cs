@@ -122,7 +122,8 @@ public class Startup {
         IConfigurationBuilder builder = new ConfigurationBuilder()
             .SetBasePath(env.ContentRootPath)
             .AddJsonFile("appsettings.json")
-            .AddEnvironmentVariables();
+            .AddEnvironmentVariables()
+            .AddKeyPerFile("/run/secrets", optional: true);
 
         Configuration = builder.Build();
 
@@ -135,12 +136,6 @@ public class Startup {
 
         SecuritySettings securitySettings = Configuration.GetSection("Security").Get<SecuritySettings>() ?? new SecuritySettings();
         SecuritySettings.Initialize(securitySettings);
-
-#if DEBUG
-        env.EnvironmentName = ProductEnvironment.Development;
-#else
-            env.EnvironmentName = ProductEnvironment.Production;
-#endif
     }
 
     public IConfiguration Configuration { get; set; }

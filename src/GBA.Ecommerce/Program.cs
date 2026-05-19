@@ -7,8 +7,11 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+
+builder.Configuration.AddKeyPerFile("/run/secrets", optional: true);
 
 builder.WebHost.ConfigureKestrel(options => {
     options.AddServerHeader = false;
