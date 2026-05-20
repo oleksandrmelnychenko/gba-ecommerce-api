@@ -220,138 +220,56 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
                 c == 'і' || c == 'ї' || c == 'є' || c == 'ґ' ||
                 c == 'І' || c == 'Ї' || c == 'Є' || c == 'Ґ');
             bool hasDigits = term.Any(char.IsDigit);
-            bool useWildcard = term.Length >= 3 && term.Length <= 6;
-            string wildcardPattern = $"*{termLower}*";
 
             if (isCyrillic) {
-                // Cyrillic term: prioritize name matches (like V1 SQL does with PATINDEX on SearchNameUA)
-                // 6. Name match - highest priority for Cyrillic
-                if (useWildcard) {
-                    functions.Add(new {
-                        filter = new { wildcard = new Dictionary<string, object> { [primarySearchName] = new { value = wildcardPattern, case_insensitive = true } } },
-                        weight = 3000
-                    });
-                    functions.Add(new {
-                        filter = new { wildcard = new Dictionary<string, object> { [secondarySearchName] = new { value = wildcardPattern, case_insensitive = true } } },
-                        weight = 2500
-                    });
-                } else {
-                    functions.Add(new {
-                        filter = new { match = new Dictionary<string, object> { [$"{primarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
-                        weight = 3000
-                    });
-                    functions.Add(new {
-                        filter = new { match = new Dictionary<string, object> { [$"{secondarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
-                        weight = 2500
-                    });
-                }
-
-                // 7. Description match
-                if (useWildcard) {
-                    functions.Add(new {
-                        filter = new { wildcard = new Dictionary<string, object> { [primaryDesc] = new { value = wildcardPattern, case_insensitive = true } } },
-                        weight = 500
-                    });
-                    functions.Add(new {
-                        filter = new { wildcard = new Dictionary<string, object> { [secondaryDesc] = new { value = wildcardPattern, case_insensitive = true } } },
-                        weight = 400
-                    });
-                } else {
-                    functions.Add(new {
-                        filter = new { match = new Dictionary<string, object> { [$"{primaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
-                        weight = 500
-                    });
-                    functions.Add(new {
-                        filter = new { match = new Dictionary<string, object> { [$"{secondaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
-                        weight = 400
-                    });
-                }
+                functions.Add(new {
+                    filter = new { match = new Dictionary<string, object> { [$"{primarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    weight = 3000
+                });
+                functions.Add(new {
+                    filter = new { match = new Dictionary<string, object> { [$"{secondarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    weight = 2500
+                });
+                functions.Add(new {
+                    filter = new { match = new Dictionary<string, object> { [$"{primaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    weight = 500
+                });
+                functions.Add(new {
+                    filter = new { match = new Dictionary<string, object> { [$"{secondaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    weight = 400
+                });
             } else {
-                // Latin/numeric term: prioritize vendorCode higher than originalNumbers
-                // V1 SQL actually puts VendorCode_Match before combined Name/OriginalNumber match
-                // For brand names like VOLVO, MAN - vendorCode is more important
-
-                // 4. VendorCode match - highest priority for Latin brand names!
-                if (useWildcard) {
-                    functions.Add(new {
-                        filter = new { wildcard = new Dictionary<string, object> { ["vendorCodeClean"] = new { value = wildcardPattern } } },
-                        weight = 5000
-                    });
-                } else {
-                    functions.Add(new {
-                        filter = new { match = new Dictionary<string, object> { ["vendorCodeClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
-                        weight = 5000
-                    });
-                }
-
-                // 5. OriginalNumber match
-                if (useWildcard) {
-                    functions.Add(new {
-                        filter = new {
-                            @bool = new {
-                                should = new object[] {
-                                    new { wildcard = new Dictionary<string, object> { ["mainOriginalNumberClean"] = new { value = wildcardPattern } } },
-                                    new { wildcard = new Dictionary<string, object> { ["originalNumbersClean"] = new { value = wildcardPattern } } }
-                                }
+                functions.Add(new {
+                    filter = new { match = new Dictionary<string, object> { ["vendorCodeClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    weight = 5000
+                });
+                functions.Add(new {
+                    filter = new {
+                        @bool = new {
+                            should = new object[] {
+                                new { match = new Dictionary<string, object> { ["mainOriginalNumberClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                                new { match = new Dictionary<string, object> { ["originalNumbersClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } }
                             }
-                        },
-                        weight = 3000
-                    });
-                } else {
-                    functions.Add(new {
-                        filter = new {
-                            @bool = new {
-                                should = new object[] {
-                                    new { match = new Dictionary<string, object> { ["mainOriginalNumberClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
-                                    new { match = new Dictionary<string, object> { ["originalNumbersClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } }
-                                }
-                            }
-                        },
-                        weight = 3000
-                    });
-                }
-
-                // 6. Name match for Latin terms (brand names like BOSCH, MANN)
-                if (useWildcard) {
-                    functions.Add(new {
-                        filter = new { wildcard = new Dictionary<string, object> { [primarySearchName] = new { value = wildcardPattern, case_insensitive = true } } },
-                        weight = 1500
-                    });
-                    functions.Add(new {
-                        filter = new { wildcard = new Dictionary<string, object> { [secondarySearchName] = new { value = wildcardPattern, case_insensitive = true } } },
-                        weight = 1200
-                    });
-                } else {
-                    functions.Add(new {
-                        filter = new { match = new Dictionary<string, object> { [$"{primarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
-                        weight = 1500
-                    });
-                    functions.Add(new {
-                        filter = new { match = new Dictionary<string, object> { [$"{secondarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
-                        weight = 1200
-                    });
-                }
-
-                // 7. Description match for Latin terms (lowest priority)
-                if (useWildcard) {
-                    functions.Add(new {
-                        filter = new { wildcard = new Dictionary<string, object> { [primaryDesc] = new { value = wildcardPattern, case_insensitive = true } } },
-                        weight = 300
-                    });
-                    functions.Add(new {
-                        filter = new { wildcard = new Dictionary<string, object> { [secondaryDesc] = new { value = wildcardPattern, case_insensitive = true } } },
-                        weight = 200
-                    });
-                } else {
-                    functions.Add(new {
-                        filter = new { match = new Dictionary<string, object> { [$"{primaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
-                        weight = 300
-                    });
-                    functions.Add(new {
-                        filter = new { match = new Dictionary<string, object> { [$"{secondaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
-                        weight = 200
-                    });
-                }
+                        }
+                    },
+                    weight = 3000
+                });
+                functions.Add(new {
+                    filter = new { match = new Dictionary<string, object> { [$"{primarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    weight = 1500
+                });
+                functions.Add(new {
+                    filter = new { match = new Dictionary<string, object> { [$"{secondarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    weight = 1200
+                });
+                functions.Add(new {
+                    filter = new { match = new Dictionary<string, object> { [$"{primaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    weight = 300
+                });
+                functions.Add(new {
+                    filter = new { match = new Dictionary<string, object> { [$"{secondaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    weight = 200
+                });
             }
 
             // 8. Size match (for all terms)
@@ -413,52 +331,22 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         string termLower = term.ToLowerInvariant();
         string originalTermLower = (originalTerm ?? term).ToLowerInvariant();
 
-        // For short terms (< 4 chars), use wildcard for exact substring match
-        // For longer terms, ngram is fine
-        bool useWildcard = term.Length >= 3 && term.Length <= 6;
-        string wildcardPattern = $"*{termLower}*";
+        shouldClauses.Add(new { match = new Dictionary<string, object> { ["vendorCodeClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
 
-        // VendorCode - wildcard for exact substring
-        if (useWildcard) {
-            shouldClauses.Add(new { wildcard = new Dictionary<string, object> { ["vendorCodeClean"] = new { value = wildcardPattern } } });
-        } else {
-            shouldClauses.Add(new { match = new Dictionary<string, object> { ["vendorCodeClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
-        }
+        shouldClauses.Add(new { match = new Dictionary<string, object> { ["mainOriginalNumberClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
+        shouldClauses.Add(new { match = new Dictionary<string, object> { ["originalNumbersClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
 
-        // Original numbers
-        if (useWildcard) {
-            shouldClauses.Add(new { wildcard = new Dictionary<string, object> { ["mainOriginalNumberClean"] = new { value = wildcardPattern } } });
-            shouldClauses.Add(new { wildcard = new Dictionary<string, object> { ["originalNumbersClean"] = new { value = wildcardPattern } } });
-        } else {
-            shouldClauses.Add(new { match = new Dictionary<string, object> { ["mainOriginalNumberClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
-            shouldClauses.Add(new { match = new Dictionary<string, object> { ["originalNumbersClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
-        }
-
-        // Names - locale-aware, use wildcard for precise PATINDEX-like matching
         (string primaryName, string secondaryName) = locale == "uk"
             ? ("searchNameUA", "searchName")
             : ("searchName", "searchNameUA");
+        shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{primaryName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
+        shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{secondaryName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
 
-        if (useWildcard) {
-            shouldClauses.Add(new { wildcard = new Dictionary<string, object> { [primaryName] = new { value = wildcardPattern, case_insensitive = true } } });
-            shouldClauses.Add(new { wildcard = new Dictionary<string, object> { [secondaryName] = new { value = wildcardPattern, case_insensitive = true } } });
-        } else {
-            shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{primaryName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
-            shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{secondaryName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
-        }
-
-        // Descriptions
         (string primaryDesc, string secondaryDesc) = locale == "uk"
             ? ("searchDescriptionUA", "searchDescription")
             : ("searchDescription", "searchDescriptionUA");
-
-        if (useWildcard) {
-            shouldClauses.Add(new { wildcard = new Dictionary<string, object> { [primaryDesc] = new { value = wildcardPattern, case_insensitive = true } } });
-            shouldClauses.Add(new { wildcard = new Dictionary<string, object> { [secondaryDesc] = new { value = wildcardPattern, case_insensitive = true } } });
-        } else {
-            shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{primaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
-            shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{secondaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
-        }
+        shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{primaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
+        shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{secondaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
 
         // Size - search both original (with special chars like "=") and clean version
         // For dimension queries like "d=45", the original size field "D=45 h=104" is more relevant
