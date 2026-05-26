@@ -5,6 +5,7 @@ using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
 using GBA.Services.Services.Regions.Contracts;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OutputCaching;
 
 namespace GBA.Ecommerce.Controllers;
 
@@ -16,12 +17,14 @@ public sealed class RegionsController(
     : WebApiControllerBase(responseFactory) {
     [HttpGet]
     [AssignActionRoute(RegionsSegments.GET_ALL)]
+    [OutputCache(PolicyName = "Regions")]
     public async Task<IActionResult> GetAllRegions() {
         return Ok(SuccessResponseBody(await regionService.GetAllRegions()));
     }
 
     [HttpGet]
     [AssignActionRoute(RegionsSegments.GET_AVAILABLE_CODE_BY_REGION)]
+    [OutputCache(PolicyName = "LookupShort")]
     public async Task<IActionResult> GetAllRegions([FromQuery] Guid netId) {
         return Ok(SuccessResponseBody(await regionCodeService.GetAvailableRegionCode(netId)));
     }

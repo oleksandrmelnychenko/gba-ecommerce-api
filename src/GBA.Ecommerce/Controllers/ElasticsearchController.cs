@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using GBA.Common.ResponseBuilder.Contracts;
@@ -9,6 +10,8 @@ using GBA.Search.Sync;
 using GBA.Common.IdentityConfiguration.Roles;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OutputCaching;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace GBA.Ecommerce.Controllers;
 
@@ -18,7 +21,11 @@ public sealed class ElasticsearchController(
     IElasticsearchIndexService indexService,
     IElasticsearchSyncService syncService,
     IElasticsearchProductSearchService searchService,
+    IOutputCacheStore outputCacheStore,
     IResponseFactory responseFactory) : WebApiControllerBase(responseFactory) {
+    private const int _defaultSearchLimit = 20;
+    private const int _maxSearchLimit = 100;
+    private const int _maxSearchOffset = 5000;
 
     [HttpGet]
     [Route("health")]
@@ -32,6 +39,7 @@ public sealed class ElasticsearchController(
     [Route("index/create")]
     public async Task<IActionResult> CreateIndexAsync(CancellationToken ct) {
         bool created = await indexService.CreateIndexAsync(ct);
+        await outputCacheStore.EvictByTagAsync("products", ct);
         return Ok(SuccessResponseBody(new { created }));
     }
 
@@ -39,6 +47,7 @@ public sealed class ElasticsearchController(
     [Route("index/delete")]
     public async Task<IActionResult> DeleteIndexAsync(CancellationToken ct) {
         bool deleted = await indexService.DeleteIndexAsync(ct);
+        await outputCacheStore.EvictByTagAsync("products", ct);
         return Ok(SuccessResponseBody(new { deleted }));
     }
 
@@ -46,6 +55,7 @@ public sealed class ElasticsearchController(
     [Route("sync/full")]
     public async Task<IActionResult> FullSyncAsync(CancellationToken ct) {
         SyncResult result = await syncService.FullRebuildAsync(ct);
+        await outputCacheStore.EvictByTagAsync("products", ct);
         return Ok(SuccessResponseBody(result));
     }
 
@@ -53,12 +63,15 @@ public sealed class ElasticsearchController(
     [Route("sync/incremental")]
     public async Task<IActionResult> IncrementalSyncAsync(CancellationToken ct) {
         SyncResult result = await syncService.IncrementalSyncAsync(ct);
+        await outputCacheStore.EvictByTagAsync("products", ct);
         return Ok(SuccessResponseBody(result));
     }
 
     [HttpGet]
     [Route("search")]
     [AllowAnonymous]
+    [OutputCache(PolicyName = "AnonymousProductSearch")]
+    [EnableRateLimiting("search")]
     public async Task<IActionResult> SearchAsync(
         [FromQuery] string query,
         [FromQuery] int limit = 20,
@@ -66,7 +79,9 @@ public sealed class ElasticsearchController(
         CancellationToken ct = default) {
 
         string locale = RouteData.Values["culture"]?.ToString() ?? "uk";
-        ProductSearchResult result = await searchService.SearchAsync(query, locale, limit, offset, ct);
+        int esLimit = limit <= 0 ? _defaultSearchLimit : Math.Min(limit, _maxSearchLimit);
+        int esOffset = offset < 0 ? 0 : Math.Min(offset, _maxSearchOffset);
+        ProductSearchResult result = await searchService.SearchAsync(query, locale, esLimit, esOffset, ct);
         return Ok(SuccessResponseBody(result));
     }
 

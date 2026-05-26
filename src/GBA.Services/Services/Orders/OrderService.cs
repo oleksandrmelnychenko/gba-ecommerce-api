@@ -83,6 +83,76 @@ public sealed class OrderService : IOrderService {
         _httpClientFactory = httpClientFactory;
     }
 
+    private static Sale BuildCreatedSaleResponse(Sale sale) {
+        return new Sale {
+            Id = sale.Id,
+            NetUid = sale.NetUid,
+            Created = sale.Created,
+            Updated = sale.Updated,
+            Deleted = sale.Deleted,
+            OrderId = sale.OrderId,
+            ClientAgreementId = sale.ClientAgreementId,
+            BaseLifeCycleStatusId = sale.BaseLifeCycleStatusId,
+            BaseSalePaymentStatusId = sale.BaseSalePaymentStatusId,
+            DeliveryRecipientId = sale.DeliveryRecipientId,
+            DeliveryRecipientAddressId = sale.DeliveryRecipientAddressId,
+            TransporterId = sale.TransporterId,
+            SaleNumberId = sale.SaleNumberId,
+            ShiftStatusId = sale.ShiftStatusId,
+            WorkplaceId = sale.WorkplaceId,
+            CustomersOwnTtnId = sale.CustomersOwnTtnId,
+            Comment = sale.Comment,
+            IsInvoice = sale.IsInvoice,
+            IsVatSale = sale.IsVatSale,
+            IsCashOnDelivery = sale.IsCashOnDelivery,
+            HasDocuments = sale.HasDocuments,
+            CashOnDeliveryAmount = sale.CashOnDeliveryAmount,
+            ShipmentDate = sale.ShipmentDate,
+            SaleNumber = sale.SaleNumber == null
+                ? null
+                : new SaleNumber {
+                    Id = sale.SaleNumber.Id,
+                    NetUid = sale.SaleNumber.NetUid,
+                    Created = sale.SaleNumber.Created,
+                    Updated = sale.SaleNumber.Updated,
+                    Deleted = sale.SaleNumber.Deleted,
+                    Value = sale.SaleNumber.Value,
+                    OrganizationId = sale.SaleNumber.OrganizationId
+                },
+            Order = sale.Order == null
+                ? null
+                : new Order {
+                    Id = sale.Order.Id,
+                    NetUid = sale.Order.NetUid,
+                    Created = sale.Order.Created,
+                    Updated = sale.Order.Updated,
+                    Deleted = sale.Order.Deleted,
+                    OrderSource = sale.Order.OrderSource,
+                    OrderStatus = sale.Order.OrderStatus
+                }
+        };
+    }
+
+    private void QueueEcommerceSaleUpdate(string crmApiUrl, string payload, string operationName) {
+        BackgroundSyncRunner.Run(async cancellationToken => {
+            using HttpClient httpClient = _httpClientFactory.CreateClient();
+            using HttpRequestMessage requestMessage = new(HttpMethod.Post, crmApiUrl) {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json")
+            };
+
+            HttpResponseMessage responseMessage =
+                await httpClient.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+            if (responseMessage.IsSuccessStatusCode) return;
+
+            using (responseMessage) {
+                string responseContent = await responseMessage.Content.ReadAsStringAsync(cancellationToken);
+                string responseErrorMessage = ExtractErrorMessage(responseContent);
+                throw new Exception(responseErrorMessage);
+            }
+        }, operationName);
+    }
+
     public Task<Sale> GenerateNewOrderAndSaleFromClientShoppingCart(Guid clientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
             ClientShoppingCart clientShoppingCart =
@@ -627,22 +697,9 @@ public sealed class OrderService : IOrderService {
 
             string payload = JsonSerializer.Serialize(createdSale);
 
-            using HttpClient httpClient = _httpClientFactory.CreateClient();
-            HttpResponseMessage responseMessage =
-                await httpClient.PostAsync(
-                    crmApiUrl,
-                    new StringContent(payload, Encoding.UTF8, "application/json")
-                );
+            QueueEcommerceSaleUpdate(crmApiUrl, payload, "Order invoice sale update");
 
-            string responseContent = await responseMessage.Content.ReadAsStringAsync();
-            string responseErrorMessage = ExtractErrorMessage(responseContent);
-
-            if (!responseMessage.IsSuccessStatusCode)
-                throw new Exception(responseErrorMessage);
-
-            sale = saleRepository.GetByNetId(createdSale.NetUid);
-
-            return sale;
+            return BuildCreatedSaleResponse(createdSale);
     }
 
     public async Task<string> GenerateNewRetailSale(Sale sale, Guid retailClientNetId, bool fullPayment) {
@@ -884,18 +941,7 @@ public sealed class OrderService : IOrderService {
             string payload = JsonSerializer.Serialize(createdSale);
 
 
-            using HttpClient httpClient = _httpClientFactory.CreateClient();
-            HttpResponseMessage responseMessage =
-                await httpClient.PostAsync(
-                    crmApiUrl,
-                    new StringContent(payload, Encoding.UTF8, "application/json")
-                );
-
-            string responseContent = await responseMessage.Content.ReadAsStringAsync();
-            string responseErrorMessage = ExtractErrorMessage(responseContent);
-
-            if (!responseMessage.IsSuccessStatusCode)
-                throw new Exception(responseErrorMessage);
+            QueueEcommerceSaleUpdate(crmApiUrl, payload, "Retail sale update");
 
             // sale = saleRepository.GetByNetId(createdSale.NetUid);
 
@@ -1171,18 +1217,7 @@ public sealed class OrderService : IOrderService {
             string payload = JsonSerializer.Serialize(createdSale);
 
 
-            using HttpClient httpClient = _httpClientFactory.CreateClient();
-            HttpResponseMessage responseMessage =
-                await httpClient.PostAsync(
-                    crmApiUrl,
-                    new StringContent(payload, Encoding.UTF8, "application/json")
-                );
-
-            string responseContent = await responseMessage.Content.ReadAsStringAsync();
-            string responseErrorMessage = ExtractErrorMessage(responseContent);
-
-            if (!responseMessage.IsSuccessStatusCode)
-                throw new Exception(responseErrorMessage);
+            QueueEcommerceSaleUpdate(crmApiUrl, payload, "Quick sale update");
 
             // sale = saleRepository.GetByNetId(createdSale.NetUid);
 
@@ -1256,17 +1291,17 @@ public sealed class OrderService : IOrderService {
             string payload = JsonSerializer.Serialize(paymentImage);
 
         using HttpClient httpClient = _httpClientFactory.CreateClient();
-        HttpResponseMessage responseMessage =
-            await httpClient.PostAsync(
-                crmApiUrl.Uri,
-                new StringContent(payload, Encoding.UTF8, "application/json")
-            );
+        using HttpRequestMessage requestMessage = new(HttpMethod.Post, crmApiUrl.Uri) {
+            Content = new StringContent(payload, Encoding.UTF8, "application/json")
+        };
+        using HttpResponseMessage responseMessage =
+            await httpClient.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead);
 
-        string responseContent = await responseMessage.Content.ReadAsStringAsync();
-        string responseErrorMessage = ExtractErrorMessage(responseContent);
-
-        if (!responseMessage.IsSuccessStatusCode)
+        if (!responseMessage.IsSuccessStatusCode) {
+            string responseContent = await responseMessage.Content.ReadAsStringAsync();
+            string responseErrorMessage = ExtractErrorMessage(responseContent);
             throw new Exception(responseErrorMessage);
+        }
     }
 
     public Task<SaleStatistic> GetSaleByNetId(Guid netId) {

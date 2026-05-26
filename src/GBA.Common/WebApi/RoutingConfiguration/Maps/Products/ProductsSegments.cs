@@ -53,10 +53,6 @@ public static class ProductsSegments {
 
     public const string SEARCH_V2 = "search/v2";
 
-    public const string SEARCH_V3 = "search/v3";
-
-    public const string SEARCH_V3_DEBUG = "search/v3/debug";
-
     public const string ADVANCED_SEARCH = "search/advanced";
 
     public const string SEARCH_SIMILAR = "search/similar";

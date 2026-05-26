@@ -5,6 +5,7 @@ using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
 using GBA.Services.Services.Products.Contracts;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OutputCaching;
 
 namespace GBA.Ecommerce.Controllers;
 
@@ -43,6 +44,7 @@ public sealed class CarBrandsController(
 
     [HttpGet]
     [AssignActionRoute(CarBrandsSegments.GET_ALL_CAR_BRANDS)]
+    [OutputCache(PolicyName = "Brands")]
     public async Task<IActionResult> GetAllCarBrandsAsync() {
         return Ok(
             SuccessResponseBody(

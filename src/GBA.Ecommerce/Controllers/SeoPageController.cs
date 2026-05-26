@@ -6,6 +6,7 @@ using GBA.Common.WebApi.RoutingConfiguration.Maps;
 using GBA.Common.WebApi.RoutingConfiguration.Maps.Ecommerce;
 using GBA.Services.Services.Ecommerce.Contracts;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OutputCaching;
 
 namespace GBA.Ecommerce.Controllers;
 
@@ -15,12 +16,14 @@ public sealed class SeoPageController(
     ISeoPageService seoPageService) : WebApiControllerBase(responseFactory) {
     [HttpGet]
     [AssignActionRoute(SeoSegments.GET_ALL)]
+    [OutputCache(PolicyName = "Static")]
     public async Task<IActionResult> GetAll() {
         return Ok(SuccessResponseBody(await seoPageService.GetAll()));
     }
 
     [HttpGet]
     [AssignActionRoute(SeoSegments.GET_ALL_LOCALE)]
+    [OutputCache(PolicyName = "Static")]
     public async Task<IActionResult> GetAll([FromQuery] string locale) {
         return Ok(SuccessResponseBody(await seoPageService.GetAll(locale)));
     }

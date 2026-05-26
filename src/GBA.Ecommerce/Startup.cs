@@ -4,6 +4,8 @@ using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net;
+using System.Text.Json;
 using GBA.Common;
 using GBA.Common.Cultures;
 using GBA.Common.Exceptions.GlobalHandler;
@@ -100,6 +102,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.AspNetCore.OutputCaching;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Net.Http.Headers;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -115,6 +118,9 @@ namespace GBA.Ecommerce;
 
 public class Startup {
     private const string _corsPolicy = "CorsPolicy";
+    private const int _maxCachedSearchLimit = 100;
+    private const int _maxCachedSearchOffset = 5000;
+    private const int _maxCachedSearchTermLength = 128;
 
     private readonly IWebHostEnvironment _environment;
 
@@ -188,27 +194,59 @@ public class Startup {
             });
         services.AddRateLimiter(options => {
             options.RejectionStatusCode = 429;
+            options.OnRejected = async (context, cancellationToken) => {
+                context.HttpContext.Response.ContentType = "application/json";
+                context.HttpContext.Response.Headers[HeaderNames.CacheControl] = "no-store";
+                await context.HttpContext.Response.WriteAsync(
+                    JsonSerializer.Serialize(new {
+                        statusCode = StatusCodes.Status429TooManyRequests,
+                        message = "Too many requests"
+                    }),
+                    cancellationToken);
+            };
 
-            options.AddFixedWindowLimiter("auth", opt => {
-                opt.PermitLimit = 5;
-                opt.Window = TimeSpan.FromMinutes(1);
-                opt.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-                opt.QueueLimit = 2;
-            });
+            options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+                RateLimitPartition.GetSlidingWindowLimiter(
+                    GetClientPartitionKey(context),
+                    _ => new SlidingWindowRateLimiterOptions {
+                        PermitLimit = 1200,
+                        Window = TimeSpan.FromMinutes(1),
+                        SegmentsPerWindow = 6,
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = 0
+                    }));
 
-            options.AddFixedWindowLimiter("search", opt => {
-                opt.PermitLimit = 30;
-                opt.Window = TimeSpan.FromMinutes(1);
-                opt.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-                opt.QueueLimit = 5;
-            });
+            options.AddPolicy("auth", context =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    GetClientPartitionKey(context),
+                    _ => new FixedWindowRateLimiterOptions {
+                        PermitLimit = 5,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = 0
+                    }));
 
-            options.AddFixedWindowLimiter("api", opt => {
-                opt.PermitLimit = 100;
-                opt.Window = TimeSpan.FromMinutes(1);
-                opt.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-                opt.QueueLimit = 10;
-            });
+            options.AddPolicy("search", context =>
+                RateLimitPartition.GetSlidingWindowLimiter(
+                    GetClientPartitionKey(context),
+                    _ => new SlidingWindowRateLimiterOptions {
+                        PermitLimit = 60,
+                        Window = TimeSpan.FromMinutes(1),
+                        SegmentsPerWindow = 6,
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = 0
+                    }));
+
+            options.AddPolicy("api", context =>
+                RateLimitPartition.GetSlidingWindowLimiter(
+                    GetClientPartitionKey(context),
+                    _ => new SlidingWindowRateLimiterOptions {
+                        PermitLimit = 600,
+                        Window = TimeSpan.FromMinutes(1),
+                        SegmentsPerWindow = 6,
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = 0
+                    }));
         });
 
         services.AddHsts(options => {
@@ -223,16 +261,61 @@ public class Startup {
         });
 
         services.AddOutputCache(options => {
-            options.AddBasePolicy(builder => builder.Expire(TimeSpan.FromSeconds(60)));
-            options.AddPolicy("Products", builder => builder.Expire(TimeSpan.FromMinutes(5)).Tag("products"));
-            options.AddPolicy("Regions", builder => builder.Expire(TimeSpan.FromHours(1)).Tag("regions"));
-            options.AddPolicy("Brands", builder => builder.Expire(TimeSpan.FromHours(2)).Tag("brands"));
-            options.AddPolicy("Static", builder => builder.Expire(TimeSpan.FromHours(24)).Tag("static"));
+            options.SizeLimit = 256 * 1024 * 1024;
+            options.MaximumBodySize = 4 * 1024 * 1024;
+            options.UseCaseSensitivePaths = false;
+
+            options.AddPolicy("AnonymousProductSearch", builder => builder
+                .With(IsAnonymousGetRequest)
+                .With(IsCacheableSearchQuery)
+                .Expire(TimeSpan.FromMinutes(2))
+                .SetVaryByRouteValue("culture")
+                .SetVaryByQuery("value", "query", "limit", "offset", "withVat")
+                .Tag("products")
+                .SetLocking(true));
+
+            options.AddPolicy("Regions", builder => builder
+                .With(IsAnonymousGetRequest)
+                .Expire(TimeSpan.FromHours(1))
+                .SetVaryByRouteValue("culture")
+                .SetVaryByQuery("netId")
+                .Tag("regions")
+                .SetLocking(true));
+
+            options.AddPolicy("Brands", builder => builder
+                .With(IsAnonymousGetRequest)
+                .Expire(TimeSpan.FromHours(2))
+                .SetVaryByRouteValue("culture")
+                .Tag("brands")
+                .SetLocking(true));
+
+            options.AddPolicy("LookupShort", builder => builder
+                .With(IsAnonymousGetRequest)
+                .Expire(TimeSpan.FromMinutes(10))
+                .SetVaryByRouteValue("culture")
+                .SetVaryByQuery("netId")
+                .Tag("lookups")
+                .SetLocking(true));
+
+            options.AddPolicy("ExchangeRates", builder => builder
+                .With(IsAnonymousGetRequest)
+                .Expire(TimeSpan.FromMinutes(10))
+                .SetVaryByRouteValue("culture")
+                .Tag("exchange-rates")
+                .SetLocking(true));
+
+            options.AddPolicy("Static", builder => builder
+                .With(IsAnonymousGetRequest)
+                .Expire(TimeSpan.FromHours(24))
+                .SetVaryByRouteValue("culture")
+                .SetVaryByQuery("locale")
+                .Tag("static")
+                .SetLocking(true));
         });
 
         services.AddCors(options => {
             options.AddPolicy(_corsPolicy, builder => builder
-                .WithOrigins("http://localhost:3000", "http://localhost:7000", "https://new.concord-shop.com")
+                .WithOrigins(SecuritySettings.Instance.CorsOrigins)
                 .AllowAnyMethod().AllowAnyHeader()
                 .AllowCredentials());
         });
@@ -375,9 +458,14 @@ public class Startup {
 
         app.UseHttpsRedirection();
         app.UseRouting();
+        ConfigureRequestLocalization(app);
+        app.UseCors(_corsPolicy);
+        app.UseRateLimiter();
+        app.UseAuthentication();
+        app.UseAuthorization();
+        app.UseMiddleware<UserNetIdMiddleware>();
         app.UseResponseCaching();
         app.UseOutputCache();
-        app.UseRateLimiter();
         app.UseDefaultFiles();
         app.UseStaticFiles(new StaticFileOptions {
             RequestPath = "/documents",
@@ -387,13 +475,6 @@ public class Startup {
                 ctx.Context.Response.Headers[HeaderNames.CacheControl] = "public,max-age=604800";
             }
         });
-
-        ConfigureRequestLocalization(app);
-
-        app.UseCors(_corsPolicy);
-        app.UseAuthentication();
-        app.UseAuthorization();
-        app.UseMiddleware<UserNetIdMiddleware>();
 
         app.UseExceptionHandler(builder => {
             builder.Run(async context => {
@@ -433,8 +514,88 @@ public class Startup {
                     });
                     await context.Response.WriteAsync(result);
                 }
-            });
+            }).DisableRateLimiting();
         });
+    }
+
+    private static bool IsAnonymousGetRequest(OutputCacheContext context) {
+        HttpRequest request = context.HttpContext.Request;
+        if (!HttpMethods.IsGet(request.Method) && !HttpMethods.IsHead(request.Method)) return false;
+
+        if (context.HttpContext.User.Identity?.IsAuthenticated == true) return false;
+
+        return !request.Headers.ContainsKey(HeaderNames.Authorization)
+               && !request.Headers.ContainsKey(HeaderNames.Cookie);
+    }
+
+    private static bool IsCacheableSearchQuery(OutputCacheContext context) {
+        IQueryCollection query = context.HttpContext.Request.Query;
+
+        string? term = query.TryGetValue("value", out var value)
+            ? value.FirstOrDefault()
+            : query.TryGetValue("query", out var searchQuery)
+                ? searchQuery.FirstOrDefault()
+                : null;
+
+        return !string.IsNullOrWhiteSpace(term)
+               && term.Length <= _maxCachedSearchTermLength
+               && QueryIntAtMost(query, "limit", _maxCachedSearchLimit)
+               && QueryIntAtMost(query, "offset", _maxCachedSearchOffset);
+    }
+
+    private static bool QueryIntAtMost(IQueryCollection query, string key, int maxValue) {
+        if (!query.TryGetValue(key, out var values)) return true;
+
+        string? value = values.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(value)) return true;
+
+        return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed)
+               && parsed >= 0
+               && parsed <= maxValue;
+    }
+
+    private static string GetClientPartitionKey(HttpContext context) {
+        IPAddress? remoteIp = context.Connection.RemoteIpAddress;
+
+        if (IsPrivateOrLoopback(remoteIp)) {
+            string? forwardedIp = GetFirstHeaderIp(context, "CF-Connecting-IP")
+                ?? GetFirstHeaderIp(context, "X-Forwarded-For")
+                ?? GetFirstHeaderIp(context, "X-Real-IP");
+
+            if (!string.IsNullOrWhiteSpace(forwardedIp)) {
+                return forwardedIp;
+            }
+        }
+
+        return remoteIp?.ToString() ?? "unknown";
+    }
+
+    private static string? GetFirstHeaderIp(HttpContext context, string headerName) {
+        string? value = context.Request.Headers[headerName].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(value)) return null;
+
+        string first = value.Split(',')[0].Trim();
+        return IPAddress.TryParse(first, out IPAddress? ipAddress) ? ipAddress.ToString() : null;
+    }
+
+    private static bool IsPrivateOrLoopback(IPAddress? address) {
+        if (address is null) return false;
+        if (IPAddress.IsLoopback(address)) return true;
+
+        if (address.IsIPv4MappedToIPv6) {
+            address = address.MapToIPv4();
+        }
+
+        byte[] bytes = address.GetAddressBytes();
+        return address.AddressFamily switch {
+            System.Net.Sockets.AddressFamily.InterNetwork =>
+                bytes[0] == 10 ||
+                bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31 ||
+                bytes[0] == 192 && bytes[1] == 168,
+            System.Net.Sockets.AddressFamily.InterNetworkV6 =>
+                bytes[0] == 0xfd || bytes[0] == 0xfc,
+            _ => false
+        };
     }
 
     private void ConfigureRequestLocalization(IApplicationBuilder app) {
@@ -504,7 +665,7 @@ public class Startup {
             ValidateIssuer = true,
             ValidIssuer = AuthOptions.ISSUER,
             ValidateAudience = true,
-            ValidAudience = AuthOptions.AUDIENCE_LOCAL,
+            ValidAudience = AuthOptions.AUDIENCE,
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero
         };
@@ -517,4 +678,3 @@ public class Startup {
         });
     }
 }
-

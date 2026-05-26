@@ -1,6 +1,6 @@
 ﻿{
-  "CrmServerUrl": "http://localhost:35981",
-  "CrmServerUrlRelease": "http://217.20.112.213:13133",
+  "CrmServerUrl": "http://data-concord:35981",
+  "CrmServerUrlRelease": "http://data-concord:35981",
   "EcommerceClientUrl": "http://78.152.175.67:15026",
   "EcommerceClientUrlRelease": "https://server.concord-amg.com:13135",
   "LocalCrmServerUrl": "http://localhost:35981"

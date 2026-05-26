@@ -5,24 +5,16 @@ using Microsoft.IdentityModel.Tokens;
 namespace GBA.Common.IdentityConfiguration;
 
 public sealed class AuthOptions {
-    public const string ISSUER = "ConcordCRM";
-
-    public const string AUDIENCE_LOCAL = "http://localhost:4200/";
-    public const string AUDIENCE_REMOTE = "http://localhost:4200/";
-
     public const string DEFAULT_PASSWORD_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-    public static string KEY => SecuritySettings.Instance.JwtKey;
-
-#if DEBUG
     public const int LIFETIME = 15;
-#else
-    public const int LIFETIME = 15;
-#endif
-
     public const int REFRESH_LIFETIME = 10080;
 
+    public static string ISSUER => SecuritySettings.Instance.JwtIssuer;
+    public static string AUDIENCE => SecuritySettings.Instance.JwtAudience;
+    public static string KEY => SecuritySettings.Instance.JwtKey;
+
     public static SymmetricSecurityKey GetSymmetricSecurityKey() {
-        return new SymmetricSecurityKey(Encoding.ASCII.GetBytes(KEY));
+        return new SymmetricSecurityKey(Encoding.UTF8.GetBytes(KEY));
     }
 }

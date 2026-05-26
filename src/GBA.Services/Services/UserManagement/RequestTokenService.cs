@@ -155,7 +155,7 @@ public sealed class RequestTokenService : IRequestTokenService {
 
         JwtSecurityToken jwt = new(
             AuthOptions.ISSUER,
-            AuthOptions.AUDIENCE_LOCAL,
+            AuthOptions.AUDIENCE,
             notBefore: now,
             claims: claims,
             expires: now.Add(TimeSpan.FromMinutes(AuthOptions.LIFETIME)),

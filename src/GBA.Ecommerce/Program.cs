@@ -17,17 +17,19 @@ builder.WebHost.ConfigureKestrel(options => {
     options.AddServerHeader = false;
 
     // Connection limits
-    options.Limits.MaxConcurrentConnections = 2000;
-    options.Limits.MaxConcurrentUpgradedConnections = 2000;
+    options.Limits.MaxConcurrentConnections = 1000;
+    options.Limits.MaxConcurrentUpgradedConnections = 200;
     options.Limits.MaxRequestBodySize = 52428800; // 50MB
 
-    // Disable rate limits for high-throughput scenarios
-    options.Limits.MinRequestBodyDataRate = null;
-    options.Limits.MinResponseDataRate = null;
+    // Keep slow clients from occupying sockets indefinitely.
+    options.Limits.MinRequestBodyDataRate = new MinDataRate(240, TimeSpan.FromSeconds(10));
+    options.Limits.MinResponseDataRate = new MinDataRate(240, TimeSpan.FromSeconds(10));
 
     // Timeouts
-    options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(2);
-    options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(30);
+    options.Limits.KeepAliveTimeout = TimeSpan.FromSeconds(60);
+    options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(15);
+    options.Limits.MaxRequestHeaderCount = 64;
+    options.Limits.MaxRequestHeadersTotalSize = 32768;
 
     // HTTP/2 optimizations
     options.Limits.Http2.MaxStreamsPerConnection = 250;
@@ -37,7 +39,7 @@ builder.WebHost.ConfigureKestrel(options => {
     options.Limits.Http2.MaxRequestHeaderFieldSize = 16 * 1024; // 16KB
 
     options.ListenAnyIP(62506, listenOptions => {
-        listenOptions.Protocols = HttpProtocols.Http1AndHttp2;
+        listenOptions.Protocols = HttpProtocols.Http1;
         if (builder.Environment.IsDevelopment()) {
             listenOptions.UseConnectionLogging();
         }

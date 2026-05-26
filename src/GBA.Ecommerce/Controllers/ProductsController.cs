@@ -30,9 +30,13 @@ public sealed class ProductsController(
     IElasticsearchProductSearchService esSearchService,
     IPriceCacheService priceCacheService,
     IResponseFactory responseFactory) : WebApiControllerBase(responseFactory) {
+    private const int _defaultSearchLimit = 20;
+    private const int _maxSearchLimit = 100;
+    private const int _maxSearchOffset = 5000;
+
     [HttpGet]
     [AssignActionRoute(ProductsSegments.SEARCH)]
-    [OutputCache(PolicyName = "Products", VaryByQueryKeys = ["value", "limit", "offset", "withVat"])]
+    [OutputCache(PolicyName = "AnonymousProductSearch")]
     [EnableRateLimiting("search")]
     public async Task<IActionResult> GetAllFromSearchAsync([FromQuery] string value, [FromQuery] long limit, [FromQuery] long offset, [FromQuery] int withVat = 0, CancellationToken cancellationToken = default) {
         return await SearchWithElasticsearchAsync(value, limit, offset, withVat, cancellationToken);
@@ -45,8 +49,8 @@ public sealed class ProductsController(
         Guid userNetId = GetUserNetId();
         string locale = RouteData.Values["culture"]?.ToString() ?? "uk";
 
-        int esLimit = limit <= 0 ? 20 : (int)limit;
-        int esOffset = offset < 0 ? 0 : (int)offset;
+        int esLimit = limit <= 0 ? _defaultSearchLimit : (int)Math.Min(limit, _maxSearchLimit);
+        int esOffset = offset < 0 ? 0 : (int)Math.Min(offset, _maxSearchOffset);
 
         ProductSearchResultWithDocs searchResult = await esSearchService.SearchWithDocsAsync(value, locale, esLimit, esOffset, cancellationToken);
 

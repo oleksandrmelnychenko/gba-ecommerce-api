@@ -35,6 +35,12 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         PropertyNameCaseInsensitive = true
     };
 
+    private static OrderItem NormalizeOverLordQty(OrderItem orderItem) {
+        if (orderItem.OverLordQty <= 0 && orderItem.Qty > 0) orderItem.OverLordQty = orderItem.Qty;
+
+        return orderItem;
+    }
+
     private readonly IAgreementRepositoriesFactory _agreementRepositoriesFactory;
     private readonly IClientRepositoriesFactory _clientRepositoriesFactory;
     private readonly IDbConnectionFactory _connectionFactory;
@@ -307,7 +313,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 );
             }
 
-            return Task.FromResult(orderItems);
+            return Task.FromResult(orderItems.Select(NormalizeOverLordQty).ToList());
     }
 
     public Task<OrderItem> Update(OrderItem orderItem, Guid clientNetId, bool withVat) {
@@ -329,14 +335,14 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             if (orderItem.IsNew())
                 throw new Exception("New OrderItem is not valid input for current request.");
             if (orderItem.Qty <= 0)
-                return Task.FromResult(orderItemRepository.GetByIdWithIncludes(orderItem.Id, selectedAgreement.NetUid));
+                return Task.FromResult(NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItem.Id, selectedAgreement.NetUid)));
 
             orderItemRepository.UpdateOverLoadQty(orderItem);
 
             OrderItem orderItemFromDb = orderItemRepository.GetById(orderItem.Id);
 
             if (orderItem.Qty.Equals(orderItemFromDb.Qty))
-                return Task.FromResult(orderItemRepository.GetByIdWithIncludes(orderItem.Id, selectedAgreement.NetUid));
+                return Task.FromResult(NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItem.Id, selectedAgreement.NetUid)));
 
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
             IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
@@ -460,7 +466,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             orderItemRepository.UpdateQty(orderItem);
             orderItemRepository.UpdateOverLoadQty(orderItem);
 
-            return Task.FromResult(orderItemRepository.GetByIdWithIncludes(orderItem.Id, selectedAgreement.NetUid));
+            return Task.FromResult(NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItem.Id, selectedAgreement.NetUid)));
     }
 
     public Task<List<OrderItem>> Update(List<OrderItem> orderItems, Guid clientNetId, bool withVat) {
@@ -475,7 +481,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 if (orderItems[item] == null) continue;
                 if (orderItems[item].IsNew()) continue;
                 if (orderItems[item].Qty <= 0) {
-                    orderItems[item] = orderItemRepository.GetByIdWithIncludes(orderItems[item].Id, nonVatAgreement?.NetUid, vatAgreement?.NetUid);
+                    orderItems[item] = NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItems[item].Id, nonVatAgreement?.NetUid, vatAgreement?.NetUid));
 
                     continue;
                 }
@@ -483,7 +489,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 OrderItem orderItemFromDb = orderItemRepository.GetById(orderItems[item].Id);
 
                 if (orderItems[item].Qty.Equals(orderItemFromDb.Qty)) {
-                    orderItems[item] = orderItemRepository.GetByIdWithIncludes(orderItems[item].Id, nonVatAgreement?.NetUid, vatAgreement?.NetUid);
+                    orderItems[item] = NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItems[item].Id, nonVatAgreement?.NetUid, vatAgreement?.NetUid));
 
                     continue;
                 }
@@ -602,10 +608,10 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
                 orderItemRepository.UpdateQty(orderItems[item]);
 
-                orderItems[item] = orderItemRepository.GetByIdWithIncludes(orderItems[item].Id, nonVatAgreement?.NetUid, vatAgreement?.NetUid);
+                orderItems[item] = NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItems[item].Id, nonVatAgreement?.NetUid, vatAgreement?.NetUid));
             }
 
-            return Task.FromResult(orderItems);
+            return Task.FromResult(orderItems.Select(NormalizeOverLordQty).ToList());
     }
 
     public Task<IEnumerable<OrderItem>> GetAllItemsFromCurrentShoppingCartByClientNetId(Guid netId, bool withVat) {
@@ -632,7 +638,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                     selectedAgreement.Agreement.WithVATAccounting
                 );
 
-            return Task.FromResult(orderItems);
+            return Task.FromResult(orderItems.Select(NormalizeOverLordQty));
     }
 
     public Task DeleteItemFromShoppingCartByNetId(Guid itemNetId, Guid clientNetId, bool withVat) {
@@ -890,7 +896,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
         }, "Cart update availability sync");
 
-        return orderItemRepository.GetByIdAndClientAgreementNetIdWithIncludes(existingOrderItem.Id, clientAgreementNetId.Value, currencyId.Value);
+        return NormalizeOverLordQty(orderItemRepository.GetByIdAndClientAgreementNetIdWithIncludes(existingOrderItem.Id, clientAgreementNetId.Value, currencyId.Value));
         ;
     }
 
@@ -955,6 +961,6 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
         }, "Cart add availability sync");
 
-        return orderItemRepository.GetByIdAndClientAgreementNetIdWithIncludes(orderItem.Id, clientAgreementNetId.Value, currencyId.Value);
+        return NormalizeOverLordQty(orderItemRepository.GetByIdAndClientAgreementNetIdWithIncludes(orderItem.Id, clientAgreementNetId.Value, currencyId.Value));
     }
 }

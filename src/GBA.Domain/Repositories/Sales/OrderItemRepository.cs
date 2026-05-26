@@ -22,12 +22,35 @@ namespace GBA.Domain.Repositories.Sales;
 
 public sealed class OrderItemRepository : IOrderItemRepository {
     private readonly IDbConnection _connection;
+    private bool? _hasOverLordQtyColumn;
 
     public OrderItemRepository(IDbConnection connection) {
         _connection = connection;
     }
 
+    private bool HasOverLordQtyColumn() {
+        _hasOverLordQtyColumn ??= _connection.ExecuteScalar<int>(
+            "SELECT COUNT(1) " +
+            "FROM sys.columns " +
+            "WHERE object_id = OBJECT_ID('dbo.OrderItem') " +
+            "AND name = 'OverLordQty'"
+        ) > 0;
+
+        return _hasOverLordQtyColumn.Value;
+    }
+
     public long Add(OrderItem orderItem) {
+        if (!HasOverLordQtyColumn())
+            return _connection.Query<long>(
+                "INSERT INTO [OrderItem] (ClientShoppingCartId, OrderId, UserId, ProductId, Qty, Comment, IsValidForCurrentSale, PricePerItem, OrderedQty, " +
+                "FromOfferQty, IsFromOffer, ExchangeRateAmount, OneTimeDiscount, DiscountAmount, PricePerItemWithoutVat, ReturnedQty, AssignedSpecificationId, " +
+                "IsFromReSale, MisplacedSaleId, Updated, Vat, IsFromShiftedItem) " +
+                "VALUES(@ClientShoppingCartId, @OrderId, @UserId, @ProductId, @Qty, @Comment, @IsValidForCurrentSale, @PricePerItem, @OrderedQty, " +
+                "@FromOfferQty, @IsFromOffer, @ExchangeRateAmount, 0.00, 0.00, 0.00, 0, @AssignedSpecificationId, @IsFromReSale, @MisplacedSaleId, getutcdate(), @Vat, @IsFromShiftedItem); " +
+                "SELECT SCOPE_IDENTITY()",
+                orderItem
+            ).Single();
+
         return _connection.Query<long>(
             "INSERT INTO [OrderItem] (ClientShoppingCartId, OrderId, UserId, ProductId, Qty, OverLordQty, Comment, IsValidForCurrentSale, PricePerItem, OrderedQty, " +
             "FromOfferQty, IsFromOffer, ExchangeRateAmount, OneTimeDiscount, DiscountAmount, PricePerItemWithoutVat, ReturnedQty, AssignedSpecificationId, " +
@@ -129,6 +152,8 @@ public sealed class OrderItemRepository : IOrderItemRepository {
     }
 
     public void UpdateOverLoadQty(OrderItem orderItem) {
+        if (!HasOverLordQtyColumn()) return;
+
         _connection.Execute(
             "UPDATE [OrderItem] " +
             "SET OverLordQty = @OverLordQty, Updated = getutcdate() " +
