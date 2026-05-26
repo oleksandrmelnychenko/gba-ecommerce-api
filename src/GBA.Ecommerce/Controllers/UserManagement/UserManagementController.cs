@@ -46,7 +46,7 @@ public sealed class UserManagementController(
         if (string.IsNullOrWhiteSpace(request.Password))
             return BadRequest(ErrorResponseBody("Password is required", HttpStatusCode.BadRequest));
 
-        string password = request.Password;
+        password = request.Password;
 
         Tuple<IdentityResponse, Client> identityResponse = await signUpService.SignUp(
             request.Client,
