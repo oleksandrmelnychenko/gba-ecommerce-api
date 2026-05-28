@@ -114,9 +114,8 @@ public sealed class RequestTokenService : IRequestTokenService {
                 }
 
                 if (identityResult.Item1 == null) return new Tuple<bool, string, CompleteAccessToken>(false, identityResult.Item2, null);
-                if (identityResult.Item3.UserType != IdentityUserType.Client)
-                    if (identityResult.Item3.UserType != IdentityUserType.Workplace)
-                        return new Tuple<bool, string, CompleteAccessToken>(false, _localizer[SharedResourceNames.INVALID_CREDENTIALS], null);
+                if (!IsAllowedUserType(identityResult.Item3.UserType))
+                    return new Tuple<bool, string, CompleteAccessToken>(false, _localizer[SharedResourceNames.INVALID_CREDENTIALS], null);
 
 
                 Client client = _clientRepositoriesFactory.NewClientRepository(connection).GetByNetIdWithRoleAndType(identityResult.Item3.NetId);
@@ -190,6 +189,17 @@ public sealed class RequestTokenService : IRequestTokenService {
             RefreshToken = encryptedRefreshToken,
             UserNetUid = user.NetId
         };
+    }
+
+    private static bool IsAllowedUserType(IdentityUserType userType) {
+        if (userType == IdentityUserType.Client || userType == IdentityUserType.Workplace) return true;
+
+        return userType == IdentityUserType.User
+               && string.Equals(
+                   Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+                   "Development",
+                   StringComparison.OrdinalIgnoreCase
+               );
     }
 
     private static bool IsRefreshTokenMatch(string storedToken, string presentedToken) {
