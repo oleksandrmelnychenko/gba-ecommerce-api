@@ -227,6 +227,10 @@ public sealed class ClientRepository : IClientRepository {
             new { NetId = netId }
         ).FirstOrDefault();
 
+        if (rootClientNetId == Guid.Empty) {
+            rootClientNetId = netId;
+        }
+
         string query =
             "SELECT * FROM Client " +
             "LEFT OUTER JOIN ClientInRole " +

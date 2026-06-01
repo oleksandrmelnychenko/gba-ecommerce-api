@@ -27,7 +27,8 @@ public sealed class UserProfilesController(
     [HttpGet]
     [AssignActionRoute(UserProfilesSegments.GET_ROOT_BY_SUBCLIENT)]
     public async Task<IActionResult> GetRootClientBySubClientNetId([FromQuery] Guid netId) {
-        return Ok(SuccessResponseBody(await clientService.GetRootClientBySubClientNerId(netId)));
+        Guid clientNetId = netId.Equals(Guid.Empty) ? GetUserNetId() : netId;
+        return Ok(SuccessResponseBody(await clientService.GetRootClientBySubClientNerId(clientNetId)));
     }
 
     [HttpGet]
