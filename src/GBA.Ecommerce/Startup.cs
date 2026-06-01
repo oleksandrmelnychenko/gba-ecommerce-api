@@ -398,6 +398,8 @@ public class Startup {
         services.AddScoped<IClientRegistrationTaskService, ClientRegistrationTaskService>();
         services.AddScoped<IClientShoppingCartService, ClientShoppingCartService>();
         services.AddHostedService<GBA.Ecommerce.Background.ExpiredCartCleanupBackgroundService>();
+        services.AddSingleton<GBA.Common.Search.ISearchReindexSignal, GBA.Common.Search.SearchReindexSignal>();
+        services.AddHostedService<GBA.Ecommerce.Background.ProductReindexBackgroundService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IClientAgreementService, ClientAgreementService>();
         services.AddScoped<IRegionService, RegionService>();

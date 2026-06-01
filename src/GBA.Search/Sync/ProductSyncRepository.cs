@@ -195,6 +195,67 @@ ORDER BY p.ID";
         return products.AsList();
     }
 
+    public async Task<List<ProductSyncData>> GetProductsByIdsAsync(IReadOnlyCollection<long> ids) {
+        if (ids.Count == 0) return new List<ProductSyncData>();
+
+        using IDbConnection connection = connectionFactory();
+        connection.Open();
+
+        const string sql = @"
+;WITH ChangedProductIds AS (
+    SELECT p.ID FROM Product p WHERE p.Deleted = 0 AND p.ID IN @Ids
+),
+BasePricingHierarchy AS (
+    SELECT pr.ID AS OriginalPricingId, pr.ID AS CurrentPricingId, pr.BasePricingID FROM Pricing pr WHERE pr.Deleted = 0 AND pr.ID IN (853, 848)
+    UNION ALL
+    SELECT bph.OriginalPricingId, pr.ID, pr.BasePricingID FROM Pricing pr INNER JOIN BasePricingHierarchy bph ON pr.ID = bph.BasePricingID WHERE pr.Deleted = 0
+),
+BasePricingIds AS (SELECT OriginalPricingId, CurrentPricingId AS BasePricingId FROM BasePricingHierarchy WHERE BasePricingID IS NULL),
+OriginalPricingCharge AS (SELECT pr.ID AS PricingId, pr.CalculatedExtraCharge FROM Pricing pr WHERE pr.Deleted = 0 AND pr.ID IN (853, 848)),
+ProductGroups AS (SELECT ppg.ProductID, ppg.ProductGroupID FROM ProductProductGroup ppg WHERE ppg.Deleted = 0),
+RetailCurrency AS (SELECT TOP 1 c.Code FROM Currency c WHERE c.Deleted = 0 AND c.Code = 'UAH')
+SELECT
+    p.ID AS Id, p.NetUID AS NetUid, p.VendorCode,
+    ISNULL(p.SearchVendorCode, '') AS SearchVendorCode,
+    ISNULL(p.Name, '') AS Name, ISNULL(p.NameUA, '') AS NameUA,
+    ISNULL(p.Description, '') AS Description, ISNULL(p.DescriptionUA, '') AS DescriptionUA,
+    ISNULL(p.MainOriginalNumber, '') AS MainOriginalNumber, ISNULL(p.Size, '') AS Size,
+    LTRIM(RTRIM(CONCAT(ISNULL(p.SynonymsUA, ''), ' ', ISNULL(p.SearchSynonymsUA, '')))) AS Synonyms,
+    ISNULL(p.SearchName, '') AS SearchName, ISNULL(p.SearchNameUA, '') AS SearchNameUA,
+    ISNULL(p.SearchDescription, '') AS SearchDescription, ISNULL(p.SearchDescriptionUA, '') AS SearchDescriptionUA,
+    ISNULL(p.SearchSize, '') AS SearchSize,
+    ISNULL(p.PackingStandard, '') AS PackingStandard, ISNULL(p.OrderStandard, '') AS OrderStandard,
+    ISNULL(p.UCGFEA, '') AS Ucgfea, ISNULL(p.Volume, '') AS Volume,
+    ISNULL(p.[Top], '') AS [Top], ISNULL(p.Weight, 0) AS Weight,
+    p.HasAnalogue, p.HasComponent, p.HasImage, ISNULL(p.Image, '') AS Image, p.MeasureUnitID AS MeasureUnitId,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'uk' AND s.ForVatProducts = 0), 0) AS AvailableQtyUk,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'uk' AND s.ForVatProducts = 1), 0) AS AvailableQtyUkVat,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'pl' AND s.ForVatProducts = 0), 0) AS AvailableQtyPl,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'pl' AND s.ForVatProducts = 1), 0) AS AvailableQtyPlVat,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0), 0) AS AvailableQty,
+    p.IsForWeb, p.IsForSale, p.IsForZeroSale,
+    ISNULL(ps.ID, 0) AS SlugId, ISNULL(ps.NetUID, '00000000-0000-0000-0000-000000000000') AS SlugNetUid,
+    ISNULL(ps.Url, '') AS SlugUrl, ISNULL(ps.Locale, '') AS SlugLocale,
+    ISNULL(ROUND(pp.Price + (pp.Price * COALESCE((SELECT TOP 1 ppgd.CalculatedExtraCharge FROM PricingProductGroupDiscount ppgd WHERE ppgd.PricingID = 853 AND ppgd.ProductGroupID = pg.ProductGroupID AND ppgd.Deleted = 0), opc.CalculatedExtraCharge, 0) / 100.0), 2), 0) AS RetailPrice,
+    ISNULL(ROUND(ppv.Price + (ppv.Price * COALESCE((SELECT TOP 1 ppgd.CalculatedExtraCharge FROM PricingProductGroupDiscount ppgd WHERE ppgd.PricingID = 848 AND ppgd.ProductGroupID = pg.ProductGroupID AND ppgd.Deleted = 0), opcv.CalculatedExtraCharge, 0) / 100.0), 2), 0) AS RetailPriceVat,
+    ISNULL((SELECT Code FROM RetailCurrency), 'UAH') AS RetailCurrencyCode, p.Updated
+FROM Product p
+INNER JOIN ChangedProductIds c ON c.ID = p.ID
+LEFT JOIN ProductSlug ps ON ps.ProductID = p.ID AND ps.Locale = 'uk' AND ps.Deleted = 0
+LEFT JOIN ProductGroups pg ON pg.ProductID = p.ID
+LEFT JOIN BasePricingIds bpi ON bpi.OriginalPricingId = 853
+LEFT JOIN BasePricingIds bpiv ON bpiv.OriginalPricingId = 848
+LEFT JOIN ProductPricing pp ON pp.ProductID = p.ID AND pp.PricingID = bpi.BasePricingId AND pp.Deleted = 0
+LEFT JOIN ProductPricing ppv ON ppv.ProductID = p.ID AND ppv.PricingID = bpiv.BasePricingId AND ppv.Deleted = 0
+LEFT JOIN OriginalPricingCharge opc ON opc.PricingId = 853
+LEFT JOIN OriginalPricingCharge opcv ON opcv.PricingId = 848
+WHERE p.Deleted = 0
+ORDER BY p.ID";
+
+        IEnumerable<ProductSyncData> products = await connection.QueryAsync<ProductSyncData>(sql, new { Ids = ids }, commandTimeout: 120);
+        return products.AsList();
+    }
+
     public async Task<List<long>> GetDeletedProductIdsAsync(DateTime since) {
         using IDbConnection connection = connectionFactory();
         connection.Open();

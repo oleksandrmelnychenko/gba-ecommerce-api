@@ -17,6 +17,9 @@ namespace GBA.Search.Elasticsearch;
 public interface IElasticsearchSyncService {
     Task<SyncResult> FullRebuildAsync(CancellationToken ct = default);
     Task<SyncResult> IncrementalSyncAsync(CancellationToken ct = default);
+
+    /// <summary>Re-indexes a specific set of products immediately (targeted, near-real-time).</summary>
+    Task<SyncResult> ReindexProductsAsync(IReadOnlyCollection<long> productIds, CancellationToken ct = default);
 }
 
 public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
@@ -189,6 +192,45 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             return SyncResult.Failed(ex.Message);
         } finally {
             _gate.Release();
+        }
+    }
+
+    public async Task<SyncResult> ReindexProductsAsync(IReadOnlyCollection<long> productIds, CancellationToken ct = default) {
+        if (productIds.Count == 0) return new SyncResult { Success = true };
+
+        Stopwatch sw = Stopwatch.StartNew();
+        try {
+            List<ProductSyncData> products = await _repository.GetProductsByIdsAsync(productIds);
+            List<long> foundIds = products.Select(p => p.Id).ToList();
+            Dictionary<long, List<string>> originalNumbers = await _repository.GetOriginalNumbersForProductsAsync(foundIds);
+
+            List<ProductDocument> documents = products
+                .Select(p => CreateDocument(p, originalNumbers.GetValueOrDefault(p.Id)))
+                .ToList();
+
+            int indexed = await BulkIndexAsync(documents, ct);
+
+            // Ids no longer present as live products are removed from the index.
+            HashSet<long> found = foundIds.ToHashSet();
+            List<long> missing = productIds.Where(id => !found.Contains(id)).ToList();
+            int deleted = await BulkDeleteAsync(missing, ct);
+
+            await _http.PostAsync($"{_settings.IndexName}/_refresh", null, ct);
+            sw.Stop();
+
+            _log.LogInformation(
+                "Targeted reindex: {Indexed} indexed, {Deleted} deleted in {ElapsedMs}ms",
+                indexed, deleted, sw.ElapsedMilliseconds);
+
+            return new SyncResult {
+                Success = true,
+                DocumentsIndexed = indexed,
+                DocumentsDeleted = deleted,
+                ElapsedMs = sw.ElapsedMilliseconds
+            };
+        } catch (Exception ex) {
+            _log.LogError(ex, "Targeted reindex failed");
+            return SyncResult.Failed(ex.Message);
         }
     }
 

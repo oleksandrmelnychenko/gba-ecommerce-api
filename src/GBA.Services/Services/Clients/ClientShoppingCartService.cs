@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using GBA.Common.Exceptions.CustomExceptions;
 using GBA.Common.Helpers;
 using GBA.Common.ResourceNames.ECommerce;
+using GBA.Common.Search;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.Clients;
@@ -51,6 +52,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
     private readonly ISaleRepositoriesFactory _saleRepositoriesFactory;
     private readonly IStorageRepositoryFactory _storageRepositoryFactory;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ISearchReindexSignal _reindexSignal;
 
     public ClientShoppingCartService(
         IClientRepositoriesFactory clientRepositoriesFactory,
@@ -62,8 +64,10 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         ICurrencyRepositoriesFactory currencyRepositoriesFactory,
         IDbConnectionFactory connectionFactory,
         IAgreementRepositoriesFactory agreementRepositoriesFactory,
-        IHttpClientFactory httpClientFactory) {
+        IHttpClientFactory httpClientFactory,
+        ISearchReindexSignal reindexSignal) {
         _clientRepositoriesFactory = clientRepositoriesFactory;
+        _reindexSignal = reindexSignal;
 
         _saleRepositoriesFactory = saleRepositoriesFactory;
 
@@ -92,6 +96,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             if (orderItem.Qty.Equals(0)) throw new Exception("You need to specify Qty of product that will be added.");
 
             if (orderItem.Product != null) orderItem.ProductId = orderItem.Product.Id;
+
+            _reindexSignal.Request(orderItem.ProductId);
 
             IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
             IWorkplaceRepository workplaceRepository = _clientRepositoriesFactory.NewWorkplaceRepository(connection);
@@ -216,6 +222,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
                 if (orderItems[item].Product != null) orderItems[item].ProductId = orderItems[item].Product.Id;
 
+                _reindexSignal.Request(orderItems[item].ProductId);
+
                 IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
                 ClientAgreement nonVatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(clientNetId, false);
@@ -338,6 +346,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 return Task.FromResult(NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItem.Id, selectedAgreement.NetUid)));
 
             orderItemRepository.UpdateOverLoadQty(orderItem);
+
+            _reindexSignal.Request(orderItem.ProductId);
 
             OrderItem orderItemFromDb = orderItemRepository.GetById(orderItem.Id);
 
@@ -487,6 +497,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 }
 
                 OrderItem orderItemFromDb = orderItemRepository.GetById(orderItems[item].Id);
+
+                _reindexSignal.Request(orderItems[item].ProductId);
 
                 if (orderItems[item].Qty.Equals(orderItemFromDb.Qty)) {
                     orderItems[item] = NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItems[item].Id, nonVatAgreement?.NetUid, vatAgreement?.NetUid));
@@ -685,6 +697,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 productReservationRepository.Delete(reservation.NetUid);
             }
 
+            _reindexSignal.Request(orderItem.ProductId);
+
             BackgroundSyncRunner.Run(async cancellationToken => {
                 string saleSyncCrmUrl;
 
@@ -733,6 +747,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
                         productReservationRepository.Delete(reservation.NetUid);
                     }
+
+                    _reindexSignal.Request(orderItem.ProductId);
 
                     BackgroundSyncRunner.Run(async cancellationToken => {
                         string saleSyncCrmUrl;
@@ -783,6 +799,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
                         releasedReservations++;
                     }
+
+                    _reindexSignal.Request(orderItem.ProductId);
 
                     orderItemRepository.Remove(orderItem.NetUid);
                 }
