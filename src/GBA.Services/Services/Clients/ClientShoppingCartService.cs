@@ -723,7 +723,22 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
     public Task DeleteAllItemsFromShoppingCartByClientNetId(Guid clientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-            ClientShoppingCart clientShoppingCart = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection).GetByClientNetId(clientNetId, withVat);
+            IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
+
+            ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(clientNetId);
+
+            Workplace workplace = null;
+
+            if (clientAgreement == null) {
+                clientAgreement = clientAgreementRepository.GetSelectedByWorkplaceNetId(clientNetId);
+                workplace = _clientRepositoriesFactory.NewWorkplaceRepository(connection).GetByNetId(clientNetId);
+            }
+
+            if (clientAgreement == null) return Task.CompletedTask;
+
+            ClientShoppingCart clientShoppingCart = _clientRepositoriesFactory
+                .NewClientShoppingCartRepository(connection)
+                .GetByClientAgreementNetId(clientAgreement.NetUid, clientAgreement.Agreement.WithVATAccounting, workplace?.Id);
 
             if (clientShoppingCart != null && clientShoppingCart.OrderItems.Any()) {
                 IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
