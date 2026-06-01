@@ -143,38 +143,27 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             return await FullRebuildAsync(ct);
         }
 
-        Stopwatch sw = Stopwatch.StartNew();
         await _gate.WaitAsync(ct);
+        Stopwatch sw = Stopwatch.StartNew();
         try {
             DateTime since = watermark.AddSeconds(-WatermarkOverlapSeconds);
 
-            List<ProductSyncData> changedProducts = await _repository.GetChangedProductsAsync(since);
+            // Lightweight change detection (ids only), then reuse the fast by-ids reindex
+            // path — avoids the heavy "all fields for all changed products" projection.
+            List<long> changedIds = await _repository.GetChangedProductIdsAsync(since);
             List<long> deletedIds = await _repository.GetDeletedProductIdsAsync(since);
 
-            if (changedProducts.Count == 0 && deletedIds.Count == 0) {
+            if (changedIds.Count == 0 && deletedIds.Count == 0) {
                 await _state.SetWatermarkAsync(runStart, ct);
-                return new SyncResult {
-                    Success = true,
-                    DocumentsIndexed = 0,
-                    DocumentsDeleted = 0,
-                    ElapsedMs = sw.ElapsedMilliseconds
-                };
+                return new SyncResult { Success = true, ElapsedMs = sw.ElapsedMilliseconds };
             }
 
-            List<long> productIds = changedProducts.Select(p => p.Id).ToList();
-            Dictionary<long, List<string>> originalNumbers = await _repository.GetOriginalNumbersForProductsAsync(productIds);
+            HashSet<long> ids = new(changedIds);
+            ids.UnionWith(deletedIds);
 
-            List<ProductDocument> documents = changedProducts
-                .Select(p => CreateDocument(p, originalNumbers.GetValueOrDefault(p.Id)))
-                .ToList();
-
-            int indexed = await BulkIndexAsync(documents, ct);
-            int deleted = await BulkDeleteAsync(deletedIds, ct);
-
-            await _http.PostAsync($"{_settings.IndexName}/_refresh", null, ct);
+            (int indexed, int deleted) = await IndexByIdsAsync(ids, ct);
 
             sw.Stop();
-
             await _state.SetWatermarkAsync(runStart, ct);
 
             _log.LogInformation(
@@ -200,22 +189,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
 
         Stopwatch sw = Stopwatch.StartNew();
         try {
-            List<ProductSyncData> products = await _repository.GetProductsByIdsAsync(productIds);
-            List<long> foundIds = products.Select(p => p.Id).ToList();
-            Dictionary<long, List<string>> originalNumbers = await _repository.GetOriginalNumbersForProductsAsync(foundIds);
-
-            List<ProductDocument> documents = products
-                .Select(p => CreateDocument(p, originalNumbers.GetValueOrDefault(p.Id)))
-                .ToList();
-
-            int indexed = await BulkIndexAsync(documents, ct);
-
-            // Ids no longer present as live products are removed from the index.
-            HashSet<long> found = foundIds.ToHashSet();
-            List<long> missing = productIds.Where(id => !found.Contains(id)).ToList();
-            int deleted = await BulkDeleteAsync(missing, ct);
-
-            await _http.PostAsync($"{_settings.IndexName}/_refresh", null, ct);
+            (int indexed, int deleted) = await IndexByIdsAsync(productIds, ct);
             sw.Stop();
 
             _log.LogInformation(
@@ -232,6 +206,28 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             _log.LogError(ex, "Targeted reindex failed");
             return SyncResult.Failed(ex.Message);
         }
+    }
+
+    private async Task<(int indexed, int deleted)> IndexByIdsAsync(IReadOnlyCollection<long> productIds, CancellationToken ct) {
+        if (productIds.Count == 0) return (0, 0);
+
+        List<ProductSyncData> products = await _repository.GetProductsByIdsAsync(productIds);
+        List<long> foundIds = products.Select(p => p.Id).ToList();
+        Dictionary<long, List<string>> originalNumbers = await _repository.GetOriginalNumbersForProductsAsync(foundIds);
+
+        List<ProductDocument> documents = products
+            .Select(p => CreateDocument(p, originalNumbers.GetValueOrDefault(p.Id)))
+            .ToList();
+
+        int indexed = await BulkIndexAsync(documents, ct);
+
+        // Ids no longer present as live products are removed from the index.
+        HashSet<long> found = foundIds.ToHashSet();
+        List<long> missing = productIds.Where(id => !found.Contains(id)).ToList();
+        int deleted = await BulkDeleteAsync(missing, ct);
+
+        await _http.PostAsync($"{_settings.IndexName}/_refresh", null, ct);
+        return (indexed, deleted);
     }
 
     private async Task<int> BulkIndexAsync(List<ProductDocument> documents, CancellationToken ct, string? targetIndex = null) {

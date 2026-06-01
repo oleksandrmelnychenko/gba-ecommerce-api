@@ -195,6 +195,23 @@ ORDER BY p.ID";
         return products.AsList();
     }
 
+    public async Task<List<long>> GetChangedProductIdsAsync(DateTime since) {
+        using IDbConnection connection = connectionFactory();
+        connection.Open();
+
+        const string sql = @"
+SELECT p.ID FROM Product p WHERE p.Deleted = 0 AND p.Updated > @Since
+UNION
+SELECT pon.ProductID FROM ProductOriginalNumber pon INNER JOIN Product p ON p.ID = pon.ProductID AND p.Deleted = 0 WHERE pon.Updated > @Since OR pon.Created > @Since
+UNION
+SELECT pon.ProductID FROM OriginalNumber on_ INNER JOIN ProductOriginalNumber pon ON pon.OriginalNumberID = on_.ID AND pon.Deleted = 0 INNER JOIN Product p ON p.ID = pon.ProductID AND p.Deleted = 0 WHERE on_.Updated > @Since
+UNION
+SELECT pa.ProductID FROM ProductAvailability pa INNER JOIN Product p ON p.ID = pa.ProductID AND p.Deleted = 0 WHERE pa.Updated > @Since";
+
+        IEnumerable<long> ids = await connection.QueryAsync<long>(sql, new { Since = since }, commandTimeout: 120);
+        return ids.AsList();
+    }
+
     public async Task<List<ProductSyncData>> GetProductsByIdsAsync(IReadOnlyCollection<long> ids) {
         if (ids.Count == 0) return new List<ProductSyncData>();
 
