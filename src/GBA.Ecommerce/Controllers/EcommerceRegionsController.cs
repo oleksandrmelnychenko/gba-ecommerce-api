@@ -1,10 +1,12 @@
 using System;
 using System.Threading.Tasks;
+using GBA.Common.IdentityConfiguration.Roles;
 using GBA.Common.ResponseBuilder.Contracts;
 using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
 using GBA.Domain.Entities.Ecommerce;
 using GBA.Services.Services.EcommerceRegions.Contracts;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.OutputCaching;
 
@@ -23,6 +25,7 @@ public sealed class EcommerceRegionsController(
     }
 
     [HttpPost]
+    [Authorize(Roles = IdentityRoles.Administrator)]
     [AssignActionRoute(EcommerceRegionsSegments.UPDATE)]
     public async Task<IActionResult> Update([FromBody] EcommerceRegion ecommerceRegion) {
         var result = await ecommerceRegionService.Update(ecommerceRegion);
