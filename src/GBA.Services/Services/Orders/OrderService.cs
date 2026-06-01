@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using GBA.Common.Helpers;
 using GBA.Common.Models;
 using GBA.Common.ResourceNames;
+using GBA.Common.Search;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.Clients;
@@ -55,6 +56,7 @@ public sealed class OrderService : IOrderService {
     private readonly IStorageRepositoryFactory _storageRepositoryFactory;
     private readonly IUserRepositoriesFactory _userRepositoriesFactory;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ISearchReindexSignal _reindexSignal;
 
     public OrderService(
         ISaleRepositoriesFactory saleRepositoriesFactory,
@@ -68,8 +70,10 @@ public sealed class OrderService : IOrderService {
         IRetailClientRepositoriesFactory retailClientRepositoriesFactory,
         IDbConnectionFactory connectionFactory,
         IPaymentLinkService paymentLinkService,
-        IHttpClientFactory httpClientFactory) {
+        IHttpClientFactory httpClientFactory,
+        ISearchReindexSignal reindexSignal) {
         _saleRepositoriesFactory = saleRepositoriesFactory;
+        _reindexSignal = reindexSignal;
         _clientRepositoriesFactory = clientRepositoriesFactory;
         _userRepositoriesFactory = userRepositoriesFactory;
         _productRepositoriesFactory = productRepositoriesFactory;
@@ -567,6 +571,8 @@ public sealed class OrderService : IOrderService {
                     productAvailabilityRepository.Update(productAvailability);
                 }
 
+                _reindexSignal.Request(orderItem.ProductId);
+
                 BackgroundSyncRunner.Run(async cancellationToken => {
                     string saleSyncCrmUrl;
 
@@ -790,6 +796,8 @@ public sealed class OrderService : IOrderService {
 
                     productAvailabilityRepository.Update(productAvailability);
                 }
+
+                _reindexSignal.Request(orderItem.ProductId);
 
                 BackgroundSyncRunner.Run(async cancellationToken => {
                     string saleSyncCrmUrl;
@@ -1066,6 +1074,8 @@ public sealed class OrderService : IOrderService {
 
                     productAvailabilityRepository.Update(productAvailability);
                 }
+
+                _reindexSignal.Request(orderItem.ProductId);
 
                 BackgroundSyncRunner.Run(async cancellationToken => {
                     string saleSyncCrmUrl;
