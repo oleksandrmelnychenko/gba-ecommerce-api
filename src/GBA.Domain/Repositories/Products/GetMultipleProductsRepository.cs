@@ -3858,6 +3858,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
 
                 if (image != null && !image.Deleted) analogue.Image = image.ImageUrl;
 
+                analogues.Add(analogue);
+
                 if (productAvailability == null) return analogue;
 
                 productAvailabilities.Add(productAvailability);
@@ -3866,8 +3868,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                     analogue.AvailableQtyPl += productAvailability.Amount;
                 else
                     analogue.AvailableQtyUk += productAvailability.Amount;
-
-                analogues.Add(analogue);
             } else {
                 analogue = analogues.First(a => a.Id.Equals(analogue.Id));
 
@@ -4019,6 +4019,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
 
                 if (image != null && !image.Deleted) analogue.Image = image.ImageUrl;
 
+                analogues.Add(analogue);
+
                 if (productAvailability == null) return analogue;
 
                 productAvailabilities.Add(productAvailability);
@@ -4027,8 +4029,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                     analogue.AvailableQtyPl += productAvailability.Amount;
                 else
                     analogue.AvailableQtyUk += productAvailability.Amount;
-
-                analogues.Add(analogue);
             } else {
                 analogue = analogues.First(a => a.Id.Equals(analogue.Id));
 
@@ -4104,8 +4104,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [ProductImage].ProductID = [Analogue].ID " +
             "WHERE [ProductAnalogue].BaseProductID = @Id " +
             "AND [ProductAnalogue].Deleted = 0 " +
-            "AND [Storage].ForEcommerce = 1 " +
-            "AND [Storage].Deleted = 0 " +
+            "AND (([Storage].ForEcommerce = 1 AND [Storage].Deleted = 0) OR [Storage].ID IS NULL) " +
             "ORDER BY [ProductAvailability].Amount DESC, [Analogue].Name, [Analogue].VendorCode ";
 
         _connection.Query(
