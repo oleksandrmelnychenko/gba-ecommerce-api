@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Threading.Tasks;
+using GBA.Common.Logging;
+using GBA.Common.Middleware;
 using GBA.Common.ResponseBuilder;
 using GBA.Common.Exceptions.GlobalHandler.Contracts;
 using GBA.Common.Exceptions.UserExceptions.Contracts;
@@ -45,6 +47,8 @@ public class GlobalExceptionHandler : IGlobalExceptionHandler {
             ? HttpStatusCode.Forbidden
             : HttpStatusCode.BadRequest;
 
+        string correlationId = context.GetCorrelationId();
+
         string developerMessage = string.Format(CultureInfo.CurrentCulture,
             $"{exceptionHandler.Error.Message}</br>{exceptionHandler.Error.InnerException}</br>{exceptionHandler.Error.StackTrace}");
 
@@ -57,13 +61,22 @@ public class GlobalExceptionHandler : IGlobalExceptionHandler {
         ErrorResponse response = new() {
             Body = null,
             Message = isDevelopment ? developerMessage : errorMessage,
-            StatusCode = statusCode
+            StatusCode = statusCode,
+            CorrelationId = correlationId
         };
 
         await context.Response.WriteAsync(JsonSerializer.Serialize(response, new JsonSerializerOptions {
             PropertyNamingPolicy = null
         })).ConfigureAwait(false);
 
-        _logger.Error(exceptionHandler.Error, developerMessage);
+        LogEventInfo logEvent = new(LogLevel.Error, _logger.Name, exceptionHandler.Error.Message) {
+            Exception = exceptionHandler.Error
+        };
+        logEvent.Properties[LoggingDefaults.CorrelationIdProperty] = correlationId;
+        logEvent.Properties["RequestMethod"] = context.Request.Method;
+        logEvent.Properties["RequestPath"] = context.Request.Path.Value;
+        logEvent.Properties["UserNetId"] = context.GetUserNetId();
+        logEvent.Properties["StatusCode"] = (int)statusCode;
+        _logger.Log(logEvent);
     }
 }

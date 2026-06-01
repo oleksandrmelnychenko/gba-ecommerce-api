@@ -42,6 +42,12 @@
     </ItemGroup>
 
     <ItemGroup>
+        <None Update="nlog.config">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+    <ItemGroup>
         <ProjectReference Include="..\GBA.Common\GBA.Common.csproj" />
         <ProjectReference Include="..\GBA.Data\GBA.Data.csproj" />
         <ProjectReference Include="..\GBA.Domain\GBA.Domain.csproj" />

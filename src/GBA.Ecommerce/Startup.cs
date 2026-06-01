@@ -434,6 +434,9 @@ public class Startup {
         ILoggerFactory loggerFactory,
         IGlobalExceptionFactory globalExceptionFactory) {
 
+        app.UseMiddleware<CorrelationIdMiddleware>();
+        app.UseMiddleware<RequestLoggingMiddleware>();
+
         app.UseResponseCompression();
         app.UseRequestDecompression();
 
