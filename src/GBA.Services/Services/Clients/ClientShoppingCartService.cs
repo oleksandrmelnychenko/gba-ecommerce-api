@@ -758,6 +758,41 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         return Task.CompletedTask;
     }
 
+    public Task<int> ReleaseExpiredCartsAsync() {
+        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+            IClientShoppingCartRepository clientShoppingCartRepository = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection);
+            IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
+            IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
+            IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
+
+            List<ClientShoppingCart> expiredCarts = clientShoppingCartRepository.GetAllExistingExpiredClientShoppingCarts();
+
+            int releasedReservations = 0;
+
+            foreach (ClientShoppingCart cart in expiredCarts) {
+                foreach (OrderItem orderItem in cart.OrderItems) {
+                    IEnumerable<ProductReservation> reservations =
+                        productReservationRepository.GetAllByOrderItemIdWithAvailability(orderItem.Id);
+
+                    foreach (ProductReservation reservation in reservations) {
+                        reservation.ProductAvailability.Amount += reservation.Qty;
+
+                        productAvailabilityRepository.Update(reservation.ProductAvailability);
+
+                        productReservationRepository.Delete(reservation.NetUid);
+
+                        releasedReservations++;
+                    }
+
+                    orderItemRepository.Remove(orderItem.NetUid);
+                }
+
+                clientShoppingCartRepository.Remove(cart.NetUid);
+            }
+
+            return Task.FromResult(releasedReservations);
+    }
+
     public Task<Tuple<bool, string>> VerifyProductAvailability(OrderItem orderItem) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
             if (orderItem == null)

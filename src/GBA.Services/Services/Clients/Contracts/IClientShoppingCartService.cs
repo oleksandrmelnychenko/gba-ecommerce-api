@@ -21,4 +21,8 @@ public interface IClientShoppingCartService {
     Task DeleteAllItemsFromShoppingCartByClientNetId(Guid clientNetId, bool withVat);
 
     Task<Tuple<bool, string>> VerifyProductAvailability(OrderItem orderItem);
+
+    /// <summary>Releases reservations of expired carts back into ProductAvailability.Amount and removes
+    /// those carts. Returns the number of reservations released.</summary>
+    Task<int> ReleaseExpiredCartsAsync();
 }

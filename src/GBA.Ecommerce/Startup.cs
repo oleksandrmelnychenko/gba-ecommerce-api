@@ -397,6 +397,7 @@ public class Startup {
         services.AddScoped<IEmailValidationService, EmailValidationService>();
         services.AddScoped<IClientRegistrationTaskService, ClientRegistrationTaskService>();
         services.AddScoped<IClientShoppingCartService, ClientShoppingCartService>();
+        services.AddHostedService<GBA.Ecommerce.Background.ExpiredCartCleanupBackgroundService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IClientAgreementService, ClientAgreementService>();
         services.AddScoped<IRegionService, RegionService>();
