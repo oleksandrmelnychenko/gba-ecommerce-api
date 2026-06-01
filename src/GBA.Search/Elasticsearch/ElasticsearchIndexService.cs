@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text;
@@ -16,6 +18,15 @@ public interface IElasticsearchIndexService {
     Task<bool> DeleteIndexAsync(CancellationToken ct = default);
     Task<bool> IndexExistsAsync(CancellationToken ct = default);
     Task<bool> IsHealthyAsync(CancellationToken ct = default);
+
+    /// <summary>Creates a new uniquely-named index (with mappings) and returns its name, for alias-swap rebuilds.</summary>
+    Task<string?> CreateVersionedIndexAsync(CancellationToken ct = default);
+
+    /// <summary>Atomically points the search alias (IndexName) at <paramref name="targetIndex"/>, removing it from any previous index.</summary>
+    Task<bool> SwapAliasAsync(string targetIndex, CancellationToken ct = default);
+
+    /// <summary>Deletes old versioned indices, keeping the newest <paramref name="keep"/>. Returns the number deleted.</summary>
+    Task<int> CleanupOldVersionedIndicesAsync(int keep, CancellationToken ct = default);
 }
 
 public sealed class ElasticsearchIndexService : IElasticsearchIndexService {
@@ -60,21 +71,83 @@ public sealed class ElasticsearchIndexService : IElasticsearchIndexService {
         return false;
     }
 
-    public async Task<bool> CreateIndexAsync(CancellationToken ct = default) {
+    public Task<bool> CreateIndexAsync(CancellationToken ct = default) => CreateIndexAsync(_settings.IndexName, ct);
+
+    private async Task<bool> CreateIndexAsync(string indexName, CancellationToken ct) {
         object indexSettings = BuildIndexSettings();
         string json = JsonSerializer.Serialize(indexSettings, JsonOptions);
         StringContent content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        HttpResponseMessage response = await _http.PutAsync(_settings.IndexName, content, ct);
+        HttpResponseMessage response = await _http.PutAsync(indexName, content, ct);
 
         if (response.IsSuccessStatusCode) {
-            _log.LogInformation("Created index {Index}", _settings.IndexName);
+            _log.LogInformation("Created index {Index}", indexName);
             return true;
         }
 
         string error = await response.Content.ReadAsStringAsync(ct);
-        _log.LogError("Failed to create index {Index}: {Error}", _settings.IndexName, error);
+        _log.LogError("Failed to create index {Index}: {Error}", indexName, error);
         return false;
+    }
+
+    public async Task<string?> CreateVersionedIndexAsync(CancellationToken ct = default) {
+        string indexName = $"{_settings.IndexName}_{DateTime.UtcNow:yyyyMMddHHmmssfff}";
+        return await CreateIndexAsync(indexName, ct) ? indexName : null;
+    }
+
+    public async Task<bool> SwapAliasAsync(string targetIndex, CancellationToken ct = default) {
+        string alias = _settings.IndexName;
+
+        // One-time migration: if a concrete index still occupies the alias name, drop it
+        // (an alias and a concrete index cannot share a name). Steady-state swaps skip this.
+        HttpResponseMessage aliasProbe = await _http.GetAsync($"_alias/{alias}", ct);
+        if (aliasProbe.StatusCode == HttpStatusCode.NotFound) {
+            HttpResponseMessage indexProbe = await _http.GetAsync(alias, ct);
+            if (indexProbe.IsSuccessStatusCode) {
+                await _http.DeleteAsync(alias, ct);
+                _log.LogInformation("Removed legacy concrete index {Index} to free the alias name", alias);
+            }
+        }
+
+        var body = new {
+            actions = new object[] {
+                new { remove = new { index = $"{alias}_*", alias, must_exist = false } },
+                new { add = new { index = targetIndex, alias } }
+            }
+        };
+        StringContent content = new StringContent(JsonSerializer.Serialize(body, JsonOptions), Encoding.UTF8, "application/json");
+        HttpResponseMessage response = await _http.PostAsync("_aliases", content, ct);
+
+        if (response.IsSuccessStatusCode) {
+            _log.LogInformation("Alias {Alias} now points to {Index}", alias, targetIndex);
+            return true;
+        }
+
+        string error = await response.Content.ReadAsStringAsync(ct);
+        _log.LogError("Failed to swap alias {Alias} -> {Index}: {Error}", alias, targetIndex, error);
+        return false;
+    }
+
+    public async Task<int> CleanupOldVersionedIndicesAsync(int keep, CancellationToken ct = default) {
+        HttpResponseMessage response = await _http.GetAsync($"_cat/indices/{_settings.IndexName}_*?h=index&format=json", ct);
+        if (!response.IsSuccessStatusCode) return 0;
+
+        using JsonDocument doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+        List<string> indices = doc.RootElement.EnumerateArray()
+            .Select(e => e.GetProperty("index").GetString())
+            .Where(name => !string.IsNullOrEmpty(name))
+            .OrderByDescending(name => name, StringComparer.Ordinal)
+            .ToList()!;
+
+        int deleted = 0;
+        foreach (string old in indices.Skip(Math.Max(0, keep))) {
+            HttpResponseMessage del = await _http.DeleteAsync(old, ct);
+            if (del.IsSuccessStatusCode) {
+                deleted++;
+                _log.LogInformation("Deleted old index {Index}", old);
+            }
+        }
+        return deleted;
     }
 
     private static object BuildIndexSettings() {

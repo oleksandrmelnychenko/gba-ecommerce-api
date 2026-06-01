@@ -39,8 +39,13 @@ public static class ServiceCollectionExtensions {
         services.AddSingleton<IProductSearchService>(sp =>
             sp.GetRequiredService<ElasticsearchProductSearchService>());
 
+        services.AddHttpClient<ISearchSyncStateStore, SearchSyncStateStore>()
+            .ConfigureHttpClient((sp, client) => ConfigureElasticClient(client, configuration, 1));
+
         services.AddHttpClient<IElasticsearchSyncService, ElasticsearchSyncService>()
             .ConfigureHttpClient((sp, client) => ConfigureElasticClient(client, configuration, 10));
+
+        services.AddHostedService<ProductSearchSyncBackgroundService>();
 
         return services;
     }

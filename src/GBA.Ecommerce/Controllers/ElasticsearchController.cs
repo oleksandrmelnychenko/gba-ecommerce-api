@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using GBA.Common.ResponseBuilder.Contracts;
 using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
+using GBA.Search.Configuration;
 using GBA.Search.Elasticsearch;
 using GBA.Search.Models;
 using GBA.Search.Sync;
@@ -12,6 +13,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.OutputCaching;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 
 namespace GBA.Ecommerce.Controllers;
 
@@ -21,6 +23,8 @@ public sealed class ElasticsearchController(
     IElasticsearchIndexService indexService,
     IElasticsearchSyncService syncService,
     IElasticsearchProductSearchService searchService,
+    ISearchSyncStateStore syncStateStore,
+    IOptions<SyncSettings> syncSettings,
     IOutputCacheStore outputCacheStore,
     IResponseFactory responseFactory) : WebApiControllerBase(responseFactory) {
     private const int _defaultSearchLimit = 20;
@@ -32,7 +36,17 @@ public sealed class ElasticsearchController(
     [AllowAnonymous]
     public async Task<IActionResult> HealthAsync(CancellationToken ct) {
         bool healthy = await indexService.IsHealthyAsync(ct);
-        return Ok(SuccessResponseBody(new { healthy }));
+        DateTime watermark = await syncStateStore.GetWatermarkAsync(ct);
+
+        bool hasWatermark = watermark != DateTime.MinValue;
+        double? lagSeconds = hasWatermark ? Math.Round((DateTime.UtcNow - watermark).TotalSeconds) : null;
+
+        return Ok(SuccessResponseBody(new {
+            healthy,
+            lastSyncUtc = hasWatermark ? watermark : (DateTime?)null,
+            lagSeconds,
+            stale = lagSeconds.HasValue && lagSeconds > syncSettings.Value.LagWarningSeconds
+        }));
     }
 
     [HttpPost]

@@ -26,7 +26,11 @@ public sealed class ClientShoppingCartsController(
     [AssignActionRoute(ClientShoppingCartItemsSegments.ADD_NEW)]
     public async Task<IActionResult> AddNewOrderItemAsync([FromBody] OrderItem orderItem, [FromQuery] int withVat) {
         Guid userNetId = GetUserNetId();
-        return Ok(SuccessResponseBody(await clientShoppingCartService.Add(orderItem, userNetId, withVat.Equals(1))));
+        try {
+            return Ok(SuccessResponseBody(await clientShoppingCartService.Add(orderItem, userNetId, withVat.Equals(1))));
+        } catch (LocalizedException locExc) {
+            return BadRequest(ErrorResponseBody(Localize(locExc), System.Net.HttpStatusCode.BadRequest));
+        }
     }
 
     [HttpPost]
@@ -67,7 +71,11 @@ public sealed class ClientShoppingCartsController(
     public async Task<IActionResult> AddNewOrderItemAsync([FromBody] List<OrderItem> orderItems, [FromQuery] int withVat) {
         Guid userNetId = GetUserNetId();
 
-        return Ok(SuccessResponseBody(await clientShoppingCartService.Add(orderItems, userNetId, withVat.Equals(1))));
+        try {
+            return Ok(SuccessResponseBody(await clientShoppingCartService.Add(orderItems, userNetId, withVat.Equals(1))));
+        } catch (LocalizedException locExc) {
+            return BadRequest(ErrorResponseBody(Localize(locExc), System.Net.HttpStatusCode.BadRequest));
+        }
     }
 
     [HttpPost]
@@ -112,5 +120,11 @@ public sealed class ClientShoppingCartsController(
         await clientShoppingCartService.DeleteAllItemsFromShoppingCartByClientNetId(userNetId, withVat.Equals(1));
 
         return Ok(SuccessResponseBody(null));
+    }
+
+    private string Localize(LocalizedException locExc) {
+        return locExc.LocalizedMessageKey != null
+            ? string.Format(localizer[locExc.LocalizedMessageKey].Value, locExc.UnlocalizeElementMessage)
+            : locExc.Message;
     }
 }

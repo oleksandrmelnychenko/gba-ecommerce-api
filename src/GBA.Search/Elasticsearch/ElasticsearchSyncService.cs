@@ -25,10 +25,15 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
     private readonly SyncSettings _syncSettings;
     private readonly ProductSyncRepository _repository;
     private readonly IElasticsearchIndexService _indexService;
+    private readonly ISearchSyncStateStore _state;
     private readonly ILogger<ElasticsearchSyncService> _log;
 
-    private DateTime _lastSyncTime = DateTime.MinValue;
-    private readonly Lock _syncLock = new();
+    // Re-scan a small window before the last watermark so rows written during the previous
+    // run are never missed (bulk upserts are idempotent, so overlap is harmless).
+    private const int WatermarkOverlapSeconds = 120;
+
+    // Process-wide single-flight: never let a rebuild and an incremental run overlap.
+    private static readonly SemaphoreSlim _gate = new(1, 1);
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -40,27 +45,29 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         IOptions<SyncSettings> syncSettings,
         ProductSyncRepository repository,
         IElasticsearchIndexService indexService,
+        ISearchSyncStateStore state,
         ILogger<ElasticsearchSyncService> logger) {
         _http = httpClient;
         _settings = settings.Value;
         _syncSettings = syncSettings.Value;
         _repository = repository;
         _indexService = indexService;
+        _state = state;
         _log = logger;
     }
 
     public async Task<SyncResult> FullRebuildAsync(CancellationToken ct = default) {
+        DateTime runStart = DateTime.UtcNow;
         Stopwatch sw = Stopwatch.StartNew();
 
+        await _gate.WaitAsync(ct);
         try {
-            _log.LogInformation("Starting Elasticsearch full rebuild");
+            _log.LogInformation("Starting Elasticsearch full rebuild (alias-swap)");
 
-            // Delete and recreate index
-            if (await _indexService.IndexExistsAsync(ct)) {
-                await _indexService.DeleteIndexAsync(ct);
-            }
-
-            if (!await _indexService.CreateIndexAsync(ct)) {
+            // Build into a brand-new index; the live alias keeps serving the current one
+            // until we atomically swap at the end -> zero search downtime during rebuild.
+            string? newIndex = await _indexService.CreateVersionedIndexAsync(ct);
+            if (newIndex == null) {
                 return SyncResult.Failed("Failed to create index");
             }
 
@@ -72,7 +79,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             Dictionary<long, List<string>> originalNumbers = await _repository.GetOriginalNumbersForProductsAsync(productIds);
             _log.LogInformation("Fetched original numbers for {Count} products", originalNumbers.Count);
 
-            // Index in batches
+            // Index in batches into the new index
             int totalIndexed = 0;
             List<ProductDocument> batch = new List<ProductDocument>(_syncSettings.BatchSize);
 
@@ -81,26 +88,30 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
                 batch.Add(doc);
 
                 if (batch.Count >= _syncSettings.BatchSize) {
-                    int indexed = await BulkIndexAsync(batch, ct);
-                    totalIndexed += indexed;
+                    totalIndexed += await BulkIndexAsync(batch, ct, newIndex);
                     batch.Clear();
                     _log.LogDebug("Indexed batch, total: {Total}", totalIndexed);
                 }
             }
 
             if (batch.Count > 0) {
-                int indexed = await BulkIndexAsync(batch, ct);
-                totalIndexed += indexed;
+                totalIndexed += await BulkIndexAsync(batch, ct, newIndex);
             }
 
-            // Refresh index
-            await _http.PostAsync($"{_settings.IndexName}/_refresh", null, ct);
+            // Make the new index searchable, then atomically swap the alias and prune old indices.
+            await _http.PostAsync($"{newIndex}/_refresh", null, ct);
+
+            if (!await _indexService.SwapAliasAsync(newIndex, ct)) {
+                return SyncResult.Failed("Failed to swap alias to new index");
+            }
+
+            if (_syncSettings.CleanupOldCollections) {
+                await _indexService.CleanupOldVersionedIndicesAsync(_syncSettings.CollectionsToKeep, ct);
+            }
 
             sw.Stop();
 
-            lock (_syncLock) {
-                _lastSyncTime = DateTime.UtcNow;
-            }
+            await _state.SetWatermarkAsync(runStart, ct);
 
             _log.LogInformation(
                 "Elasticsearch full rebuild completed: {Total} documents indexed in {ElapsedMs}ms",
@@ -115,30 +126,30 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         } catch (Exception ex) {
             _log.LogError(ex, "Elasticsearch full rebuild failed");
             return SyncResult.Failed(ex.Message);
+        } finally {
+            _gate.Release();
         }
     }
 
     public async Task<SyncResult> IncrementalSyncAsync(CancellationToken ct = default) {
-        Stopwatch sw = Stopwatch.StartNew();
+        DateTime runStart = DateTime.UtcNow;
+        DateTime watermark = await _state.GetWatermarkAsync(ct);
 
-        DateTime syncSince;
-        lock (_syncLock) {
-            syncSince = _lastSyncTime;
-        }
-
-        if (syncSince == DateTime.MinValue) {
-            _log.LogInformation("First sync - performing full rebuild");
+        if (watermark == DateTime.MinValue) {
+            _log.LogInformation("No sync watermark found - performing full rebuild");
             return await FullRebuildAsync(ct);
         }
 
+        Stopwatch sw = Stopwatch.StartNew();
+        await _gate.WaitAsync(ct);
         try {
-            List<ProductSyncData> changedProducts = await _repository.GetChangedProductsAsync(syncSince);
-            List<long> deletedIds = await _repository.GetDeletedProductIdsAsync(syncSince);
+            DateTime since = watermark.AddSeconds(-WatermarkOverlapSeconds);
+
+            List<ProductSyncData> changedProducts = await _repository.GetChangedProductsAsync(since);
+            List<long> deletedIds = await _repository.GetDeletedProductIdsAsync(since);
 
             if (changedProducts.Count == 0 && deletedIds.Count == 0) {
-                lock (_syncLock) {
-                    _lastSyncTime = DateTime.UtcNow;
-                }
+                await _state.SetWatermarkAsync(runStart, ct);
                 return new SyncResult {
                     Success = true,
                     DocumentsIndexed = 0,
@@ -161,9 +172,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
 
             sw.Stop();
 
-            lock (_syncLock) {
-                _lastSyncTime = DateTime.UtcNow;
-            }
+            await _state.SetWatermarkAsync(runStart, ct);
 
             _log.LogInformation(
                 "Elasticsearch incremental sync: {Indexed} indexed, {Deleted} deleted in {ElapsedMs}ms",
@@ -178,15 +187,18 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         } catch (Exception ex) {
             _log.LogError(ex, "Elasticsearch incremental sync failed");
             return SyncResult.Failed(ex.Message);
+        } finally {
+            _gate.Release();
         }
     }
 
-    private async Task<int> BulkIndexAsync(List<ProductDocument> documents, CancellationToken ct) {
+    private async Task<int> BulkIndexAsync(List<ProductDocument> documents, CancellationToken ct, string? targetIndex = null) {
         if (documents.Count == 0) return 0;
 
+        string index = targetIndex ?? _settings.IndexName;
         StringBuilder sb = new StringBuilder();
         foreach (ProductDocument doc in documents) {
-            sb.AppendLine(JsonSerializer.Serialize(new { index = new { _index = _settings.IndexName, _id = doc.Id } }, JsonOptions));
+            sb.AppendLine(JsonSerializer.Serialize(new { index = new { _index = index, _id = doc.Id } }, JsonOptions));
             sb.AppendLine(JsonSerializer.Serialize(doc, JsonOptions));
         }
 
