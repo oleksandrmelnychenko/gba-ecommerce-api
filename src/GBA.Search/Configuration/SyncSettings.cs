@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Options;
+
 namespace GBA.Search.Configuration;
 
 public sealed class SyncSettings {
@@ -11,7 +13,25 @@ public sealed class SyncSettings {
     public bool CleanupOldCollections { get; set; } = true;
     public int CollectionsToKeep { get; set; } = 2;
 
-    /// <summary>Index is considered stale (logged as a warning, reported by /health) once the
-    /// watermark is older than this many seconds.</summary>
+    /// <summary>Readiness fails once the durable sync watermark is older than this many seconds.</summary>
     public int LagWarningSeconds { get; set; } = 300;
+}
+
+/// <summary>Rejects search modes that cannot provide an atomic durable generation fence.</summary>
+public sealed class SyncSettingsValidator : IValidateOptions<SyncSettings> {
+    public const string AliasSwapUnsupportedMessage =
+        "SearchSync:UseAliasSwap=true is unsupported because alias mutation cannot be "
+        + "atomically fenced with generation promotion. Keep UseAliasSwap=false.";
+    public const string InvalidLagLimitMessage =
+        "SearchSync:LagWarningSeconds must be greater than zero.";
+
+    public ValidateOptionsResult Validate(string? name, SyncSettings options) {
+        if (options.UseAliasSwap) {
+            return ValidateOptionsResult.Fail(AliasSwapUnsupportedMessage);
+        }
+
+        return options.LagWarningSeconds <= 0
+            ? ValidateOptionsResult.Fail(InvalidLagLimitMessage)
+            : ValidateOptionsResult.Success;
+    }
 }

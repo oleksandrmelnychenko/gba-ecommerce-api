@@ -16,6 +16,8 @@ public interface IProductService {
 
     Task<Product> GetByNetIdForRetail(Guid productNetId);
 
+    Task<Product> GetByNetIdForRetail(Guid productNetId, bool withVat);
+
     Task<List<FromSearchProduct>> GetAllFromSearch(string value, Guid currentClientNetId, long limit, long offset, bool withVat);
 
     Task<List<FromSearchProduct>> GetAllFromSearchV2(string value, Guid currentClientNetId, long limit, long offset, bool withVat);
@@ -23,6 +25,8 @@ public interface IProductService {
     Task<List<FromSearchProduct>> GetAllAnaloguesByProductNetId(Guid productNetId, Guid currentClientNetId, bool withVat);
 
     Task<List<FromSearchProduct>> GetAllAnaloguesByProductNetIdForRetail(Guid productNetId);
+
+    Task<List<FromSearchProduct>> GetAllAnaloguesByProductNetIdForRetail(Guid productNetId, bool withVat);
 
     Task<List<FromSearchProduct>> GetAllComponentsByProductNetId(Guid productNetId, Guid currentClientNetId, bool withVat);
 
@@ -43,4 +47,8 @@ public interface IProductService {
     /// Product data comes from Elasticsearch, this only calculates client-specific prices.
     /// </summary>
     Dictionary<long, ProductPriceInfo> GetPricesOnly(List<long> productIds, Guid currentClientNetId, bool withVat, string culture = "uk");
+
+    Dictionary<long, ProductPriceInfo> GetPricesOnly(List<long> productIds, ProductPricingContext pricingContext, string culture = "uk");
+
+    ProductPricingContext GetPricingContext(Guid currentClientNetId, bool withVat);
 }

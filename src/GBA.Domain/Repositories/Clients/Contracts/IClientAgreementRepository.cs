@@ -74,6 +74,8 @@ public interface IClientAgreementRepository {
 
     ClientAgreement GetSelectedByWorkplaceNetId(Guid workplaceNetId);
 
+    ClientAgreement GetSelectedForPricing(Guid clientOrWorkplaceNetId);
+
     bool IsSubClientsHasAgreements(Guid netId);
 
     ClientAgreement GetByNetIdWithAgreementAndOrganization(Guid netId);
@@ -83,6 +85,15 @@ public interface IClientAgreementRepository {
     ClientAgreement GetClientAgreementBySupplyOrderUkraineId(long id);
 
     ClientAgreement GetByClientNetIdWithOrWithoutVat(Guid netId, long organizationId, bool withVat);
+
+    ClientAgreement GetActiveForPricing(
+        Guid clientOrWorkplaceNetId,
+        Guid selectedClientAgreementNetId,
+        long organizationId,
+        bool withVat,
+        string sourceWorld);
+
+    ClientAgreement GetActiveRetailFenixByOrganizationId(long organizationId, bool withVat);
 
     ClientAgreement GetWithClientInfoByAgreementNetId(Guid netId);
 }

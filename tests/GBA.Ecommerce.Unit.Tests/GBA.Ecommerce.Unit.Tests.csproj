@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="Moq" Version="4.20.72" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\GBA.Search\GBA.Search.csproj" />
+    <ProjectReference Include="..\..\src\GBA.Services\GBA.Services.csproj" />
+    <ProjectReference Include="..\..\src\GBA.Ecommerce\GBA.Ecommerce.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\db\pricing-cache-change-tracking.sql"
+          Link="pricing-cache-change-tracking.sql"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\db\pricing-cache-change-tracking-rotate-incarnation.sql"
+          Link="pricing-cache-change-tracking-rotate-incarnation.sql"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\db\pricing-cache-change-tracking-runbook.md"
+          Link="pricing-cache-change-tracking-runbook.md"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

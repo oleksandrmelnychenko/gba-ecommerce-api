@@ -39,6 +39,28 @@ using GBA.Domain.TranslationEntities;
 namespace GBA.Domain.Repositories.Sales;
 
 public sealed class SaleRepository : ISaleRepository {
+    private const string FrozenOrderItemPriceWithFallbackSql =
+        "CASE WHEN [BaseLifeCycleStatus].[SaleLifeCycleType] = 0 AND [Sale].[IsPaymentBillDownloaded] = 0 THEN " +
+        "CASE WHEN [OrderItem].IsFromReSale = 1 " +
+        "THEN dbo.[GetCalculatedProductPriceWithShares_ReSale]([Product].NetUID, [ClientAgreement].NetUID, @Culture, [OrderItem].[ID]) " +
+        "ELSE dbo.GetCalculatedProductPriceWithSharesAndVat([Product].NetUID, [ClientAgreement].NetUID, @Culture, [Agreement].WithVATAccounting, [OrderItem].[ID]) END " +
+        "ELSE COALESCE([OrderItem].[PricePerItem], " +
+        "CASE WHEN [OrderItem].IsFromReSale = 1 " +
+        "THEN dbo.[GetCalculatedProductPriceWithShares_ReSale]([Product].NetUID, [ClientAgreement].NetUID, @Culture, [OrderItem].[ID]) " +
+        "ELSE dbo.GetCalculatedProductPriceWithSharesAndVat([Product].NetUID, [ClientAgreement].NetUID, @Culture, [Agreement].WithVATAccounting, [OrderItem].[ID]) END) END";
+
+    private const string FrozenOrderItemLocalPriceWithFallbackSql =
+        "CASE WHEN [BaseLifeCycleStatus].[SaleLifeCycleType] = 0 AND [Sale].[IsPaymentBillDownloaded] = 0 THEN " +
+        "CASE WHEN [OrderItem].IsFromReSale = 1 " +
+        "THEN dbo.[GetCalculatedProductLocalPriceWithShares_ReSale]([Product].NetUID, [ClientAgreement].NetUID, @Culture, [OrderItem].[ID]) " +
+        "ELSE dbo.GetCalculatedProductLocalPriceWithSharesAndVat([Product].NetUID, [ClientAgreement].NetUID, @Culture, [Agreement].WithVATAccounting, [OrderItem].[ID]) END " +
+        "ELSE COALESCE(" +
+        "CASE WHEN [OrderItem].[PricePerItem] IS NULL THEN NULL " +
+        "ELSE [OrderItem].[PricePerItem] * COALESCE(NULLIF([OrderItem].[ExchangeRateAmount], 0), 1) END, " +
+        "CASE WHEN [OrderItem].IsFromReSale = 1 " +
+        "THEN dbo.[GetCalculatedProductLocalPriceWithShares_ReSale]([Product].NetUID, [ClientAgreement].NetUID, @Culture, [OrderItem].[ID]) " +
+        "ELSE dbo.GetCalculatedProductLocalPriceWithSharesAndVat([Product].NetUID, [ClientAgreement].NetUID, @Culture, [Agreement].WithVATAccounting, [OrderItem].[ID]) END) END";
+
     private const string SALE_IDS_FOR_SHIPMENT_EXPRESSION =
         ";WITH [SALE_IDS_CTE] AS ( " +
         "SELECT ROW_NUMBER() OVER (ORDER BY [Sale].[ID] DESC) AS [RowNumber] " +
@@ -6897,7 +6919,8 @@ public sealed class SaleRepository : ISaleRepository {
 
             orderItem.Product = product;
 
-            saleToReturn.Order.OrderItems.Add(orderItem);
+            if (!saleToReturn.Order.OrderItems.Any(item => item.Id.Equals(orderItem.Id)))
+                saleToReturn.Order.OrderItems.Add(orderItem);
 
             return sale;
         };
@@ -7141,8 +7164,6 @@ public sealed class SaleRepository : ISaleRepository {
         }
 
         sqlExpression +=
-            ",[ProductPricing].* " +
-            ",[Pricing].* " +
             ",[ProductProductGroup].* " +
             ",[User].* " +
             ",[Agreement].* " +
@@ -7179,12 +7200,6 @@ public sealed class SaleRepository : ISaleRepository {
             "LEFT JOIN  [Product] " +
             "ON [Product].ID = OrderItem.ProductID " +
             "AND Product.Deleted = 0 " +
-            "LEFT JOIN ProductPricing " +
-            "ON ProductPricing.ProductID = Product.ID " +
-            "AND ProductPricing.Deleted = 0 " +
-            "LEFT JOIN Pricing " +
-            "ON ProductPricing.PricingID = Pricing.ID " +
-            "AND Pricing.Deleted = 0 " +
             "LEFT JOIN ProductProductGroup " +
             "ON ProductProductGroup.ProductID = Product.ID " +
             "AND ProductProductGroup.Deleted = 0 " +
@@ -7254,8 +7269,6 @@ public sealed class SaleRepository : ISaleRepository {
             typeof(Order),
             typeof(OrderItem),
             typeof(Product),
-            typeof(ProductPricing),
-            typeof(Pricing),
             typeof(ProductProductGroup),
             typeof(User),
             typeof(Agreement),
@@ -7288,32 +7301,30 @@ public sealed class SaleRepository : ISaleRepository {
             Order order = (Order)objects[2];
             OrderItem orderItem = (OrderItem)objects[3];
             Product product = (Product)objects[4];
-            ProductPricing productPricing = (ProductPricing)objects[5];
-            Pricing pricing = (Pricing)objects[6];
-            ProductProductGroup productProductGroup = (ProductProductGroup)objects[7];
-            User user = (User)objects[8];
-            Agreement agreement = (Agreement)objects[9];
-            Currency currency = (Currency)objects[10];
-            Client client = (Client)objects[11];
-            RegionCode regionCode = (RegionCode)objects[12];
-            BaseLifeCycleStatus baseLifeCycleStatus = (BaseLifeCycleStatus)objects[13];
-            BaseSalePaymentStatus baseSalePaymentStatus = (BaseSalePaymentStatus)objects[14];
-            SaleNumber saleNumber = (SaleNumber)objects[15];
-            User orderItemUser = (User)objects[16];
-            CurrencyTranslation currencyTranslation = (CurrencyTranslation)objects[17];
-            SaleBaseShiftStatus saleBaseShiftStatus = (SaleBaseShiftStatus)objects[18];
-            OrderItemBaseShiftStatus orderItemBaseShiftStatus = (OrderItemBaseShiftStatus)objects[19];
-            ProductAvailability productAvailability = (ProductAvailability)objects[20];
-            Storage productAvailabilityStorage = (Storage)objects[21];
-            Transporter transporter = (Transporter)objects[22];
-            DeliveryRecipient deliveryRecipient = (DeliveryRecipient)objects[23];
-            DeliveryRecipientAddress deliveryRecipientAddress = (DeliveryRecipientAddress)objects[24];
-            SaleMerged inputSaleMerged = (SaleMerged)objects[25];
-            SaleMerged outputSaleMerged = (SaleMerged)objects[26];
-            SaleInvoiceDocument saleInvoiceDocument = (SaleInvoiceDocument)objects[27];
-            ClientSubClient clientSubClient = (ClientSubClient)objects[28];
-            SaleInvoiceNumber saleInvoiceNumber = (SaleInvoiceNumber)objects[29];
-            MeasureUnit measureUnit = (MeasureUnit)objects[30];
+            ProductProductGroup productProductGroup = (ProductProductGroup)objects[5];
+            User user = (User)objects[6];
+            Agreement agreement = (Agreement)objects[7];
+            Currency currency = (Currency)objects[8];
+            Client client = (Client)objects[9];
+            RegionCode regionCode = (RegionCode)objects[10];
+            BaseLifeCycleStatus baseLifeCycleStatus = (BaseLifeCycleStatus)objects[11];
+            BaseSalePaymentStatus baseSalePaymentStatus = (BaseSalePaymentStatus)objects[12];
+            SaleNumber saleNumber = (SaleNumber)objects[13];
+            User orderItemUser = (User)objects[14];
+            CurrencyTranslation currencyTranslation = (CurrencyTranslation)objects[15];
+            SaleBaseShiftStatus saleBaseShiftStatus = (SaleBaseShiftStatus)objects[16];
+            OrderItemBaseShiftStatus orderItemBaseShiftStatus = (OrderItemBaseShiftStatus)objects[17];
+            ProductAvailability productAvailability = (ProductAvailability)objects[18];
+            Storage productAvailabilityStorage = (Storage)objects[19];
+            Transporter transporter = (Transporter)objects[20];
+            DeliveryRecipient deliveryRecipient = (DeliveryRecipient)objects[21];
+            DeliveryRecipientAddress deliveryRecipientAddress = (DeliveryRecipientAddress)objects[22];
+            SaleMerged inputSaleMerged = (SaleMerged)objects[23];
+            SaleMerged outputSaleMerged = (SaleMerged)objects[24];
+            SaleInvoiceDocument saleInvoiceDocument = (SaleInvoiceDocument)objects[25];
+            ClientSubClient clientSubClient = (ClientSubClient)objects[26];
+            SaleInvoiceNumber saleInvoiceNumber = (SaleInvoiceNumber)objects[27];
+            MeasureUnit measureUnit = (MeasureUnit)objects[28];
 
             if (saleToReturn == null) {
                 sale.ShiftStatus = saleBaseShiftStatus;
@@ -7376,29 +7387,17 @@ public sealed class SaleRepository : ISaleRepository {
                 product.ProductAvailabilities.Add(productAvailability);
             }
 
-            if (productPricing != null) {
-                if (pricing != null) productPricing.Pricing = pricing;
-
-                if (productProductGroup != null) product.ProductProductGroups.Add(productProductGroup);
-
-                orderItem.TotalAmount = productPricing.Price * Convert.ToDecimal(orderItem.Qty);
-
-                orderItem.User = orderItemUser;
-
-                product.ProductPricings.Add(productPricing);
-            }
-
             if (productProductGroup != null) product.ProductProductGroups.Add(productProductGroup);
 
             product.MeasureUnit = measureUnit;
 
+            orderItem.TotalAmount = product.CurrentPrice * Convert.ToDecimal(orderItem.Qty);
+            orderItem.TotalAmountLocal = product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty);
+            orderItem.User = orderItemUser;
             orderItem.Product = product;
 
             if (saleToReturn.Order.OrderItems.Any(o => o.Id.Equals(orderItem.Id))) {
                 OrderItem orderItemFormArray = saleToReturn.Order.OrderItems.First(o => o.Id.Equals(orderItem.Id));
-
-                if (productPricing != null && !orderItemFormArray.Product.ProductPricings.Any(p => p.Id.Equals(productPricing.Id)))
-                    orderItemFormArray.Product.ProductPricings.Add(productPricing);
 
                 if (productProductGroup != null && !orderItemFormArray.Product.ProductProductGroups.Any(p => p.Id.Equals(productProductGroup.Id)))
                     orderItemFormArray.Product.ProductProductGroups.Add(productProductGroup);
@@ -8266,16 +8265,8 @@ public sealed class SaleRepository : ISaleRepository {
             ",[Product].VendorCode " +
             ",[Product].Volume " +
             ",[Product].Weight " +
-            ", (CASE " +
-            "WHEN [OrderItem].IsFromReSale = 1 " +
-            "THEN dbo.[GetCalculatedProductPriceWithShares_ReSale]([Product].NetUID, [ClientAgreement].NetUID, @Culture, [OrderItem].[ID]) " +
-            "ELSE dbo.GetCalculatedProductPriceWithSharesAndVat([Product].NetUID, [ClientAgreement].NetUID, @Culture, [Agreement].WithVATAccounting, [OrderItem].[ID]) " +
-            "END) AS [CurrentPrice] " +
-            ", (CASE " +
-            "WHEN [OrderItem].IsFromReSale = 1 " +
-            "THEN dbo.[GetCalculatedProductLocalPriceWithShares_ReSale]([Product].NetUID, [ClientAgreement].NetUID, @Culture, [OrderItem].[ID]) " +
-            "ELSE dbo.GetCalculatedProductLocalPriceWithSharesAndVat([Product].NetUID, [ClientAgreement].NetUID, @Culture, [Agreement].WithVATAccounting, [OrderItem].[ID]) " +
-            "END) AS [CurrentLocalPrice] " +
+            ", " + FrozenOrderItemPriceWithFallbackSql + " AS [CurrentPrice] " +
+            ", " + FrozenOrderItemLocalPriceWithFallbackSql + " AS [CurrentLocalPrice] " +
             ",[Product].MeasureUnitID ";
 
         if (CultureInfo.CurrentCulture.TwoLetterISOLanguageName.Equals("pl")) {
@@ -8514,8 +8505,6 @@ public sealed class SaleRepository : ISaleRepository {
 
         Type[] orderItems = {
             typeof(OrderItem),
-            typeof(ProductPricing),
-            typeof(Pricing),
             typeof(ProductProductGroup),
             typeof(ProductGroup),
             typeof(MeasureUnit),
@@ -8527,31 +8516,24 @@ public sealed class SaleRepository : ISaleRepository {
 
         Func<object[], OrderItem> orderItemMapper = objects => {
             OrderItem orderItem = (OrderItem)objects[0];
-            ProductPricing productPricing = (ProductPricing)objects[1];
-            Pricing pricing = (Pricing)objects[2];
-            ProductProductGroup productProductGroup = (ProductProductGroup)objects[3];
-            MeasureUnit measureUnit = (MeasureUnit)objects[5];
-            User discountUpdatedBy = (User)objects[6];
-            ProductSpecification assignedSpecification = (ProductSpecification)objects[7];
-            ProductGroupDiscount productGroupDiscount = (ProductGroupDiscount)objects[8];
-            OrderItemBaseShiftStatus orderItemBaseShiftStatus = (OrderItemBaseShiftStatus)objects[9];
+            ProductProductGroup productProductGroup = (ProductProductGroup)objects[1];
+            ProductGroup productGroup = (ProductGroup)objects[2];
+            MeasureUnit measureUnit = (MeasureUnit)objects[3];
+            User discountUpdatedBy = (User)objects[4];
+            ProductSpecification assignedSpecification = (ProductSpecification)objects[5];
+            ProductGroupDiscount productGroupDiscount = (ProductGroupDiscount)objects[6];
+            OrderItemBaseShiftStatus orderItemBaseShiftStatus = (OrderItemBaseShiftStatus)objects[7];
 
             OrderItem existOrderItem = saleToReturn.Order.OrderItems.FirstOrDefault(x => x.Id.Equals(orderItem.Id));
 
             if (existOrderItem == null)
                 return orderItem;
 
-            if (productPricing != null) {
-                if (pricing != null)
-                    productPricing.Pricing = pricing;
-
-                if (!existOrderItem.Product.ProductPricings.Any(x => x.Id.Equals(productPricing.Id)))
-                    existOrderItem.Product.ProductPricings.Add(productPricing);
-            }
-
             if (productProductGroup != null && !existOrderItem.Product.ProductProductGroups
-                    .Any(x => x.Id.Equals(productProductGroup.Id)))
+                    .Any(x => x.Id.Equals(productProductGroup.Id))) {
+                productProductGroup.ProductGroup = productGroup;
                 existOrderItem.Product.ProductProductGroups.Add(productProductGroup);
+            }
 
             if (orderItemBaseShiftStatus != null && !existOrderItem.ShiftStatuses.Any(s => s.Id.Equals(orderItemBaseShiftStatus.Id)))
                 existOrderItem.ShiftStatuses.Add(orderItemBaseShiftStatus);
@@ -8571,8 +8553,6 @@ public sealed class SaleRepository : ISaleRepository {
         _connection.Query(
             "SELECT " +
             "[OrderItem].* " +
-            ",[ProductPricing].* " +
-            ",[Pricing].* " +
             ",[ProductProductGroup].* " +
             ",[ProductGroup].* " +
             ",[MeasureUnit].* " +
@@ -8591,12 +8571,6 @@ public sealed class SaleRepository : ISaleRepository {
             "AND OrderItem.Qty > 0 " +
             "LEFT JOIN [Product] " +
             "ON [Product].[ID] = [OrderItem].[ProductID] " +
-            "LEFT JOIN ProductPricing " +
-            "ON ProductPricing.ProductID = Product.ID " +
-            "AND ProductPricing.Deleted = 0 " +
-            "LEFT JOIN Pricing " +
-            "ON ProductPricing.PricingID = Pricing.ID " +
-            "AND Pricing.Deleted = 0 " +
             "LEFT JOIN ProductProductGroup " +
             "ON ProductProductGroup.ProductID = Product.ID " +
             "AND ProductProductGroup.Deleted = 0 " +

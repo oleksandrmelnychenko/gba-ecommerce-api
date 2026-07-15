@@ -18,6 +18,8 @@ public interface IStorageRepository {
 
     Storage GetWithHighestPriority();
 
+    Storage GetFenixRetailWithHighestPriority(bool withVat);
+
     List<Storage> GetAll();
 
     IEnumerable<Storage> GetAllForReturnsFiltered(

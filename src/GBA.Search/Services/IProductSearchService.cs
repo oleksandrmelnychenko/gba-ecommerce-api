@@ -12,8 +12,24 @@ public interface IProductSearchService {
         int offset = 0,
         CancellationToken cancellationToken = default);
 
+    Task<ProductSearchResult> SearchAsync(
+        string query,
+        ProductSearchCatalogContext catalogContext,
+        string locale = "uk",
+        int limit = 20,
+        int offset = 0,
+        CancellationToken cancellationToken = default);
+
     Task<ProductSearchResultWithDocs> SearchWithDocsAsync(
         string query,
+        string locale = "uk",
+        int limit = 20,
+        int offset = 0,
+        CancellationToken cancellationToken = default);
+
+    Task<ProductSearchResultWithDocs> SearchWithDocsAsync(
+        string query,
+        ProductSearchCatalogContext catalogContext,
         string locale = "uk",
         int limit = 20,
         int offset = 0,

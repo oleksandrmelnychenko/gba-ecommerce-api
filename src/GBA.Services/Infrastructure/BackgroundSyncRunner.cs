@@ -5,6 +5,7 @@ using NLog;
 
 namespace GBA.Services.Infrastructure;
 
+// Best-effort work only. Business mutations that must survive process restarts belong in a durable outbox.
 public static class BackgroundSyncRunner {
     private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
     private static readonly TimeSpan _defaultTimeout = TimeSpan.FromSeconds(15);

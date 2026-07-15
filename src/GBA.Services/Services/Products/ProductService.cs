@@ -42,6 +42,8 @@ public sealed class ProductService : IProductService {
     private readonly IPricingRepositoriesFactory _pricingRepositoriesFactory;
     private readonly IProductRepositoriesFactory _productRepositoriesFactory;
     private readonly IStorageRepositoryFactory _storageRepositoryFactory;
+    private readonly IPricingDependencyRevisionProvider _pricingDependencyRevisionProvider;
+    private readonly IRetailCatalogSelectionProvider _retailCatalogSelectionProvider;
 
     public ProductService(
         IClientRepositoriesFactory clientRepositoriesFactory,
@@ -52,7 +54,9 @@ public sealed class ProductService : IProductService {
         IOrganizationRepositoriesFactory organizationRepositoriesFactory,
         IStorageRepositoryFactory storageRepositoryFactory,
         IDbConnectionFactory connectionFactory,
-        IAgreementRepositoriesFactory agreementRepositoriesFactory) {
+        IAgreementRepositoriesFactory agreementRepositoriesFactory,
+        IPricingDependencyRevisionProvider pricingDependencyRevisionProvider,
+        IRetailCatalogSelectionProvider retailCatalogSelectionProvider) {
         _clientRepositoriesFactory = clientRepositoriesFactory;
         _productRepositoriesFactory = productRepositoriesFactory;
         _pricingRepositoriesFactory = pricingRepositoriesFactory;
@@ -62,55 +66,63 @@ public sealed class ProductService : IProductService {
         _storageRepositoryFactory = storageRepositoryFactory;
         _connectionFactory = connectionFactory;
         _agreementRepositoriesFactory = agreementRepositoriesFactory;
+        _pricingDependencyRevisionProvider = pricingDependencyRevisionProvider;
+        _retailCatalogSelectionProvider = retailCatalogSelectionProvider;
     }
 
     public Task<Product> GetByNetIdForRetail(Guid productNetId) {
+        return GetByNetIdForRetail(productNetId, false);
+    }
+
+    public Task<Product> GetByNetIdForRetail(Guid productNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
         if (productNetId.Equals(Guid.Empty)) throw new Exception("There's no such product in database");
 
-        Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+        ResolvedProductPricingContext pricingContext = ResolvePricingContext(connection, Guid.Empty, withVat);
+        if (pricingContext == null) return Task.FromResult<Product>(null);
 
-        return Task.FromResult(_productRepositoriesFactory.NewGetSingleProductRepository(connection).GetByNetIdForRetail(productNetId, storage.OrganizationId.Value, storage.ForVatProducts));
+        return Task.FromResult(
+            _productRepositoriesFactory.NewGetSingleProductRepository(connection).GetProductByNetId(
+                productNetId,
+                pricingContext.Context.ClientAgreementNetId,
+                pricingContext.Context.WithVat,
+                pricingContext.Context.CurrencyId,
+                pricingContext.Context.OrganizationId,
+                pricingContext.Context.Source));
     }
 
     public Task<Product> GetByNetId(Guid productNetId, Guid clientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-
-        ClientAgreement clientAgreement =
-            clientAgreementRepository.GetSelectedByClientNetId(clientNetId)
-            ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(clientNetId);
+        ResolvedProductPricingContext pricingContext = ResolvePricingContext(connection, clientNetId, withVat);
+        if (pricingContext == null) return Task.FromResult<Product>(null);
 
         return Task.FromResult(
             _productRepositoriesFactory
                 .NewGetSingleProductRepository(connection)
                 .GetProductByNetId(
                     productNetId,
-                    clientAgreement.NetUid,
-                    clientAgreement.Agreement.WithVATAccounting,
-                    clientAgreement.Agreement.CurrencyId,
-                    clientAgreement.Agreement.OrganizationId
+                    pricingContext.Context.ClientAgreementNetId,
+                    pricingContext.Context.WithVat,
+                    pricingContext.Context.CurrencyId,
+                    pricingContext.Context.OrganizationId,
+                    pricingContext.Context.Source
                 )
         );
     }
 
     public Task<Product> GetProductBySlug(string slug, Guid clientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        if (clientNetId.Equals(Guid.Empty))
-            return Task.FromResult(_productRepositoriesFactory.NewGetSingleProductRepository(connection).GetBySlug(slug, Guid.Empty, Guid.Empty));
-
-        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-
-        ClientAgreement nonVatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(clientNetId, false);
-        ClientAgreement vatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(clientNetId, true);
+        ProductPricingContextSet pricingContexts = ResolvePricingContextSet(connection, clientNetId, withVat);
+        if (pricingContexts == null) return Task.FromResult<Product>(null);
 
         return Task.FromResult(
             _productRepositoriesFactory
                 .NewGetSingleProductRepository(connection)
                 .GetBySlug(
                     slug,
-                    nonVatAgreement?.NetUid ?? Guid.Empty,
-                    vatAgreement?.NetUid
+                    pricingContexts.NonVat?.Context.ClientAgreementNetId ?? Guid.Empty,
+                    pricingContexts.Vat?.Context.ClientAgreementNetId,
+                    pricingContexts.Selected.Context.Source
                 )
         );
     }
@@ -121,7 +133,6 @@ public sealed class ProductService : IProductService {
             // if (offset < 0) offset = 0;
 
             IGetMultipleProductsRepository getMultipleProductsRepository = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection);
-            IAgreementRepository agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
 
             if (string.IsNullOrEmpty(value)) value = string.Empty;
 
@@ -882,60 +893,27 @@ public sealed class ProductService : IProductService {
 
             builder = new StringBuilder();
 
-            IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-
             if (!ids.Any() && !idsSearchAnalogues.Any()) return Task.FromResult(new List<FromSearchProduct>());
             if (idsSearchAnalogues.Any()) {
-                if (currentClientNetId.Equals(Guid.Empty)) {
-                    Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+                ResolvedProductPricingContext pricingContext = ResolvePricingContext(connection, currentClientNetId, withVat);
+                if (pricingContext == null) return Task.FromResult(new List<FromSearchProduct>());
 
-                    ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
-                        _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
-                        storage.OrganizationId.Value,
-                        storage.ForVatProducts);
+                List<FromSearchProduct> analogues = new();
 
-                    List<FromSearchProduct> analogues = new();
+                foreach (SearchResult item in idsSearchAnalogues)
+                    if (!(analogues.Count >= limit))
+                        analogues.AddRange(getMultipleProductsRepository
+                            .GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPricesForRetail(
+                                item.Id,
+                                pricingContext.Context.ClientAgreementNetId,
+                                pricingContext.Context.Source,
+                                pricingContext.Context.OrganizationId,
+                                pricingContext.Context.CurrencyId,
+                                pricingContext.Context.WithVat
+                            ));
+                    else break;
 
-                    foreach (SearchResult item in idsSearchAnalogues)
-                        if (!(analogues.Count >= limit))
-                            analogues.AddRange(getMultipleProductsRepository
-                                .GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPricesForRetail(
-                                    item.Id,
-                                    clientAgreement.NetUid,
-                                    clientAgreement.Agreement.OrganizationId,
-                                    clientAgreement.Agreement.CurrencyId,
-                                    clientAgreement.Agreement.WithVATAccounting
-                                ));
-                        else break;
-
-                    return Task.FromResult(analogues);
-                } else {
-                    ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId)
-                                                      ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-                    if (clientAgreement == null) {
-                        clientAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
-                        clientAgreement.Agreement.IsSelected = true;
-                        agreementRepository.Update(clientAgreement.Agreement);
-                    }
-
-                    clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
-                                      clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-                    List<FromSearchProduct> analogues = new();
-
-                    foreach (SearchResult item in idsSearchAnalogues)
-                        if (!(analogues.Count >= limit))
-                            analogues.AddRange(getMultipleProductsRepository
-                                .GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPricesForRetail(
-                                    item.Id,
-                                    clientAgreement.NetUid,
-                                    clientAgreement.Agreement.OrganizationId,
-                                    clientAgreement.Agreement.CurrencyId,
-                                    clientAgreement.Agreement.WithVATAccounting
-                                ));
-                        else break;
-
-                    return Task.FromResult(analogues);
-                }
+                return Task.FromResult(analogues);
             }
 
             builder.Append("CREATE TABLE dbo.#SearchResult(");
@@ -959,77 +937,41 @@ public sealed class ProductService : IProductService {
                         builder.Append(ids[i].Available ? $"({ids[i].Id}, {ids[i].RowNumber}, 0, 1), " : $"({ids[i].Id}, {ids[i].RowNumber}, 0, 0), ");
                 }
 
-            if (currentClientNetId.Equals(Guid.Empty)) {
-                Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+            ResolvedProductPricingContext resolvedPricing = ResolvePricingContext(connection, currentClientNetId, withVat);
+            if (resolvedPricing == null) return Task.FromResult(new List<FromSearchProduct>());
 
-                ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
-                    _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
-                    storage.OrganizationId.Value,
-                    storage.ForVatProducts);
-
-                if (clientAgreement == null) return Task.FromResult(new List<FromSearchProduct>());
-
-                List<FromSearchProduct> analogues = new();
-                List<FromSearchProduct> productSearch = getMultipleProductsRepository.GetAllFromIdsInTempTableForRetail(builder.ToString(), clientAgreement);
-                //List<FromSearchProduct> productSearch = getMultipleProductsRepository.GetAllFromIdsInTempTableForRetail(ids.Select(x=>x.Id).ToList(), clientAgreement, storage);
-
-                foreach (FromSearchProduct item in productSearch)
-                    if (!(productSearch.Count >= limit) && item.AvailableQtyUk.Equals(0))
-                        analogues.AddRange(getMultipleProductsRepository
-                            .GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPricesForRetail(
-                                item.Id,
-                                clientAgreement.NetUid,
-                                clientAgreement.Agreement.OrganizationId,
-                                clientAgreement.Agreement.CurrencyId,
-                                clientAgreement.Agreement.WithVATAccounting
-                            ));
-                    else break;
-
-                foreach (FromSearchProduct item in analogues)
-                    if (!(productSearch.Count >= limit))
-                        productSearch.Add(item);
-                    else break;
-
-                return Task.FromResult(productSearch);
-            } else {
-                ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId)
-                                                  ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-                if (clientAgreement == null) {
-                    clientAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
-                    clientAgreement.Agreement.IsSelected = true;
-                    agreementRepository.Update(clientAgreement.Agreement);
-                }
-
-                clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
-                                  clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-
-                List<FromSearchProduct> analogues = new();
-                List<FromSearchProduct> productSearch = getMultipleProductsRepository.GetAllFromIdsInTempTable(builder.ToString(),
-                    clientAgreement.NetUid,
-                    clientAgreement.Agreement.CurrencyId,
-                    clientAgreement.Agreement.OrganizationId,
-                    clientAgreement.Agreement.WithVATAccounting,
+            ClientAgreement clientAgreement = resolvedPricing.ClientAgreement;
+            List<FromSearchProduct> searchAnalogues = new();
+            List<FromSearchProduct> productSearch = currentClientNetId.Equals(Guid.Empty)
+                ? getMultipleProductsRepository.GetAllFromIdsInTempTableForRetail(builder.ToString(), clientAgreement)
+                : getMultipleProductsRepository.GetAllFromIdsInTempTable(
+                    builder.ToString(),
+                    resolvedPricing.Context.ClientAgreementNetId,
+                    resolvedPricing.Context.Source,
+                    resolvedPricing.Context.CurrencyId,
+                    resolvedPricing.Context.OrganizationId,
+                    resolvedPricing.Context.WithVat,
                     clientAgreement.Agreement.IsDefault);
 
-                foreach (FromSearchProduct item in productSearch)
-                    if (!(productSearch.Count >= limit) && item.AvailableQtyUk.Equals(0))
-                        analogues.AddRange(getMultipleProductsRepository
-                            .GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPricesForRetail(
-                                item.Id,
-                                clientAgreement.NetUid,
-                                clientAgreement.Agreement.OrganizationId,
-                                clientAgreement.Agreement.CurrencyId,
-                                clientAgreement.Agreement.WithVATAccounting
-                            ));
-                    else break;
+            foreach (FromSearchProduct item in productSearch)
+                if (!(productSearch.Count >= limit) && item.AvailableQtyUk.Equals(0))
+                    searchAnalogues.AddRange(getMultipleProductsRepository
+                        .GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPricesForRetail(
+                            item.Id,
+                            resolvedPricing.Context.ClientAgreementNetId,
+                            resolvedPricing.Context.Source,
+                            resolvedPricing.Context.OrganizationId,
+                            resolvedPricing.Context.CurrencyId,
+                            resolvedPricing.Context.WithVat
+                        ));
+                else break;
 
-                foreach (FromSearchProduct item in analogues)
-                    if (!(productSearch.Count >= limit))
-                        productSearch.Add(item);
-                    else break;
+            foreach (FromSearchProduct item in searchAnalogues)
+                if (!(productSearch.Count >= limit))
+                    productSearch.Add(item);
+                else break;
 
-                return Task.FromResult(productSearch);
-            }
+            return Task.FromResult(productSearch);
     }
 
     /// <summary>
@@ -1039,8 +981,6 @@ public sealed class ProductService : IProductService {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
 
             IGetMultipleProductsRepository getMultipleProductsRepository = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection);
-            IAgreementRepository agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
-            IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
             if (string.IsNullOrEmpty(value)) return Task.FromResult(new List<FromSearchProduct>());
 
@@ -1068,65 +1008,46 @@ public sealed class ProductService : IProductService {
                     builder.Append(ids[i].Available ? $"({ids[i].Id}, {ids[i].RowNumber}, {(ids[i].HunderdPrecentMatch ? 1 : 0)}, 1), " : $"({ids[i].Id}, {ids[i].RowNumber}, {(ids[i].HunderdPrecentMatch ? 1 : 0)}, 0), ");
             }
 
-            if (currentClientNetId.Equals(Guid.Empty)) {
-                Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+            ResolvedProductPricingContext pricingContext = ResolvePricingContext(connection, currentClientNetId, withVat);
+            if (pricingContext == null) return Task.FromResult(new List<FromSearchProduct>());
 
-                ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
-                    _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
-                    storage.OrganizationId.Value,
-                    storage.ForVatProducts);
+            if (currentClientNetId.Equals(Guid.Empty))
+                return Task.FromResult(getMultipleProductsRepository.GetAllFromIdsInTempTableForRetail(
+                    builder.ToString(),
+                    pricingContext.ClientAgreement));
 
-                if (clientAgreement == null) return Task.FromResult(new List<FromSearchProduct>());
-
-                return Task.FromResult(getMultipleProductsRepository.GetAllFromIdsInTempTableForRetail(builder.ToString(), clientAgreement));
-            } else {
-                ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId)
-                                                  ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-                if (clientAgreement == null) {
-                    clientAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
-                    if (clientAgreement != null) {
-                        clientAgreement.Agreement.IsSelected = true;
-                        agreementRepository.Update(clientAgreement.Agreement);
-                    }
-                }
-
-                clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
-                                  clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-
-                if (clientAgreement == null) return Task.FromResult(new List<FromSearchProduct>());
-
-                return Task.FromResult(getMultipleProductsRepository.GetAllFromIdsInTempTable(builder.ToString(),
-                    clientAgreement.NetUid,
-                    clientAgreement.Agreement.CurrencyId,
-                    clientAgreement.Agreement.OrganizationId,
-                    clientAgreement.Agreement.WithVATAccounting,
-                    clientAgreement.Agreement.IsDefault));
-            }
+            return Task.FromResult(getMultipleProductsRepository.GetAllFromIdsInTempTable(
+                builder.ToString(),
+                pricingContext.Context.ClientAgreementNetId,
+                pricingContext.Context.Source,
+                pricingContext.Context.CurrencyId,
+                pricingContext.Context.OrganizationId,
+                pricingContext.Context.WithVat,
+                pricingContext.ClientAgreement.Agreement.IsDefault));
     }
 
     public Task<List<FromSearchProduct>> GetAllAnaloguesByProductNetIdForRetail(Guid productNetId) {
+        return GetAllAnaloguesByProductNetIdForRetail(productNetId, false);
+    }
+
+    public Task<List<FromSearchProduct>> GetAllAnaloguesByProductNetIdForRetail(Guid productNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
 
-        Product product = _productRepositoriesFactory.NewGetSingleProductRepository(connection).GetByNetIdWithoutIncludes(productNetId);
+        ResolvedProductPricingContext pricingContext = ResolvePricingContext(connection, Guid.Empty, withVat);
+        if (pricingContext == null) return Task.FromResult(new List<FromSearchProduct>());
 
+        Product product = _productRepositoriesFactory.NewGetSingleProductRepository(connection)
+            .GetByNetIdWithoutIncludes(productNetId, pricingContext.Context.Source);
         if (product == null) return Task.FromResult(new List<FromSearchProduct>());
-
-        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-
-        Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
-
-        ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
-            _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
-            storage.OrganizationId.Value,
-            storage.ForVatProducts);
 
         List<FromSearchProduct> analogues = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection)
             .GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPricesForRetail(
                 product.Id,
-                clientAgreement.NetUid,
-                clientAgreement.Agreement.OrganizationId,
-                clientAgreement.Agreement.CurrencyId,
-                clientAgreement.Agreement.WithVATAccounting
+                pricingContext.Context.ClientAgreementNetId,
+                pricingContext.Context.Source,
+                pricingContext.Context.OrganizationId,
+                pricingContext.Context.CurrencyId,
+                pricingContext.Context.WithVat
             );
 
         return Task.FromResult(analogues);
@@ -1134,24 +1055,22 @@ public sealed class ProductService : IProductService {
 
     public Task<List<FromSearchProduct>> GetAllAnaloguesByProductNetId(Guid productNetId, Guid currentClientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        IProductRepository productRepository = _productRepositoriesFactory.NewProductRepository(connection);
 
-        Product product = _productRepositoriesFactory.NewGetSingleProductRepository(connection).GetByNetIdWithoutIncludes(productNetId);
+        ResolvedProductPricingContext pricingContext = ResolvePricingContext(connection, currentClientNetId, withVat);
+        if (pricingContext == null) return Task.FromResult(new List<FromSearchProduct>());
 
+        Product product = _productRepositoriesFactory.NewGetSingleProductRepository(connection)
+            .GetByNetIdWithoutIncludes(productNetId, pricingContext.Context.Source);
         if (product == null) return Task.FromResult(new List<FromSearchProduct>());
-
-        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-
-        ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
-                                          clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
 
         List<FromSearchProduct> analogues = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection)
             .GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPrices(
                 product.Id,
-                clientAgreement.NetUid,
-                clientAgreement.Agreement.OrganizationId,
-                clientAgreement.Agreement.CurrencyId,
-                clientAgreement.Agreement.WithVATAccounting
+                pricingContext.Context.ClientAgreementNetId,
+                pricingContext.Context.Source,
+                pricingContext.Context.OrganizationId,
+                pricingContext.Context.CurrencyId,
+                pricingContext.Context.WithVat
             );
 
         return Task.FromResult(analogues);
@@ -1161,64 +1080,43 @@ public sealed class ProductService : IProductService {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
         IGetMultipleProductsRepository getMultipleProductsRepository = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection);
 
-        Product product = _productRepositoriesFactory.NewGetSingleProductRepository(connection).GetByNetIdWithoutIncludes(productNetId);
+        ProductPricingContextSet pricingContexts = ResolvePricingContextSet(connection, currentClientNetId, withVat);
+        if (pricingContexts == null) return Task.FromResult(new List<FromSearchProduct>());
 
+        Product product = _productRepositoriesFactory.NewGetSingleProductRepository(connection)
+            .GetByNetIdWithoutIncludes(productNetId, pricingContexts.Selected.Context.Source);
         if (product == null) return Task.FromResult(new List<FromSearchProduct>());
-
-        if (currentClientNetId.Equals(Guid.Empty))
-            return Task.FromResult(getMultipleProductsRepository
-                .GetAllComponentsByProductIdWithCalculatedPrices(
-                    product.Id,
-                    currentClientNetId,
-                    null
-                ));
-
-        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-
-        ClientAgreement nonVatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(currentClientNetId, false);
-        ClientAgreement vatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(currentClientNetId, true);
 
         return Task.FromResult(getMultipleProductsRepository
             .GetAllComponentsByProductIdWithCalculatedPrices(
                 product.Id,
-                nonVatAgreement?.NetUid ?? Guid.Empty,
-                vatAgreement?.NetUid,
-                withVat ? vatAgreement?.Agreement?.OrganizationId : nonVatAgreement?.Agreement?.OrganizationId
+                pricingContexts.NonVat?.Context.ClientAgreementNetId ?? Guid.Empty,
+                pricingContexts.Vat?.Context.ClientAgreementNetId,
+                pricingContexts.Selected.Context.OrganizationId,
+                pricingContexts.Selected.Context.Source
             ));
     }
 
     public Task<List<Product>> GetAllByVendorCodes(List<string> vendorCodes, Guid currentClientNetId, long limit, long offset, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        if (vendorCodes.Count.Equals(0)) return Task.FromResult(new List<Product>());
+        if (vendorCodes == null || vendorCodes.Count == 0) return Task.FromResult(new List<Product>());
         if (limit.Equals(0)) limit = 20;
         if (offset < 0) offset = 0;
 
-            IGetMultipleProductsRepository getMultipleProductsRepository = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection);
+        IGetMultipleProductsRepository getMultipleProductsRepository =
+            _productRepositoriesFactory.NewGetMultipleProductsRepository(connection);
+        ProductPricingContextSet pricingContexts = ResolvePricingContextSet(
+            connection,
+            currentClientNetId,
+            withVat);
+        if (pricingContexts == null) return Task.FromResult(new List<Product>());
 
-            StringBuilder idsSqlBuilder = new();
-
-            idsSqlBuilder.Append("SELECT [SearchProduct].ID ");
-            idsSqlBuilder.Append("FROM [Product] AS [SearchProduct] ");
-            idsSqlBuilder.Append("WHERE [SearchProduct].VendorCode IN (");
-
-            for (int i = 0; i < vendorCodes.Count; i++) idsSqlBuilder.Append(i.Equals(0) ? $"N'{vendorCodes[i]}'" : $", N'{vendorCodes[i]}'");
-
-            idsSqlBuilder.Append(")");
-
-            if (currentClientNetId.Equals(Guid.Empty))
-                return Task.FromResult(getMultipleProductsRepository.GetAllFromIdsInPreDefinedQuery(idsSqlBuilder.ToString(), Guid.Empty, Guid.Empty));
-
-            IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-
-            ClientAgreement nonVatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(currentClientNetId, false);
-            ClientAgreement vatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(currentClientNetId, true);
-
-            return Task.FromResult(getMultipleProductsRepository
-                .GetAllFromIdsInPreDefinedQuery(
-                    idsSqlBuilder.ToString(),
-                    nonVatAgreement?.NetUid ?? Guid.Empty,
-                    vatAgreement?.NetUid
-                ));
+        return Task.FromResult(getMultipleProductsRepository
+            .GetAllByVendorCodes(
+                vendorCodes,
+                pricingContexts.NonVat?.Context.ClientAgreementNetId ?? Guid.Empty,
+                pricingContexts.Vat?.Context.ClientAgreementNetId,
+                pricingContexts.Selected.Context.Source));
     }
 
     public Task<List<OrderItem>> GetAllOrderedProductsFiltered(DateTime from, DateTime to, long limit, long offset, Guid clientNetId) {
@@ -1265,54 +1163,17 @@ public sealed class ProductService : IProductService {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
 
         string culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName;
-        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
         OptimizedProductRepository optimizedRepo = new OptimizedProductRepository(connection);
+        ResolvedProductPricingContext pricingContext = ResolvePricingContext(connection, currentClientNetId, withVat);
+        if (pricingContext == null) return Task.FromResult(new List<FromSearchProduct>());
 
-        List<FromSearchProduct> products;
-
-        if (currentClientNetId.Equals(Guid.Empty)) {
-            // Retail user
-            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
-
-            ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
-                _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
-                storage.OrganizationId.Value,
-                storage.ForVatProducts);
-
-            if (clientAgreement == null) return Task.FromResult(new List<FromSearchProduct>());
-
-            products = optimizedRepo.GetProductsByIdsForRetail(
-                productIds,
-                clientAgreement.NetUid,
-                culture,
-                clientAgreement.Agreement.OrganizationId ?? 0,
-                clientAgreement.Agreement.CurrencyId ?? 0,
-                clientAgreement.Agreement.PricingId ?? 0);
-        } else {
-            // Logged-in user
-            ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId)
-                                              ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-            if (clientAgreement == null) {
-                clientAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
-                if (clientAgreement != null) {
-                    IAgreementRepository agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
-                    clientAgreement.Agreement.IsSelected = true;
-                    agreementRepository.Update(clientAgreement.Agreement);
-                }
-            }
-
-            clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
-                              clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-
-            if (clientAgreement == null) return Task.FromResult(new List<FromSearchProduct>());
-
-            products = optimizedRepo.GetProductsByIdsWithPrices(
-                productIds,
-                clientAgreement.NetUid,
-                culture,
-                withVat,
-                clientAgreement.Agreement.OrganizationId);
-        }
+        List<FromSearchProduct> products = optimizedRepo.GetProductsByIdsWithPrices(
+            productIds,
+            pricingContext.Context.ClientAgreementNetId,
+            culture,
+            pricingContext.Context.WithVat,
+            pricingContext.Context.OrganizationId,
+            pricingContext.Context.Source);
 
         // Fetch original numbers for all products
         if (products.Count > 0) {
@@ -1320,7 +1181,7 @@ public sealed class ProductService : IProductService {
             Dictionary<long, List<string>> originalNumbers = GetOriginalNumbersForProducts(connection, fetchedIds);
 
             foreach (FromSearchProduct product in products) {
-                if (originalNumbers.TryGetValue(product.Id, out List<string>? numbers)) {
+                if (originalNumbers.TryGetValue(product.Id, out List<string> numbers)) {
                     product.OriginalNumbers = numbers;
                 }
             }
@@ -1337,52 +1198,32 @@ public sealed class ProductService : IProductService {
         if (productIds == null || productIds.Count == 0)
             return new Dictionary<long, ProductPriceInfo>();
 
+        ProductPricingContext pricingContext = GetPricingContext(currentClientNetId, withVat);
+        return GetPricesOnly(productIds, pricingContext, culture);
+    }
+
+    public Dictionary<long, ProductPriceInfo> GetPricesOnly(
+        List<long> productIds,
+        ProductPricingContext pricingContext,
+        string culture = "uk") {
+        if (productIds == null || productIds.Count == 0 || pricingContext == null)
+            return new Dictionary<long, ProductPriceInfo>();
+
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
         OptimizedProductRepository optimizedRepo = new OptimizedProductRepository(connection);
 
-        if (currentClientNetId.Equals(Guid.Empty)) {
-            // Retail user - match V1 behavior: use storage.ForVatProducts for agreement selection
-            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+        return optimizedRepo.GetPricesOnly(
+            productIds,
+            pricingContext.ClientAgreementNetId,
+            pricingContext.OrganizationId,
+            pricingContext.WithVat,
+            pricingContext.Source,
+            culture);
+    }
 
-            ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
-                _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
-                storage.OrganizationId.Value,
-                storage.ForVatProducts);
-
-            if (clientAgreement == null) return new Dictionary<long, ProductPriceInfo>();
-
-            return optimizedRepo.GetPricesOnlyForRetail(
-                productIds,
-                clientAgreement.NetUid,
-                clientAgreement.Agreement.CurrencyId ?? 0,
-                clientAgreement.Agreement.WithVATAccounting,
-                culture);
-        } else {
-            // Logged-in user
-            ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId)
-                                              ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-            if (clientAgreement == null) {
-                clientAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
-                if (clientAgreement != null) {
-                    IAgreementRepository agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
-                    clientAgreement.Agreement.IsSelected = true;
-                    agreementRepository.Update(clientAgreement.Agreement);
-                }
-            }
-
-            clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
-                              clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-
-            if (clientAgreement == null) return new Dictionary<long, ProductPriceInfo>();
-
-            return optimizedRepo.GetPricesOnly(
-                productIds,
-                clientAgreement.NetUid,
-                clientAgreement.Agreement.OrganizationId,
-                clientAgreement.Agreement.WithVATAccounting,
-                culture);
-        }
+    public ProductPricingContext GetPricingContext(Guid currentClientNetId, bool withVat) {
+        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+        return ResolvePricingContext(connection, currentClientNetId, withVat)?.Context;
     }
 
     /// <summary>
@@ -1396,9 +1237,6 @@ public sealed class ProductService : IProductService {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
 
         IGetMultipleProductsRepository getMultipleProductsRepository = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection);
-        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-        IAgreementRepository agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
-
         // Build temp table with IDs preserving order via RowNumber
         StringBuilder builder = new();
         builder.Append("CREATE TABLE dbo.#SearchResult(");
@@ -1416,42 +1254,21 @@ public sealed class ProductService : IProductService {
                 builder.Append($"({productIds[i]}, {i + 1}, 0, 0), ");
         }
 
-        List<FromSearchProduct> products;
+        ResolvedProductPricingContext pricingContext = ResolvePricingContext(connection, currentClientNetId, withVat);
+        if (pricingContext == null) return Task.FromResult(new List<FromSearchProduct>());
 
-        if (currentClientNetId.Equals(Guid.Empty)) {
-            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
-
-            ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
-                _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
-                storage.OrganizationId.Value,
-                storage.ForVatProducts);
-
-            if (clientAgreement == null) return Task.FromResult(new List<FromSearchProduct>());
-
-            products = getMultipleProductsRepository.GetAllFromIdsInTempTableForRetail(builder.ToString(), clientAgreement);
-        } else {
-            ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId)
-                                              ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-            if (clientAgreement == null) {
-                clientAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
-                if (clientAgreement != null) {
-                    clientAgreement.Agreement.IsSelected = true;
-                    agreementRepository.Update(clientAgreement.Agreement);
-                }
-            }
-
-            clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
-                              clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-
-            if (clientAgreement == null) return Task.FromResult(new List<FromSearchProduct>());
-
-            products = getMultipleProductsRepository.GetAllFromIdsInTempTable(builder.ToString(),
-                clientAgreement.NetUid,
-                clientAgreement.Agreement.CurrencyId,
-                clientAgreement.Agreement.OrganizationId,
-                clientAgreement.Agreement.WithVATAccounting,
-                clientAgreement.Agreement.IsDefault);
-        }
+        List<FromSearchProduct> products = currentClientNetId.Equals(Guid.Empty)
+            ? getMultipleProductsRepository.GetAllFromIdsInTempTableForRetail(
+                builder.ToString(),
+                pricingContext.ClientAgreement)
+            : getMultipleProductsRepository.GetAllFromIdsInTempTable(
+                builder.ToString(),
+                pricingContext.Context.ClientAgreementNetId,
+                pricingContext.Context.Source,
+                pricingContext.Context.CurrencyId,
+                pricingContext.Context.OrganizationId,
+                pricingContext.Context.WithVat,
+                pricingContext.ClientAgreement.Agreement.IsDefault);
 
         // Fetch original numbers for all products
         if (products.Count > 0) {
@@ -1459,13 +1276,41 @@ public sealed class ProductService : IProductService {
             Dictionary<long, List<string>> originalNumbers = GetOriginalNumbersForProducts(connection, fetchedIds);
 
             foreach (FromSearchProduct product in products) {
-                if (originalNumbers.TryGetValue(product.Id, out List<string>? numbers)) {
+                if (originalNumbers.TryGetValue(product.Id, out List<string> numbers)) {
                     product.OriginalNumbers = numbers;
                 }
             }
         }
 
         return Task.FromResult(products);
+    }
+
+    private ResolvedProductPricingContext ResolvePricingContext(
+        IDbConnection connection,
+        Guid currentClientNetId,
+        bool withVat) {
+        return ProductPricingContextResolver.Resolve(
+            connection,
+            _clientRepositoriesFactory,
+            _storageRepositoryFactory,
+            _pricingDependencyRevisionProvider,
+            _retailCatalogSelectionProvider,
+            currentClientNetId,
+            withVat);
+    }
+
+    private ProductPricingContextSet ResolvePricingContextSet(
+        IDbConnection connection,
+        Guid currentClientNetId,
+        bool withVat) {
+        return ProductPricingContextResolver.ResolveSet(
+            connection,
+            _clientRepositoriesFactory,
+            _storageRepositoryFactory,
+            _pricingDependencyRevisionProvider,
+            _retailCatalogSelectionProvider,
+            currentClientNetId,
+            withVat);
     }
 
     /// <summary>
@@ -1488,7 +1333,7 @@ ORDER BY pon.ProductID, pon.IsMainOriginalNumber DESC";
             IEnumerable<(long ProductId, string Number)> rows = connection.Query<(long ProductId, string Number)>(sql, new { ProductIds = batch });
 
             foreach ((long productId, string number) in rows) {
-                if (!result.TryGetValue(productId, out List<string>? list)) {
+                if (!result.TryGetValue(productId, out List<string> list)) {
                     list = new List<string>();
                     result[productId] = list;
                 }
@@ -1500,4 +1345,230 @@ ORDER BY pon.ProductID, pon.IsMainOriginalNumber DESC";
 
         return result;
     }
+}
+
+internal sealed class ResolvedProductPricingContext {
+    public ResolvedProductPricingContext(
+        ClientAgreement clientAgreement,
+        ProductPricingContext context,
+        string sourceWorld) {
+        ClientAgreement = clientAgreement;
+        Context = context;
+        SourceWorld = sourceWorld;
+    }
+
+    public ClientAgreement ClientAgreement { get; }
+    public ProductPricingContext Context { get; }
+    public string SourceWorld { get; }
+}
+
+internal sealed class ProductPricingContextSet {
+    public ProductPricingContextSet(
+        ResolvedProductPricingContext selected,
+        ResolvedProductPricingContext nonVat,
+        ResolvedProductPricingContext vat) {
+        Selected = selected;
+        NonVat = nonVat;
+        Vat = vat;
+    }
+
+    public ResolvedProductPricingContext Selected { get; }
+    public ResolvedProductPricingContext NonVat { get; }
+    public ResolvedProductPricingContext Vat { get; }
+}
+
+internal static class ProductPricingContextResolver {
+    public static ResolvedProductPricingContext Resolve(
+        IDbConnection connection,
+        IClientRepositoriesFactory clientRepositoriesFactory,
+        IStorageRepositoryFactory storageRepositoryFactory,
+        IPricingDependencyRevisionProvider pricingDependencyRevisionProvider,
+        IRetailCatalogSelectionProvider retailCatalogSelectionProvider,
+        Guid clientOrWorkplaceNetId,
+        bool withVat) {
+        IClientAgreementRepository agreementRepository =
+            clientRepositoriesFactory.NewClientAgreementRepository(connection);
+
+        if (clientOrWorkplaceNetId == Guid.Empty)
+            return ResolveRetail(
+                connection,
+                retailCatalogSelectionProvider,
+                pricingDependencyRevisionProvider,
+                withVat);
+
+        ClientAgreement selectedAgreement = agreementRepository.GetSelectedForPricing(clientOrWorkplaceNetId);
+
+        if (!TryGetSourceWorld(selectedAgreement?.Agreement, out string sourceWorld)
+            || !IsAgreementContextValid(
+                selectedAgreement,
+                selectedAgreement.Agreement.OrganizationId,
+                selectedAgreement.Agreement.WithVATAccounting,
+                sourceWorld))
+            return null;
+
+        long organizationId = selectedAgreement.Agreement.OrganizationId.Value;
+        ClientAgreement matchingAgreement = agreementRepository.GetActiveForPricing(
+            clientOrWorkplaceNetId,
+            selectedAgreement.NetUid,
+            organizationId,
+            withVat,
+            sourceWorld);
+
+        return CreateResolved(
+            connection,
+            matchingAgreement,
+            organizationId,
+            withVat,
+            sourceWorld,
+            selectedAgreement.Updated.Ticks,
+            pricingDependencyRevisionProvider);
+    }
+
+    public static ProductPricingContextSet ResolveSet(
+        IDbConnection connection,
+        IClientRepositoriesFactory clientRepositoriesFactory,
+        IStorageRepositoryFactory storageRepositoryFactory,
+        IPricingDependencyRevisionProvider pricingDependencyRevisionProvider,
+        IRetailCatalogSelectionProvider retailCatalogSelectionProvider,
+        Guid clientOrWorkplaceNetId,
+        bool withVat) {
+        ResolvedProductPricingContext selected = Resolve(
+            connection,
+            clientRepositoriesFactory,
+            storageRepositoryFactory,
+            pricingDependencyRevisionProvider,
+            retailCatalogSelectionProvider,
+            clientOrWorkplaceNetId,
+            withVat);
+
+        if (selected == null) return null;
+
+        ResolvedProductPricingContext counterpart;
+
+        if (clientOrWorkplaceNetId == Guid.Empty) {
+            counterpart = ResolveRetail(
+                connection,
+                retailCatalogSelectionProvider,
+                pricingDependencyRevisionProvider,
+                !withVat);
+        } else {
+            IClientAgreementRepository agreementRepository =
+                clientRepositoriesFactory.NewClientAgreementRepository(connection);
+            ClientAgreement agreement = agreementRepository.GetActiveForPricing(
+                clientOrWorkplaceNetId,
+                selected.Context.ClientAgreementNetId,
+                selected.Context.OrganizationId,
+                !withVat,
+                selected.SourceWorld);
+            counterpart = CreateResolved(
+                connection,
+                agreement,
+                selected.Context.OrganizationId,
+                !withVat,
+                selected.SourceWorld,
+                selected.Context.SelectionVersion,
+                pricingDependencyRevisionProvider);
+        }
+
+        return withVat
+            ? new ProductPricingContextSet(selected, counterpart, selected)
+            : new ProductPricingContextSet(selected, selected, counterpart);
+    }
+
+    private static ResolvedProductPricingContext ResolveRetail(
+        IDbConnection connection,
+        IRetailCatalogSelectionProvider retailCatalogSelectionProvider,
+        IPricingDependencyRevisionProvider pricingDependencyRevisionProvider,
+        bool withVat) {
+        RetailCatalogSelection selection = retailCatalogSelectionProvider.Resolve(connection, withVat);
+        if (selection == null) return null;
+
+        return CreateResolved(
+            connection,
+            selection.ToClientAgreement(),
+            selection.OrganizationId,
+            withVat,
+            ProductSourceIdentitySql.Fenix,
+            selection.StorageUpdated.Ticks,
+            pricingDependencyRevisionProvider);
+    }
+
+    private static ResolvedProductPricingContext CreateResolved(
+        IDbConnection connection,
+        ClientAgreement clientAgreement,
+        long organizationId,
+        bool withVat,
+        string expectedSourceWorld,
+        long selectionVersion,
+        IPricingDependencyRevisionProvider pricingDependencyRevisionProvider) {
+        if (!TryGetSourceWorld(clientAgreement?.Agreement, out string actualSourceWorld)
+            || !string.Equals(actualSourceWorld, expectedSourceWorld, StringComparison.Ordinal)
+            || !IsAgreementContextValid(clientAgreement, organizationId, withVat, actualSourceWorld))
+            return null;
+
+        PricingDependencyRevisions revisions = pricingDependencyRevisionProvider.Get(connection);
+
+        return new ResolvedProductPricingContext(
+            clientAgreement,
+            new ProductPricingContext(
+                clientAgreement.NetUid,
+                organizationId,
+                withVat,
+                actualSourceWorld,
+                clientAgreement.Agreement.CurrencyId,
+                clientAgreement.Agreement.PricingId,
+                selectionVersion,
+                Math.Max(clientAgreement.Updated.Ticks, clientAgreement.Agreement.Updated.Ticks),
+                revisions.ProductPricing,
+                revisions.PricingHierarchy,
+                revisions.Discounts,
+                revisions.ExchangeRates),
+            actualSourceWorld);
+    }
+
+
+    private static bool IsAgreementContextValid(
+        ClientAgreement clientAgreement,
+        long? organizationId,
+        bool withVat,
+        string sourceWorld) {
+        if (clientAgreement == null
+            || clientAgreement.NetUid == Guid.Empty
+            || clientAgreement.Deleted
+            || clientAgreement.Agreement == null
+            || clientAgreement.Agreement.Deleted
+            || !clientAgreement.Agreement.IsActive
+            || clientAgreement.Agreement.WithVATAccounting != withVat
+            || organizationId == null
+            || organizationId <= 0
+            || clientAgreement.Agreement.OrganizationId != organizationId
+            || clientAgreement.Agreement.Organization == null
+            || clientAgreement.Agreement.Organization.Deleted
+            || clientAgreement.Agreement.Organization.Id != organizationId.Value)
+            return false;
+
+        return TryGetSourceWorld(clientAgreement.Agreement, out string actualSourceWorld)
+               && string.Equals(actualSourceWorld, sourceWorld, StringComparison.Ordinal);
+    }
+
+    private static bool TryGetSourceWorld(
+        GBA.Domain.Entities.Agreements.Agreement agreement,
+        out string sourceWorld) {
+        sourceWorld = string.Empty;
+        if (agreement?.Organization == null) {
+            return false;
+        }
+
+        bool hasFenix = agreement.SourceFenixId is { Length: > 0 }
+                        || agreement.SourceFenixCode.HasValue;
+        bool hasAmg = agreement.SourceAmgId is { Length: > 0 }
+                      || agreement.SourceAmgCode.HasValue;
+        sourceWorld = ProductSourceIdentitySql.FromOrganization(
+            agreement.Organization.PriceSourceIsAmg);
+
+        return sourceWorld == ProductSourceIdentitySql.Amg
+            ? hasAmg && !hasFenix
+            : hasFenix && !hasAmg;
+    }
+
 }

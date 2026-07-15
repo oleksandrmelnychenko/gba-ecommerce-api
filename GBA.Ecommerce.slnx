@@ -7,4 +7,7 @@
     <Project Path="src/GBA.Search/GBA.Search.csproj" />
     <Project Path="src/GBA.Services/GBA.Services.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GBA.Ecommerce.Unit.Tests/GBA.Ecommerce.Unit.Tests.csproj" />
+  </Folder>
 </Solution>

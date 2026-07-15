@@ -19,7 +19,6 @@ using GBA.Services.Services.Products;
 using GBA.Services.Services.Products.Contracts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.OutputCaching;
 using Microsoft.AspNetCore.RateLimiting;
 
 namespace GBA.Ecommerce.Controllers;
@@ -28,60 +27,155 @@ namespace GBA.Ecommerce.Controllers;
 public sealed class ProductsController(
     IProductService productService,
     IElasticsearchProductSearchService esSearchService,
+    ISearchServingGenerationResolver servingGenerationResolver,
     IPriceCacheService priceCacheService,
     IResponseFactory responseFactory) : WebApiControllerBase(responseFactory) {
     private const int _defaultSearchLimit = 20;
     private const int _maxSearchLimit = 100;
     private const int _maxSearchOffset = 5000;
+    private const int _authenticatedCandidateBatchSize = 1000;
+    private const int _maxAuthenticatedCandidates = 10_000;
 
     [HttpGet]
     [AssignActionRoute(ProductsSegments.SEARCH)]
-    [OutputCache(PolicyName = "AnonymousProductSearch")]
     [EnableRateLimiting("search")]
-    public async Task<IActionResult> GetAllFromSearchAsync([FromQuery] string value, [FromQuery] long limit, [FromQuery] long offset, [FromQuery] int withVat = 0, CancellationToken cancellationToken = default) {
-        return await SearchWithElasticsearchAsync(value, limit, offset, withVat, cancellationToken);
-    }
+    public Task<IActionResult> GetAllFromSearchAsync([FromQuery] string value, [FromQuery] long limit, [FromQuery] long offset, [FromQuery] int withVat = 0, CancellationToken cancellationToken = default) =>
+        SearchServingRequestGuard.ExecuteAsync(
+            servingGenerationResolver,
+            generation => SearchWithElasticsearchAsync(
+                value,
+                limit,
+                offset,
+                withVat,
+                generation,
+                cancellationToken),
+            cancellationToken);
 
-    private async Task<IActionResult> SearchWithElasticsearchAsync(string value, long limit, long offset, int withVat, CancellationToken cancellationToken) {
+    private async Task<IActionResult> SearchWithElasticsearchAsync(
+        string value,
+        long limit,
+        long offset,
+        int withVat,
+        SearchActiveGeneration servingGeneration,
+        CancellationToken cancellationToken) {
         if (string.IsNullOrWhiteSpace(value))
             return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
 
         Guid userNetId = GetUserNetId();
         string locale = RouteData.Values["culture"]?.ToString() ?? "uk";
+        bool requestedWithVat = withVat.Equals(1);
+        bool isAnonymous = userNetId == Guid.Empty;
+
+        ProductPricingContext pricingContext = productService.GetPricingContext(userNetId, requestedWithVat);
+        if (pricingContext == null || pricingContext.WithVat != requestedWithVat)
+            return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
+
+        PricingDependencyRevisions pricingRevisions = pricingContext.DependencyRevisions;
+        bool useIndexedRetailPrices = false;
+        if (isAnonymous && pricingRevisions.IsValid) {
+            useIndexedRetailPrices =
+                servingGeneration.HasExactIndexedPricingRevisions(pricingRevisions);
+        }
+
+        ProductSearchCatalogContext catalogContext = new(
+            pricingContext.OrganizationId,
+            pricingContext.Source,
+            pricingContext.WithVat,
+            pricingContext.ClientAgreementNetId,
+            pricingContext.PricingId.GetValueOrDefault(),
+            pricingContext.CurrencyId.GetValueOrDefault(),
+            useIndexedRetailPrices,
+            pricingRevisions);
+        if (!catalogContext.IsValid)
+            return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
 
         int esLimit = limit <= 0 ? _defaultSearchLimit : (int)Math.Min(limit, _maxSearchLimit);
         int esOffset = offset < 0 ? 0 : (int)Math.Min(offset, _maxSearchOffset);
 
-        ProductSearchResultWithDocs searchResult = await esSearchService.SearchWithDocsAsync(value, locale, esLimit, esOffset, cancellationToken);
-
-        if (searchResult.Documents.Count == 0)
-            return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
-
-        Dictionary<long, ProductPriceInfo>? prices = null;
-        bool useEsPrices = userNetId == Guid.Empty;
-
-        if (!useEsPrices) {
-            List<long> productIds = searchResult.Documents.Select(d => d.Id).ToList();
-            prices = priceCacheService.GetPrices(
-                productIds,
-                userNetId,
-                withVat.Equals(1),
-                locale,
-                ids => productService.GetPricesOnly(ids, userNetId, withVat.Equals(1), locale));
-        }
-
         long timestamp = PriceObfuscator.GetTimestamp();
-        List<ProtectedSearchProduct> protectedProducts = searchResult.Documents.Select(doc => {
-            long id = doc.Id;
-            if (useEsPrices) {
-                decimal esPrice = withVat == 1 ? doc.RetailPriceVat : doc.RetailPrice;
-                ProductPriceInfo esInfo = new ProductPriceInfo { Price = esPrice, CurrencyCode = doc.RetailCurrencyCode };
-                return DocToProtectedProduct(doc, esInfo, locale, timestamp);
-            } else {
-                prices!.TryGetValue(id, out ProductPriceInfo? priceInfo);
-                return DocToProtectedProduct(doc, priceInfo, locale, timestamp);
+        List<ProtectedSearchProduct> protectedProducts;
+
+        if (useIndexedRetailPrices) {
+            ProductSearchResultWithDocs searchResult = await esSearchService.SearchWithDocsAsync(
+                value,
+                catalogContext,
+                locale,
+                esLimit,
+                esOffset,
+                cancellationToken);
+
+            protectedProducts = searchResult.Documents
+                .Where(document => (requestedWithVat
+                    ? document.RetailPriceVat
+                    : document.RetailPrice) > 0)
+                .Select(document => {
+                    decimal retailPrice = requestedWithVat
+                        ? document.RetailPriceVat
+                        : document.RetailPrice;
+                    ProductPriceInfo retailPriceInfo = new() {
+                        Price = retailPrice,
+                        CurrencyCode = requestedWithVat
+                            ? document.RetailCurrencyCodeVat
+                            : document.RetailCurrencyCode
+                    };
+                    return DocToProtectedProduct(document, retailPriceInfo, locale, timestamp);
+                })
+                .ToList();
+        } else {
+            int requiredEligibleCount = checked(esOffset + esLimit);
+            int candidateOffset = 0;
+            int candidateTotal = int.MaxValue;
+            HashSet<long> seenProductIds = [];
+            List<(ProductSearchDocument Document, ProductPriceInfo Price)> eligible = [];
+
+            while (candidateOffset < candidateTotal
+                   && candidateOffset < _maxAuthenticatedCandidates
+                   && eligible.Count < requiredEligibleCount) {
+                int candidateLimit = Math.Min(
+                    _authenticatedCandidateBatchSize,
+                    _maxAuthenticatedCandidates - candidateOffset);
+                ProductSearchResultWithDocs candidatePage = await esSearchService.SearchWithDocsAsync(
+                    value,
+                    catalogContext,
+                    locale,
+                    candidateLimit,
+                    candidateOffset,
+                    cancellationToken);
+                candidateTotal = candidatePage.TotalCount;
+                if (candidatePage.Documents.Count == 0) break;
+
+                List<ProductSearchDocument> uniqueDocuments = candidatePage.Documents
+                    .Where(document => document.Id > 0 && seenProductIds.Add(document.Id))
+                    .ToList();
+                List<long> productIds = uniqueDocuments.Select(document => document.Id).ToList();
+                Dictionary<long, ProductPriceInfo> prices = priceCacheService.GetPrices(
+                    productIds,
+                    userNetId,
+                    pricingContext,
+                    locale,
+                    ids => productService.GetPricesOnly(ids, pricingContext, locale));
+
+                foreach (ProductSearchDocument document in uniqueDocuments) {
+                    if (prices.TryGetValue(document.Id, out ProductPriceInfo? price)
+                        && price != null
+                        && price.Price > 0) {
+                        eligible.Add((document, price));
+                    }
+                }
+
+                candidateOffset += candidatePage.Documents.Count;
             }
-        }).ToList();
+
+            bool exactRequestedPageIsKnown = eligible.Count >= requiredEligibleCount
+                                             || candidateOffset >= candidateTotal;
+            protectedProducts = exactRequestedPageIsKnown
+                ? eligible
+                    .Skip(esOffset)
+                    .Take(esLimit)
+                    .Select(item => DocToProtectedProduct(item.Document, item.Price, locale, timestamp))
+                    .ToList()
+                : [];
+        }
 
         return Ok(SuccessResponseBody(protectedProducts));
     }
@@ -94,7 +188,7 @@ public sealed class ProductsController(
         if (userNetId == Guid.Empty)
             return Ok(
                 SuccessResponseBody(
-                    await productService.GetAllAnaloguesByProductNetIdForRetail(netId)
+                    await productService.GetAllAnaloguesByProductNetIdForRetail(netId, withVat.Equals(1))
                 )
             );
 
@@ -129,7 +223,8 @@ public sealed class ProductsController(
     public async Task<IActionResult> GetProductByNetId([FromQuery] Guid netId, [FromQuery] int withVat = 0) {
         Guid userNetId = GetUserNetId();
 
-        if (userNetId == Guid.Empty) return Ok(SuccessResponseBody(await productService.GetByNetIdForRetail(netId)));
+        if (userNetId == Guid.Empty)
+            return Ok(SuccessResponseBody(await productService.GetByNetIdForRetail(netId, withVat.Equals(1))));
 
         return Ok(
             SuccessResponseBody(
@@ -188,11 +283,11 @@ public sealed class ProductsController(
 
     private static ProtectedSearchProduct DocToProtectedProduct(
         ProductSearchDocument doc,
-        ProductPriceInfo? priceInfo,
+        ProductPriceInfo priceInfo,
         string locale,
         long timestamp) {
-        decimal price = priceInfo?.Price ?? 0;
-        string currencyCode = priceInfo?.CurrencyCode ?? "UAH";
+        decimal price = priceInfo.Price;
+        string currencyCode = priceInfo.CurrencyCode;
         bool isUk = locale == "uk";
 
         return new ProtectedSearchProduct {

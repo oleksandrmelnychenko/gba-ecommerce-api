@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using GBA.Domain.EntityHelpers;
 using GBA.Search.Models;
 using GBA.Search.Services;
 using GBA.Search.Sync;
@@ -23,8 +24,15 @@ public interface IElasticsearchProductSearchService : IProductSearchService {
 }
 
 public sealed class ElasticsearchProductSearchService : IElasticsearchProductSearchService {
+    public const int MaxQueryLength = 256;
+    public const int MaxResultWindow = 10_000;
+    public const int MaxPageSize = 1_000;
+    private const int DefaultPageSize = 20;
+
     private readonly HttpClient _http;
     private readonly ElasticsearchSettings _settings;
+    private readonly ISearchServingGenerationResolver _servingGenerationResolver;
+    private readonly IElasticsearchIndexService _indexService;
     private readonly SearchTextProcessor _textProcessor;
     private readonly ILogger<ElasticsearchProductSearchService> _log;
 
@@ -45,28 +53,59 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         "availableQtyUkVat", "availableQtyPl", "availableQtyPlVat",
         "availableQty", "isForWeb", "isForSale", "isForZeroSale", "slugId",
         "slugNetUid", "slugUrl", "slugLocale", "retailPrice", "retailPriceVat",
-        "retailCurrencyCode", "updatedAt"
+        "retailCurrencyCode", "retailCurrencyCodeVat", "indexedProductPricingRevision",
+        "indexedPricingHierarchyRevision", "indexedDiscountRevision",
+        "indexedExchangeRateRevision", "catalogOrganizationIdNonVat",
+        "catalogOrganizationIdVat", "catalogAgreementSourceNonVat", "catalogAgreementSourceVat",
+        "productSourceFenix", "productSourceAmg", "isCanonicalFenix",
+        "isCanonicalAmg", "catalogScopes",
+        "catalogSourceSystemNonVat", "catalogSourceSystemVat",
+        "catalogAgreementNetUidNonVat", "catalogAgreementNetUidVat",
+        "catalogPricingIdNonVat", "catalogPricingIdVat", "catalogCurrencyIdNonVat",
+        "catalogCurrencyIdVat", "hasNonVatCatalogAvailability",
+        "hasVatCatalogAvailability", "hasNonVatCatalogSource",
+        "hasVatCatalogSource", "updatedAt"
     };
 
     public ElasticsearchProductSearchService(
         HttpClient httpClient,
         IOptions<ElasticsearchSettings> settings,
+        ISearchServingGenerationResolver servingGenerationResolver,
+        IElasticsearchIndexService indexService,
         SearchTextProcessor textProcessor,
         ILogger<ElasticsearchProductSearchService> logger) {
-        _http = httpClient;
-        _settings = settings.Value;
-        _textProcessor = textProcessor;
-        _log = logger;
+        _http = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        _settings = (settings ?? throw new ArgumentNullException(nameof(settings))).Value;
+        SearchSyncStorage.ValidateBaseIndexName(_settings.IndexName);
+        _servingGenerationResolver = servingGenerationResolver
+            ?? throw new ArgumentNullException(nameof(servingGenerationResolver));
+        _indexService = indexService ?? throw new ArgumentNullException(nameof(indexService));
+        _textProcessor = textProcessor ?? throw new ArgumentNullException(nameof(textProcessor));
+        _log = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
+
+    public Task<ProductSearchResult> SearchAsync(
+        string query, string locale = "uk", int limit = 20, int offset = 0, CancellationToken ct = default) {
+
+        // A context-free product query cannot prove catalog ownership.
+        return Task.FromResult(ProductSearchResult.Empty);
     }
 
     public async Task<ProductSearchResult> SearchAsync(
-        string query, string locale = "uk", int limit = 20, int offset = 0, CancellationToken ct = default) {
+        string query,
+        ProductSearchCatalogContext catalogContext,
+        string locale = "uk",
+        int limit = 20,
+        int offset = 0,
+        CancellationToken ct = default) {
 
-        if (string.IsNullOrWhiteSpace(query))
+        if (!IsSafeQuery(query) || catalogContext?.IsValid != true)
             return ProductSearchResult.Empty;
 
-        object esQuery = BuildSearchQuery(query, locale, limit, offset);
-        SearchResult result = await ExecuteSearchAsync(esQuery, ct);
+        (limit, offset) = NormalizeWindow(limit, offset);
+
+        object esQuery = BuildSearchQuery(query, locale, limit, offset, catalogContext);
+        SearchResult result = await ExecuteSearchAsync(esQuery, ct, catalogContext);
 
         return new ProductSearchResult {
             ProductIds = result.Ids,
@@ -76,14 +115,27 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         };
     }
 
-    public async Task<ProductSearchResultWithDocs> SearchWithDocsAsync(
+    public Task<ProductSearchResultWithDocs> SearchWithDocsAsync(
         string query, string locale = "uk", int limit = 20, int offset = 0, CancellationToken ct = default) {
 
-        if (string.IsNullOrWhiteSpace(query))
+        return Task.FromResult(ProductSearchResultWithDocs.Empty);
+    }
+
+    public async Task<ProductSearchResultWithDocs> SearchWithDocsAsync(
+        string query,
+        ProductSearchCatalogContext catalogContext,
+        string locale = "uk",
+        int limit = 20,
+        int offset = 0,
+        CancellationToken ct = default) {
+
+        if (!IsSafeQuery(query) || catalogContext?.IsValid != true)
             return ProductSearchResultWithDocs.Empty;
 
-        object esQuery = BuildSearchQuery(query, locale, limit, offset);
-        SearchResultWithDocs result = await ExecuteSearchWithDocsAsync(esQuery, ct);
+        (limit, offset) = NormalizeWindow(limit, offset);
+
+        object esQuery = BuildSearchQuery(query, locale, limit, offset, catalogContext);
+        SearchResultWithDocs result = await ExecuteSearchWithDocsAsync(esQuery, catalogContext, ct);
 
         return new ProductSearchResultWithDocs {
             Documents = result.Documents,
@@ -93,14 +145,8 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         };
     }
 
-    public async Task<bool> IsHealthyAsync(CancellationToken ct = default) {
-        try {
-            HttpResponseMessage response = await _http.GetAsync("_cluster/health", ct);
-            return response.IsSuccessStatusCode;
-        } catch {
-            return false;
-        }
-    }
+    public Task<bool> IsHealthyAsync(CancellationToken ct = default) =>
+        _indexService.IsHealthyAsync(ct);
 
     public async Task<ElasticsearchDebugResult> SearchDebugAsync(
         string query, string locale = "uk", int limit = 20, int offset = 0, CancellationToken ct = default) {
@@ -110,9 +156,11 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             Locale = locale
         };
 
-        if (string.IsNullOrWhiteSpace(query)) {
+        if (!IsSafeQuery(query)) {
             return debug;
         }
+
+        (limit, offset) = NormalizeWindow(limit, offset);
 
         string normalized = NumberNormalizer.NormalizeQuery(query);
         string[] terms = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -132,7 +180,26 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         return debug;
     }
 
-    private object BuildSearchQuery(string query, string locale, int limit, int offset) {
+    private static bool IsSafeQuery(string? query) {
+        return !string.IsNullOrWhiteSpace(query) && query.Length <= MaxQueryLength;
+    }
+
+    private static int NormalizeLimit(int limit) {
+        return limit <= 0 ? DefaultPageSize : Math.Min(limit, MaxPageSize);
+    }
+
+    private static (int Limit, int Offset) NormalizeWindow(int limit, int offset) {
+        int boundedOffset = Math.Clamp(offset, 0, MaxResultWindow - 1);
+        int boundedLimit = Math.Min(NormalizeLimit(limit), MaxResultWindow - boundedOffset);
+        return (boundedLimit, boundedOffset);
+    }
+
+    private object BuildSearchQuery(
+        string query,
+        string locale,
+        int limit,
+        int offset,
+        ProductSearchCatalogContext? catalogContext = null) {
         string normalized = NumberNormalizer.NormalizeQuery(query);
         string normalizedLower = normalized.ToLowerInvariant();
         string[] terms = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries)
@@ -144,7 +211,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             .ToArray();
 
         if (terms.Length == 0)
-            return BuildMatchAllQuery(limit, offset);
+            return BuildMatchAllQuery(limit, offset, catalogContext);
 
         // Build must clauses - each term must match somewhere (AND logic between terms)
         List<object> mustClauses = new List<object>();
@@ -295,18 +362,17 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             }
         }
 
-        return new {
-            from = offset,
-            size = limit,
-            _source = SourceFields,
-            query = new {
+        Dictionary<string, object> request = new() {
+            ["from"] = offset,
+            ["size"] = limit,
+            ["track_total_hits"] = true,
+            ["_source"] = SourceFields,
+            ["query"] = new {
                 function_score = new {
                     query = new {
                         @bool = new {
                             must = mustClauses,
-                            filter = new[] {
-                                new { term = new { isForWeb = true } }
-                            }
+                            filter = BuildCatalogFilters(catalogContext)
                         }
                     },
                     functions = functions,
@@ -314,15 +380,17 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
                     boost_mode = "replace"
                 }
             },
-            sort = new object[] {
+            ["sort"] = new object[] {
                 "_score",
                 new Dictionary<string, object> { ["nameUA.keyword"] = new { order = "asc" } },
                 new { id = new { order = "asc" } }
             }
         };
+        AddCanonicalSourceCollapse(request, catalogContext);
+        return request;
     }
 
-    private static object BuildTermMatchQuery(string term, string locale, string originalTerm = null) {
+    private static object BuildTermMatchQuery(string term, string locale, string? originalTerm = null) {
         // Each term can match in ANY of these fields (OR logic within term)
         // Using wildcard for PATINDEX-like behavior (substring anywhere in field)
         List<object> shouldClauses = new List<object>();
@@ -366,31 +434,194 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         };
     }
 
-    private static object BuildMatchAllQuery(int limit, int offset) {
-        return new {
-            from = offset,
-            size = limit,
-            _source = SourceFields,
-            query = new {
+    private static object BuildMatchAllQuery(
+        int limit,
+        int offset,
+        ProductSearchCatalogContext? catalogContext) {
+        Dictionary<string, object> request = new() {
+            ["from"] = offset,
+            ["size"] = limit,
+            ["track_total_hits"] = true,
+            ["_source"] = SourceFields,
+            ["query"] = new {
                 @bool = new {
-                    filter = new[] {
-                        new { term = new { isForWeb = true } }
-                    }
+                    filter = BuildCatalogFilters(catalogContext)
                 }
             },
-            sort = new object[] {
+            ["sort"] = new object[] {
                 new { available = new { order = "desc" } },
-                new { availableQtyUk = new { order = "desc" } }
+                new { availableQtyUk = new { order = "desc" } },
+                new { id = new { order = "asc" } }
+            }
+        };
+        AddCanonicalSourceCollapse(request, catalogContext);
+        return request;
+    }
+
+    private static void AddCanonicalSourceCollapse(
+        IDictionary<string, object> request,
+        ProductSearchCatalogContext? catalogContext) {
+        if (catalogContext == null) return;
+
+        request["collapse"] = new {
+            field = catalogContext.Source == ProductSourceIdentitySql.Amg
+                ? "productSourceAmg"
+                : "productSourceFenix"
+        };
+    }
+
+    private static object[] BuildCatalogFilters(ProductSearchCatalogContext? catalogContext) {
+        List<object> filters = [new { term = new { isForWeb = true } }];
+        if (catalogContext == null) return filters.ToArray();
+
+        string sourceSystem = catalogContext.Source;
+        string productSourceField = sourceSystem == ProductSourceIdentitySql.Amg
+            ? "productSourceAmg"
+            : "productSourceFenix";
+        string canonicalField = sourceSystem == ProductSourceIdentitySql.Amg
+            ? "isCanonicalAmg"
+            : "isCanonicalFenix";
+        filters.Add(new {
+            prefix = new Dictionary<string, object> {
+                [productSourceField] = $"{sourceSystem}:"
+            }
+        });
+        filters.Add(new {
+            term = new Dictionary<string, object> {
+                [canonicalField] = true
+            }
+        });
+
+        if (!catalogContext.UseIndexedRetailPrice) {
+            filters.Add(BuildCatalogScopeFilter(catalogContext, sourceSystem));
+            return filters.ToArray();
+        }
+
+        string variant = catalogContext.WithVat ? "Vat" : "NonVat";
+        string sourceSystemField = $"catalogSourceSystem{variant}";
+        string sourceEligibilityField = $"has{variant}CatalogSource";
+        string availabilityField = $"has{variant}CatalogAvailability";
+        string organizationField = $"catalogOrganizationId{variant}";
+
+        filters.Add(new {
+            term = new Dictionary<string, object> {
+                [organizationField] = catalogContext.OrganizationId
+            }
+        });
+        filters.Add(new {
+            term = new Dictionary<string, object> {
+                [sourceSystemField] = sourceSystem
+            }
+        });
+        filters.Add(new {
+            term = new Dictionary<string, object> {
+                [sourceEligibilityField] = true
+            }
+        });
+        filters.Add(new {
+            term = new Dictionary<string, object> {
+                [availabilityField] = true
+            }
+        });
+
+        string agreementField = $"catalogAgreementNetUid{variant}.keyword";
+        string pricingField = $"catalogPricingId{variant}";
+        string currencyField = $"catalogCurrencyId{variant}";
+        string priceField = catalogContext.WithVat ? "retailPriceVat" : "retailPrice";
+
+        filters.Add(new {
+            term = new Dictionary<string, object> {
+                [agreementField] = catalogContext.ClientAgreementNetId.ToString()
+            }
+        });
+        filters.Add(new {
+            term = new Dictionary<string, object> {
+                [pricingField] = catalogContext.PricingId
+            }
+        });
+        filters.Add(new {
+            term = new Dictionary<string, object> {
+                [currencyField] = catalogContext.CurrencyId
+            }
+        });
+        filters.Add(new {
+            range = new Dictionary<string, object> {
+                [priceField] = new { gt = 0 }
+            }
+        });
+        filters.Add(new {
+            term = new Dictionary<string, object> {
+                ["indexedProductPricingRevision"] = catalogContext.PricingRevisions!.ProductPricing
+            }
+        });
+        filters.Add(new {
+            term = new Dictionary<string, object> {
+                ["indexedPricingHierarchyRevision"] = catalogContext.PricingRevisions!.PricingHierarchy
+            }
+        });
+        filters.Add(new {
+            term = new Dictionary<string, object> {
+                ["indexedDiscountRevision"] = catalogContext.PricingRevisions!.Discounts
+            }
+        });
+        filters.Add(new {
+            term = new Dictionary<string, object> {
+                ["indexedExchangeRateRevision"] = catalogContext.PricingRevisions!.ExchangeRates
+            }
+        });
+
+        return filters.ToArray();
+    }
+
+    private static object BuildCatalogScopeFilter(
+        ProductSearchCatalogContext catalogContext,
+        string sourceSystem) {
+        return new {
+            nested = new {
+                path = "catalogScopes",
+                score_mode = "none",
+                query = new {
+                    @bool = new {
+                        filter = new object[] {
+                            new {
+                                term = new Dictionary<string, object> {
+                                    ["catalogScopes.organizationId"] = catalogContext.OrganizationId
+                                }
+                            },
+                            new {
+                                term = new Dictionary<string, object> {
+                                    ["catalogScopes.sourceSystem"] = sourceSystem
+                                }
+                            },
+                            new {
+                                term = new Dictionary<string, object> {
+                                    ["catalogScopes.withVat"] = catalogContext.WithVat
+                                }
+                            },
+                            new {
+                                range = new Dictionary<string, object> {
+                                    ["catalogScopes.availableQty"] = new { gt = 0 }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         };
     }
 
-    private async Task<SearchResult> ExecuteSearchAsync(object query, CancellationToken ct) {
+    private async Task<SearchResult> ExecuteSearchAsync(
+        object query,
+        CancellationToken ct,
+        ProductSearchCatalogContext? catalogContext = null) {
         byte[] json = JsonSerializer.SerializeToUtf8Bytes(query, JsonOptions);
         ByteArrayContent content = new ByteArrayContent(json);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
-        HttpResponseMessage response = await _http.PostAsync($"{_settings.IndexName}/_search", content, ct);
+        string? activeIndex = await ResolveActiveIndexAsync(catalogContext, ct);
+        if (activeIndex == null) return new SearchResult([], 0, 0);
+
+        HttpResponseMessage response = await _http.PostAsync($"{activeIndex}/_search", content, ct);
 
         if (!response.IsSuccessStatusCode) {
             string error = await response.Content.ReadAsStringAsync(ct);
@@ -403,13 +634,30 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         JsonElement root = doc.RootElement;
 
         int took = root.GetProperty("took").GetInt32();
-        int total = root.GetProperty("hits").GetProperty("total").GetProperty("value").GetInt32();
-        JsonElement hits = root.GetProperty("hits").GetProperty("hits");
+        JsonElement hitsRoot = root.GetProperty("hits");
+        if (!TryReadExactTotal(hitsRoot, out int total)) {
+            _log.LogError("Elasticsearch returned a non-exact or invalid total; failing search closed");
+            return new SearchResult([], 0, took);
+        }
+        JsonElement hits = hitsRoot.GetProperty("hits");
 
         List<long> ids = new List<long>();
         foreach (JsonElement hit in hits.EnumerateArray()) {
-            if (hit.TryGetProperty("_source", out JsonElement source) &&
-                source.TryGetProperty("id", out JsonElement idProp)) {
+            if (!hit.TryGetProperty("_source", out JsonElement source)) {
+                if (catalogContext != null) return new SearchResult([], 0, took);
+                continue;
+            }
+
+            if (catalogContext != null) {
+                ProductSearchDocument document = ParseDocument(source);
+                if (!ApplyCatalogContext(document, catalogContext)) {
+                    _log.LogWarning(
+                        "Elasticsearch returned product {ProductId} outside requested catalog context; failing search closed",
+                        document.Id);
+                    return new SearchResult([], 0, took);
+                }
+                ids.Add(document.Id);
+            } else if (source.TryGetProperty("id", out JsonElement idProp)) {
                 ids.Add(idProp.GetInt64());
             }
         }
@@ -417,12 +665,18 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         return new SearchResult(ids, total, took);
     }
 
-    private async Task<SearchResultWithDocs> ExecuteSearchWithDocsAsync(object query, CancellationToken ct) {
+    private async Task<SearchResultWithDocs> ExecuteSearchWithDocsAsync(
+        object query,
+        ProductSearchCatalogContext catalogContext,
+        CancellationToken ct) {
         byte[] json = JsonSerializer.SerializeToUtf8Bytes(query, JsonOptions);
         ByteArrayContent content = new ByteArrayContent(json);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
-        HttpResponseMessage response = await _http.PostAsync($"{_settings.IndexName}/_search", content, ct);
+        string? activeIndex = await ResolveActiveIndexAsync(catalogContext, ct);
+        if (activeIndex == null) return new SearchResultWithDocs([], 0, 0);
+
+        HttpResponseMessage response = await _http.PostAsync($"{activeIndex}/_search", content, ct);
 
         if (!response.IsSuccessStatusCode) {
             string error = await response.Content.ReadAsStringAsync(ct);
@@ -435,18 +689,46 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         JsonElement root = doc.RootElement;
 
         int took = root.GetProperty("took").GetInt32();
-        int total = root.GetProperty("hits").GetProperty("total").GetProperty("value").GetInt32();
-        JsonElement hits = root.GetProperty("hits").GetProperty("hits");
+        JsonElement hitsRoot = root.GetProperty("hits");
+        if (!TryReadExactTotal(hitsRoot, out int total)) {
+            _log.LogError("Elasticsearch returned a non-exact or invalid total; failing search closed");
+            return new SearchResultWithDocs([], 0, took);
+        }
+        JsonElement hits = hitsRoot.GetProperty("hits");
 
         List<ProductSearchDocument> documents = new List<ProductSearchDocument>();
         foreach (JsonElement hit in hits.EnumerateArray()) {
-            if (hit.TryGetProperty("_source", out JsonElement source)) {
-                ProductSearchDocument document = ParseDocument(source);
-                documents.Add(document);
+            if (!hit.TryGetProperty("_source", out JsonElement source)) {
+                return new SearchResultWithDocs([], 0, took);
             }
+
+            ProductSearchDocument document = ParseDocument(source);
+            if (!ApplyCatalogContext(document, catalogContext)) {
+                _log.LogWarning(
+                    "Elasticsearch returned product {ProductId} outside requested catalog context; failing search closed",
+                    document.Id);
+                return new SearchResultWithDocs([], 0, took);
+            }
+            documents.Add(document);
         }
 
         return new SearchResultWithDocs(documents, total, took);
+    }
+
+    private async Task<string?> ResolveActiveIndexAsync(
+        ProductSearchCatalogContext? catalogContext,
+        CancellationToken ct) {
+        SearchActiveGeneration generation =
+            await _servingGenerationResolver.GetRequiredGenerationAsync(ct);
+
+        if (catalogContext?.UseIndexedRetailPrice == true
+            && !generation.HasExactIndexedPricingRevisions(catalogContext.PricingRevisions)) {
+            _log.LogWarning(
+                "Active search generation pricing revision does not match the request; failing indexed-price search closed");
+            return null;
+        }
+
+        return generation.IndexName;
     }
 
     private static ProductSearchDocument ParseDocument(JsonElement source) {
@@ -496,10 +778,214 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             RetailPrice = source.TryGetProperty("retailPrice", out JsonElement rp) ? rp.GetDecimal() : 0,
             RetailPriceVat = source.TryGetProperty("retailPriceVat", out JsonElement rpv) ? rpv.GetDecimal() : 0,
             RetailCurrencyCode = source.TryGetProperty("retailCurrencyCode", out JsonElement rcc) ? rcc.GetString() ?? "UAH" : "UAH",
+            RetailCurrencyCodeVat = source.TryGetProperty("retailCurrencyCodeVat", out JsonElement rccVat) ? rccVat.GetString() ?? "UAH" : "UAH",
+            IndexedProductPricingRevision = source.TryGetProperty("indexedProductPricingRevision", out JsonElement indexedProductPricingRevision)
+                ? indexedProductPricingRevision.GetString() ?? string.Empty
+                : string.Empty,
+            IndexedPricingHierarchyRevision = source.TryGetProperty("indexedPricingHierarchyRevision", out JsonElement indexedPricingHierarchyRevision)
+                ? indexedPricingHierarchyRevision.GetString() ?? string.Empty
+                : string.Empty,
+            IndexedDiscountRevision = source.TryGetProperty("indexedDiscountRevision", out JsonElement indexedDiscountRevision)
+                ? indexedDiscountRevision.GetString() ?? string.Empty
+                : string.Empty,
+            IndexedExchangeRateRevision = source.TryGetProperty("indexedExchangeRateRevision", out JsonElement indexedExchangeRateRevision)
+                ? indexedExchangeRateRevision.GetString() ?? string.Empty
+                : string.Empty,
+            CatalogOrganizationIdNonVat = source.TryGetProperty("catalogOrganizationIdNonVat", out JsonElement catalogOrganizationIdNonVat)
+                ? catalogOrganizationIdNonVat.GetInt64()
+                : 0,
+            CatalogOrganizationIdVat = source.TryGetProperty("catalogOrganizationIdVat", out JsonElement catalogOrganizationIdVat)
+                ? catalogOrganizationIdVat.GetInt64()
+                : 0,
+            CatalogAgreementSourceNonVat = source.TryGetProperty("catalogAgreementSourceNonVat", out JsonElement catalogAgreementSourceNonVat)
+                ? catalogAgreementSourceNonVat.GetString() ?? ""
+                : "",
+            CatalogAgreementSourceVat = source.TryGetProperty("catalogAgreementSourceVat", out JsonElement catalogAgreementSourceVat)
+                ? catalogAgreementSourceVat.GetString() ?? ""
+                : "",
+            ProductSourceFenix = source.TryGetProperty("productSourceFenix", out JsonElement productSourceFenix)
+                ? productSourceFenix.GetString() ?? ""
+                : "",
+            ProductSourceAmg = source.TryGetProperty("productSourceAmg", out JsonElement productSourceAmg)
+                ? productSourceAmg.GetString() ?? ""
+                : "",
+            IsCanonicalFenix = source.TryGetProperty("isCanonicalFenix", out JsonElement isCanonicalFenix)
+                && isCanonicalFenix.GetBoolean(),
+            IsCanonicalAmg = source.TryGetProperty("isCanonicalAmg", out JsonElement isCanonicalAmg)
+                && isCanonicalAmg.GetBoolean(),
+            CatalogScopes = ParseCatalogScopes(source),
+            CatalogSourceSystemNonVat = source.TryGetProperty("catalogSourceSystemNonVat", out JsonElement catalogSourceSystemNonVat)
+                ? catalogSourceSystemNonVat.GetString() ?? ""
+                : "",
+            CatalogSourceSystemVat = source.TryGetProperty("catalogSourceSystemVat", out JsonElement catalogSourceSystemVat)
+                ? catalogSourceSystemVat.GetString() ?? ""
+                : "",
+            CatalogAgreementNetUidNonVat = source.TryGetProperty("catalogAgreementNetUidNonVat", out JsonElement catalogAgreementNetUidNonVat)
+                ? catalogAgreementNetUidNonVat.GetString() ?? ""
+                : "",
+            CatalogAgreementNetUidVat = source.TryGetProperty("catalogAgreementNetUidVat", out JsonElement catalogAgreementNetUidVat)
+                ? catalogAgreementNetUidVat.GetString() ?? ""
+                : "",
+            CatalogPricingIdNonVat = source.TryGetProperty("catalogPricingIdNonVat", out JsonElement catalogPricingIdNonVat)
+                ? catalogPricingIdNonVat.GetInt64()
+                : 0,
+            CatalogPricingIdVat = source.TryGetProperty("catalogPricingIdVat", out JsonElement catalogPricingIdVat)
+                ? catalogPricingIdVat.GetInt64()
+                : 0,
+            CatalogCurrencyIdNonVat = source.TryGetProperty("catalogCurrencyIdNonVat", out JsonElement catalogCurrencyIdNonVat)
+                ? catalogCurrencyIdNonVat.GetInt64()
+                : 0,
+            CatalogCurrencyIdVat = source.TryGetProperty("catalogCurrencyIdVat", out JsonElement catalogCurrencyIdVat)
+                ? catalogCurrencyIdVat.GetInt64()
+                : 0,
+            HasNonVatCatalogAvailability = source.TryGetProperty("hasNonVatCatalogAvailability", out JsonElement hasNonVatCatalogAvailability)
+                                               && hasNonVatCatalogAvailability.GetBoolean(),
+            HasVatCatalogAvailability = source.TryGetProperty("hasVatCatalogAvailability", out JsonElement hasVatCatalogAvailability)
+                                            && hasVatCatalogAvailability.GetBoolean(),
+            HasNonVatCatalogSource = source.TryGetProperty("hasNonVatCatalogSource", out JsonElement hasNonVatCatalogSource)
+                                           && hasNonVatCatalogSource.GetBoolean(),
+            HasVatCatalogSource = source.TryGetProperty("hasVatCatalogSource", out JsonElement hasVatCatalogSource)
+                                        && hasVatCatalogSource.GetBoolean(),
             UpdatedAt = source.TryGetProperty("updatedAt", out JsonElement updatedAt) && updatedAt.TryGetDateTime(out DateTime dt)
                 ? new DateTimeOffset(dt).ToUnixTimeSeconds()
                 : 0
         };
+    }
+
+    private static bool ApplyCatalogContext(
+        ProductSearchDocument document,
+        ProductSearchCatalogContext catalogContext) {
+        if (document.Id <= 0) return false;
+
+        string requestedSourceSystem = catalogContext.Source;
+        string productSource = requestedSourceSystem == "amg"
+            ? document.ProductSourceAmg
+            : document.ProductSourceFenix;
+        bool isCanonical = requestedSourceSystem == "amg"
+            ? document.IsCanonicalAmg
+            : document.IsCanonicalFenix;
+        if (!isCanonical) return false;
+        if (!productSource.StartsWith(
+                requestedSourceSystem + ":",
+                StringComparison.Ordinal))
+            return false;
+
+        if (!catalogContext.UseIndexedRetailPrice) {
+            List<ProductSearchCatalogScope> matchingScopes = document.CatalogScopes
+                .Where(scope => scope.OrganizationId == catalogContext.OrganizationId
+                                && scope.WithVat == catalogContext.WithVat
+                                && string.Equals(
+                                    scope.SourceSystem,
+                                    requestedSourceSystem,
+                                    StringComparison.Ordinal)
+                                && scope.AvailableQty > 0)
+                .Take(2)
+                .ToList();
+            if (matchingScopes.Count != 1) return false;
+
+            ProductSearchCatalogScope scope = matchingScopes[0];
+            document.Available = true;
+            document.AvailableQty = scope.AvailableQty;
+            document.AvailableQtyUk = catalogContext.WithVat ? 0 : scope.AvailableQtyUk;
+            document.AvailableQtyUkVat = catalogContext.WithVat ? scope.AvailableQtyUk : 0;
+            document.AvailableQtyPl = catalogContext.WithVat ? 0 : scope.AvailableQtyPl;
+            document.AvailableQtyPlVat = catalogContext.WithVat ? scope.AvailableQtyPl : 0;
+            return true;
+        }
+
+        if (!document.IndexedPricingRevisions.MatchesExactly(catalogContext.PricingRevisions))
+            return false;
+
+        long organizationId = catalogContext.WithVat
+            ? document.CatalogOrganizationIdVat
+            : document.CatalogOrganizationIdNonVat;
+        if (organizationId != catalogContext.OrganizationId) return false;
+
+        string sourceSystem = catalogContext.WithVat
+            ? document.CatalogSourceSystemVat
+            : document.CatalogSourceSystemNonVat;
+        bool hasAvailability = catalogContext.WithVat
+            ? document.HasVatCatalogAvailability
+            : document.HasNonVatCatalogAvailability;
+        bool hasSource = catalogContext.WithVat
+            ? document.HasVatCatalogSource
+            : document.HasNonVatCatalogSource;
+        if (!hasAvailability
+            || !hasSource
+            || !string.Equals(sourceSystem, requestedSourceSystem, StringComparison.Ordinal))
+            return false;
+
+        string agreementNetUid = catalogContext.WithVat
+            ? document.CatalogAgreementNetUidVat
+            : document.CatalogAgreementNetUidNonVat;
+        long pricingId = catalogContext.WithVat
+            ? document.CatalogPricingIdVat
+            : document.CatalogPricingIdNonVat;
+        long currencyId = catalogContext.WithVat
+            ? document.CatalogCurrencyIdVat
+            : document.CatalogCurrencyIdNonVat;
+        decimal price = catalogContext.WithVat ? document.RetailPriceVat : document.RetailPrice;
+
+        return Guid.TryParse(agreementNetUid, out Guid indexedAgreementNetUid)
+               && indexedAgreementNetUid == catalogContext.ClientAgreementNetId
+               && pricingId == catalogContext.PricingId
+               && currencyId == catalogContext.CurrencyId
+               && price > 0;
+    }
+
+    private static List<ProductSearchCatalogScope> ParseCatalogScopes(JsonElement source) {
+        if (!source.TryGetProperty("catalogScopes", out JsonElement scopes)
+            || scopes.ValueKind != JsonValueKind.Array
+            || scopes.GetArrayLength() > 1024) {
+            return [];
+        }
+
+        List<ProductSearchCatalogScope> result = new(scopes.GetArrayLength());
+        foreach (JsonElement scope in scopes.EnumerateArray()) {
+            if (scope.ValueKind != JsonValueKind.Object
+                || !scope.TryGetProperty("organizationId", out JsonElement organizationId)
+                || !organizationId.TryGetInt64(out long parsedOrganizationId)
+                || !scope.TryGetProperty("sourceSystem", out JsonElement sourceSystem)
+                || sourceSystem.ValueKind != JsonValueKind.String
+                || !scope.TryGetProperty("withVat", out JsonElement withVat)
+                || withVat.ValueKind is not (JsonValueKind.True or JsonValueKind.False)
+                || !scope.TryGetProperty("availableQtyUk", out JsonElement availableQtyUk)
+                || !availableQtyUk.TryGetDouble(out double parsedAvailableQtyUk)
+                || !scope.TryGetProperty("availableQtyPl", out JsonElement availableQtyPl)
+                || !availableQtyPl.TryGetDouble(out double parsedAvailableQtyPl)
+                || !scope.TryGetProperty("availableQty", out JsonElement availableQty)
+                || !availableQty.TryGetDouble(out double parsedAvailableQty)) {
+                return [];
+            }
+
+            result.Add(new ProductSearchCatalogScope {
+                OrganizationId = parsedOrganizationId,
+                SourceSystem = sourceSystem.GetString() ?? string.Empty,
+                WithVat = withVat.GetBoolean(),
+                AvailableQtyUk = parsedAvailableQtyUk,
+                AvailableQtyPl = parsedAvailableQtyPl,
+                AvailableQty = parsedAvailableQty
+            });
+        }
+
+        return result;
+    }
+
+    private static bool TryReadExactTotal(JsonElement hitsRoot, out int total) {
+        total = 0;
+        if (!hitsRoot.TryGetProperty("total", out JsonElement totalElement)
+            || totalElement.ValueKind != JsonValueKind.Object
+            || !totalElement.TryGetProperty("relation", out JsonElement relation)
+            || relation.ValueKind != JsonValueKind.String
+            || !string.Equals(relation.GetString(), "eq", StringComparison.Ordinal)
+            || !totalElement.TryGetProperty("value", out JsonElement value)
+            || !value.TryGetInt32(out total)
+            || total < 0) {
+            total = 0;
+            return false;
+        }
+
+        return true;
     }
 
     private static List<string> ParseStringArray(JsonElement source, string propertyName) {

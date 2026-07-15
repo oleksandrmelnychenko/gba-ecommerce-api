@@ -30,7 +30,27 @@ public interface IGetMultipleProductsRepository {
 
     List<Product> GetAllProductsByCarBrandNetId(Guid carBrandNetId, Guid nonVatAgreementNetId, Guid? vatAgreementNetId, long limit, long offset);
 
+    List<Product> GetAllProductsByCarBrandNetId(
+        Guid carBrandNetId,
+        Guid nonVatAgreementNetId,
+        Guid? vatAgreementNetId,
+        long organizationId,
+        string nonVatSource,
+        string vatSource,
+        long limit,
+        long offset);
+
     List<Product> GetAllProductsByCarBrandNetId(string carBrandAlias, Guid nonVatAgreementNetId, Guid? vatAgreementNetId, long limit, long offset);
+
+    List<Product> GetAllProductsByCarBrandNetId(
+        string carBrandAlias,
+        Guid nonVatAgreementNetId,
+        Guid? vatAgreementNetId,
+        long organizationId,
+        string nonVatSource,
+        string vatSource,
+        long limit,
+        long offset);
 
     List<Product> GetAllAnaloguesByProductNetId(Guid productNetId, Guid clientAgreementNetId, long? organizationId);
 
@@ -68,6 +88,7 @@ public interface IGetMultipleProductsRepository {
     List<FromSearchProduct> GetAllFromIdsInTempTable(
         string preDefinedQuery,
         Guid clientAgreementNetId,
+        string catalogSource,
         long? currencyId,
         long? organizationId,
         bool withVat = false,
@@ -81,13 +102,15 @@ public interface IGetMultipleProductsRepository {
         string preDefinedQuery,
         Guid nonVatAgreementNetId,
         Guid? vatAgreementNetId,
-        long? organizationId);
+        long? organizationId,
+        string catalogSource);
 
     List<FromSearchProduct> GetAllAnaloguesByProductIdWithCalculatedPrices(long productId, Guid nonVatAgreementNetId, Guid? vatAgreementNetId);
 
     List<FromSearchProduct> GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPrices(
         long productId,
         Guid clientAgreementNetId,
+        string catalogSource,
         long? organizationId,
         long? currencyId,
         bool withVat);
@@ -95,6 +118,7 @@ public interface IGetMultipleProductsRepository {
     List<FromSearchProduct> GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPricesForRetail(
         long productId,
         Guid clientAgreementNetId,
+        string catalogSource,
         long? organizationId,
         long? currencyId,
         bool withVat);
@@ -105,11 +129,16 @@ public interface IGetMultipleProductsRepository {
         long productId,
         Guid nonVatAgreementNetId,
         Guid? vatAgreementNetId,
-        long? organizationId);
+        long? organizationId,
+        string catalogSource);
 
     List<FromSearchProduct> GetProductsByOldECommerceIds(IEnumerable<long> oldECommerceIds, Guid nonVatAgreementNetId, Guid? vatAgreementNetId);
 
-    List<Product> GetAllFromIdsInPreDefinedQuery(string preDefinedQuery, Guid nonVatAgreementNetId, Guid? vatAgreementNetId);
+    List<Product> GetAllByVendorCodes(
+        IReadOnlyCollection<string> vendorCodes,
+        Guid nonVatAgreementNetId,
+        Guid? vatAgreementNetId,
+        string catalogSource);
 
     List<Product> GetAllByOldECommerceIds(IEnumerable<long> oldECommerceIds, Guid nonVatAgreementNetId, Guid? vatAgreementNetId);
 

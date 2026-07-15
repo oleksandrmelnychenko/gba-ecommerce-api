@@ -167,6 +167,52 @@ public sealed class StorageRepository : IStorageRepository {
             }).FirstOrDefault();
     }
 
+    public Storage GetFenixRetailWithHighestPriority(bool withVat) {
+        return _connection.Query<Storage, Organization, Storage>(
+            "SELECT TOP (1) [Storage].*, [Organization].* " +
+            "FROM [Storage] " +
+            "INNER JOIN [Organization] " +
+            "ON [Organization].ID = [Storage].OrganizationID " +
+            "AND [Organization].Deleted = 0 " +
+            "AND [Organization].PriceSourceIsAmg = 0 " +
+            "WHERE [Storage].Deleted = 0 " +
+            "AND [Storage].ForEcommerce = 1 " +
+            "AND [Storage].ForDefective = 0 " +
+            "AND [Storage].ForVatProducts = @WithVat " +
+            "AND EXISTS ( " +
+            "SELECT 1 " +
+            "FROM [ClientAgreement] " +
+            "INNER JOIN [Client] " +
+            "ON [Client].ID = [ClientAgreement].ClientID " +
+            "AND [Client].Deleted = 0 " +
+            "AND [Client].IsActive = 1 " +
+            "AND [Client].IsForRetail = 1 " +
+            "INNER JOIN [Agreement] " +
+            "ON [Agreement].ID = [ClientAgreement].AgreementID " +
+            "AND [Agreement].Deleted = 0 " +
+            "AND [Agreement].IsActive = 1 " +
+            "AND [Agreement].OrganizationID = [Storage].OrganizationID " +
+            "AND [Agreement].WithVATAccounting = @WithVat " +
+            "AND (ISNULL(DATALENGTH([Agreement].SourceFenixID), 0) > 0 OR [Agreement].SourceFenixCode IS NOT NULL) " +
+            "AND ISNULL(DATALENGTH([Agreement].SourceAmgID), 0) = 0 " +
+            "AND [Agreement].SourceAmgCode IS NULL " +
+            "INNER JOIN [Pricing] " +
+            "ON [Pricing].ID = [Agreement].PricingID " +
+            "AND [Pricing].Deleted = 0 " +
+            "INNER JOIN [Currency] " +
+            "ON [Currency].ID = [Agreement].CurrencyID " +
+            "AND [Currency].Deleted = 0 " +
+            "WHERE [ClientAgreement].Deleted = 0 " +
+            ") " +
+            "ORDER BY [Storage].RetailPriority, [Storage].ID",
+            (storage, organization) => {
+                storage.Organization = organization;
+                return storage;
+            },
+            new { WithVat = withVat }
+        ).FirstOrDefault();
+    }
+
     public long GetTotalProductsCountByStorageNetId(Guid netId) {
         return _connection.Query<long>(
             "SELECT SUM(ProductAvailability.Amount) FROM Storage " +

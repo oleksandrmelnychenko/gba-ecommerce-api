@@ -1,4 +1,6 @@
-﻿using System.Collections.Generic;
+﻿#nullable enable annotations
+
+using System.Collections.Generic;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.Entities.Sales.Shipments;
 

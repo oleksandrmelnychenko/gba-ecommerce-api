@@ -1,3 +1,5 @@
+#nullable enable annotations
+
 using System.Text.Json.Serialization;
 
 namespace GBA.Common.Models;

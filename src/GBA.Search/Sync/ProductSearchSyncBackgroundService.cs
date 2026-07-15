@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using GBA.Search.Configuration;
 using GBA.Search.Elasticsearch;
+using GBA.Services.Services.Products;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -21,8 +22,6 @@ public sealed class ProductSearchSyncBackgroundService : BackgroundService {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SyncSettings _settings;
     private readonly ILogger<ProductSearchSyncBackgroundService> _log;
-
-    private DateOnly? _lastFullRebuildDate;
 
     public ProductSearchSyncBackgroundService(
         IServiceScopeFactory scopeFactory,
@@ -62,16 +61,27 @@ public sealed class ProductSearchSyncBackgroundService : BackgroundService {
     }
 
     private async Task RunOnceAsync(CancellationToken ct) {
-        bool fullRebuildDue = IsFullRebuildDue(DateTime.UtcNow);
+        DateTime nowUtc = DateTime.UtcNow;
 
         using IServiceScope scope = _scopeFactory.CreateScope();
         IServiceProvider provider = scope.ServiceProvider;
 
+        SearchSyncState state = await provider.GetRequiredService<ISearchSyncStateStore>().GetStateAsync(ct);
+        bool schemaRebuildDue = state.RequiresFullRebuild(SearchIndexSchema.CurrentVersion);
+        bool fullRebuildDue = schemaRebuildDue || IsFullRebuildDue(nowUtc, state);
+
+        if (schemaRebuildDue) {
+            _log.LogInformation(
+                "Search pricing schema changed from {StoredSchema} to {RequiredSchema}; rebuilding the alias immediately",
+                state.SchemaVersion ?? "<unset>",
+                SearchIndexSchema.CurrentVersion);
+        }
+
         // Surface staleness before running: a watermark older than the SLA means the index
         // is lagging behind live stock (the exact failure mode behind the catalog/cart divergence).
-        DateTime watermark = await provider.GetRequiredService<ISearchSyncStateStore>().GetWatermarkAsync(ct);
+        DateTime watermark = state.WatermarkUtc;
         if (watermark != DateTime.MinValue) {
-            double lagSeconds = (DateTime.UtcNow - watermark).TotalSeconds;
+            double lagSeconds = (nowUtc - watermark).TotalSeconds;
             if (lagSeconds > _settings.LagWarningSeconds) {
                 _log.LogWarning(
                     "Search index stale: {LagSeconds:0}s since last successful sync (watermark {Watermark:o}, SLA {Sla}s)",
@@ -85,17 +95,15 @@ public sealed class ProductSearchSyncBackgroundService : BackgroundService {
             ? await sync.FullRebuildAsync(ct)
             : await sync.IncrementalSyncAsync(ct);
 
-        if (result.Success) {
-            if (fullRebuildDue) _lastFullRebuildDate = DateOnly.FromDateTime(DateTime.UtcNow);
-        } else {
+        if (!result.Success) {
             _log.LogWarning("Product search {Kind} sync failed: {Error}",
                 fullRebuildDue ? "full" : "incremental", result.Error);
         }
     }
 
-    private bool IsFullRebuildDue(DateTime nowUtc) {
+    private bool IsFullRebuildDue(DateTime nowUtc, SearchSyncState state) {
         DateOnly today = DateOnly.FromDateTime(nowUtc);
-        return nowUtc.Hour == _settings.FullRebuildHour && _lastFullRebuildDate != today;
+        return nowUtc.Hour == _settings.FullRebuildHour && !state.WasFullyRebuiltOn(today);
     }
 
     private static async Task<bool> DelayAsync(TimeSpan delay, CancellationToken ct) {

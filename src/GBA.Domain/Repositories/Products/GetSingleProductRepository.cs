@@ -15,6 +15,7 @@ using GBA.Domain.Entities.Sales;
 using GBA.Domain.Entities.Supplies;
 using GBA.Domain.Entities.Supplies.PackingLists;
 using GBA.Domain.Entities.Supplies.Ukraine;
+using GBA.Domain.EntityHelpers;
 using GBA.Domain.EntityHelpers.ProductAvailabilityModels;
 using GBA.Domain.Repositories.Products.Contracts;
 using GBA.Domain.RepositoryHelpers.Products;
@@ -906,12 +907,27 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
         ).SingleOrDefault();
     }
 
+    public Product GetByNetIdWithoutIncludes(Guid netId, string catalogSource) {
+        if (netId == Guid.Empty || string.IsNullOrWhiteSpace(catalogSource)) return null;
+
+        return _connection.Query<Product>(
+            "SELECT * " +
+            ", CONVERT(nvarchar(32), SourceAmgID, 2) [RefId] " +
+            "FROM Product p " +
+            "WHERE p.NetUID = @NetId " +
+            "AND p.Deleted = 0 " +
+            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("p"),
+            new { NetId = netId, CatalogSource = catalogSource }
+        ).SingleOrDefault();
+    }
+
     public Product GetProductByNetId(
         Guid netId,
         Guid? clientAgreementNetId,
         bool withVat,
         long? currencyId,
-        long? organizationId) {
+        long? organizationId,
+        string catalogSource) {
         Product productToReturn = null;
 
         string sqlExpression =
@@ -1021,7 +1037,9 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "ON [SupplyOrderUkraineItem].ProductID = Product.ID " +
             "LEFT JOIN [SupplyOrderUkraine] " +
             "ON [SupplyOrderUkraine].ID = [SupplyOrderUkraineItem].SupplyOrderUkraineID " +
-            "WHERE Product.NetUID = @NetId ";
+            "WHERE Product.NetUID = @NetId " +
+            "AND Product.Deleted = 0 " +
+            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("Product") + " ";
 
 
         Type[] productTypes = {
@@ -1146,7 +1164,8 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
                 ClientAgreementNetId = clientAgreementNetId,
                 WithVat = withVat,
                 OrganizationId = organizationId,
-                CurrencyId = currencyId
+                CurrencyId = currencyId,
+                CatalogSource = catalogSource
             }
         );
 
@@ -1272,6 +1291,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "AND [ProductImage].Deleted = 0 " +
             "WHERE [ProductAnalogue].BaseProductID = @Id " +
             "AND [ProductAnalogue].Deleted = 0 " +
+            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Analogue]") + " " +
             "AND [Storage].Locale = @Culture " +
             "AND [Storage].ForDefective = 0 ";
         if (withVat)
@@ -1303,7 +1323,8 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
                 Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
                 OrganizationId = organizationId,
                 CurrencyId = currencyId,
-                WithVat = withVat
+                WithVat = withVat,
+                CatalogSource = catalogSource
             }
         );
 
@@ -5511,7 +5532,11 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
         return productToReturn;
     }
 
-    public Product GetBySlug(string slug, Guid nonVatAgreementNetId, Guid? vatAgreementNetId) {
+    public Product GetBySlug(
+        string slug,
+        Guid nonVatAgreementNetId,
+        Guid? vatAgreementNetId,
+        string catalogSource) {
         Product productToReturn = null;
 
         string sqlExpression =
@@ -5591,6 +5616,8 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
                     : "AND [ProductSlug].Locale = N'uk'"
             ) +
             ") " +
+            "AND Product.Deleted = 0 " +
+            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("Product") + " " +
             "ORDER BY ProductSpecification.Created";
 
         Type[] types = {
@@ -5632,7 +5659,11 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             sqlExpression,
             types,
             mapper,
-            new { Slug = slug, Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName }
+            new {
+                Slug = slug,
+                Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
+                CatalogSource = catalogSource
+            }
         );
 
         if (productToReturn == null) return productToReturn;
@@ -5641,7 +5672,8 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             productToReturn.Id,
             NonVatAgreementNetId = nonVatAgreementNetId,
             VatAgreementNetId = vatAgreementNetId ?? Guid.Empty,
-            Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName
+            Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
+            CatalogSource = catalogSource
         };
 
         string productsExpression =
@@ -5659,6 +5691,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "WHERE [Product].ID = @Id " +
+            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]") + " " +
             "AND [Storage].ForDefective = 0 " +
             "ORDER BY CASE WHEN [Storage].Locale = @Culture THEN 0 ELSE 1 END";
 
@@ -5792,6 +5825,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             ") " +
             "WHERE [Product].ID = @Id " +
             "AND [Analogue].ID IS NOT NULL " +
+            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Analogue]") + " " +
             "AND [Storage].ForDefective = 0 " +
             "ORDER BY CASE WHEN [Storage].Locale = @Culture THEN 0 ELSE 1 END";
 
@@ -5960,6 +5994,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             ") " +
             "WHERE [Product].ID = @Id " +
             "AND [Component].ID IS NOT NULL " +
+            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Component]") + " " +
             "AND [Storage].ForDefective = 0 " +
             "ORDER BY CASE WHEN [Storage].Locale = @Culture THEN 0 ELSE 1 END";
 
@@ -6130,6 +6165,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             ") " +
             "WHERE [Product].ID = @Id " +
             "AND [Analogue].ID IS NOT NULL " +
+            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Analogue]") + " " +
             "AND [Storage].ForDefective = 0 " +
             "ORDER BY CASE WHEN [Storage].Locale = @Culture THEN 0 ELSE 1 END";
 

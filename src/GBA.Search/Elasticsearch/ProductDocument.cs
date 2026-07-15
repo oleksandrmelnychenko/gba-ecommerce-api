@@ -140,6 +140,104 @@ public sealed class ProductDocument {
     [JsonPropertyName("retailCurrencyCode")]
     public string RetailCurrencyCode { get; set; } = "UAH";
 
+    [JsonPropertyName("retailCurrencyCodeVat")]
+    public string RetailCurrencyCodeVat { get; set; } = "UAH";
+
+    [JsonPropertyName("indexedProductPricingRevision")]
+    public string IndexedProductPricingRevision { get; set; } = "";
+
+    [JsonPropertyName("indexedPricingHierarchyRevision")]
+    public string IndexedPricingHierarchyRevision { get; set; } = "";
+
+    [JsonPropertyName("indexedDiscountRevision")]
+    public string IndexedDiscountRevision { get; set; } = "";
+
+    [JsonPropertyName("indexedExchangeRateRevision")]
+    public string IndexedExchangeRateRevision { get; set; } = "";
+
+    [JsonPropertyName("catalogOrganizationIdNonVat")]
+    public long CatalogOrganizationIdNonVat { get; set; }
+
+    [JsonPropertyName("catalogOrganizationIdVat")]
+    public long CatalogOrganizationIdVat { get; set; }
+
+    [JsonPropertyName("catalogAgreementSourceNonVat")]
+    public string CatalogAgreementSourceNonVat { get; set; } = "";
+
+    [JsonPropertyName("catalogAgreementSourceVat")]
+    public string CatalogAgreementSourceVat { get; set; } = "";
+
+    [JsonPropertyName("productSourceFenix")]
+    public string ProductSourceFenix { get; set; } = "";
+
+    [JsonPropertyName("productSourceAmg")]
+    public string ProductSourceAmg { get; set; } = "";
+
+    [JsonPropertyName("isCanonicalFenix")]
+    public bool IsCanonicalFenix { get; set; }
+
+    [JsonPropertyName("isCanonicalAmg")]
+    public bool IsCanonicalAmg { get; set; }
+
+    [JsonPropertyName("catalogScopes")]
+    public List<ProductCatalogScopeDocument> CatalogScopes { get; set; } = [];
+
+    [JsonPropertyName("catalogSourceSystemNonVat")]
+    public string CatalogSourceSystemNonVat { get; set; } = "";
+
+    [JsonPropertyName("catalogSourceSystemVat")]
+    public string CatalogSourceSystemVat { get; set; } = "";
+
+    [JsonPropertyName("catalogAgreementNetUidNonVat")]
+    public string CatalogAgreementNetUidNonVat { get; set; } = "";
+
+    [JsonPropertyName("catalogAgreementNetUidVat")]
+    public string CatalogAgreementNetUidVat { get; set; } = "";
+
+    [JsonPropertyName("catalogPricingIdNonVat")]
+    public long CatalogPricingIdNonVat { get; set; }
+
+    [JsonPropertyName("catalogPricingIdVat")]
+    public long CatalogPricingIdVat { get; set; }
+
+    [JsonPropertyName("catalogCurrencyIdNonVat")]
+    public long CatalogCurrencyIdNonVat { get; set; }
+
+    [JsonPropertyName("catalogCurrencyIdVat")]
+    public long CatalogCurrencyIdVat { get; set; }
+
+    [JsonPropertyName("hasNonVatCatalogAvailability")]
+    public bool HasNonVatCatalogAvailability { get; set; }
+
+    [JsonPropertyName("hasVatCatalogAvailability")]
+    public bool HasVatCatalogAvailability { get; set; }
+
+    [JsonPropertyName("hasNonVatCatalogSource")]
+    public bool HasNonVatCatalogSource { get; set; }
+
+    [JsonPropertyName("hasVatCatalogSource")]
+    public bool HasVatCatalogSource { get; set; }
+
     [JsonPropertyName("updatedAt")]
     public DateTime UpdatedAt { get; set; }
+}
+
+public sealed class ProductCatalogScopeDocument {
+    [JsonPropertyName("organizationId")]
+    public long OrganizationId { get; set; }
+
+    [JsonPropertyName("sourceSystem")]
+    public string SourceSystem { get; set; } = "";
+
+    [JsonPropertyName("withVat")]
+    public bool WithVat { get; set; }
+
+    [JsonPropertyName("availableQtyUk")]
+    public double AvailableQtyUk { get; set; }
+
+    [JsonPropertyName("availableQtyPl")]
+    public double AvailableQtyPl { get; set; }
+
+    [JsonPropertyName("availableQty")]
+    public double AvailableQty { get; set; }
 }

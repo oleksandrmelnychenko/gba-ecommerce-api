@@ -9,6 +9,8 @@ using GBA.Search.Sync;
 using GBA.Search.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace GBA.Search.Extensions;
 
@@ -20,13 +22,17 @@ public static class ServiceCollectionExtensions {
 
         services.Configure<ElasticsearchSettings>(
             configuration.GetSection("Elasticsearch"));
-        services.Configure<SyncSettings>(
-            configuration.GetSection(SyncSettings.SectionName));
+        services.AddSingleton<IValidateOptions<SyncSettings>, SyncSettingsValidator>();
+        services.AddOptions<SyncSettings>()
+            .Bind(configuration.GetSection(SyncSettings.SectionName))
+            .ValidateOnStart();
 
         services.AddSingleton<SearchTextProcessor>();
 
         services.AddSingleton(connectionFactory);
         services.AddSingleton<ProductSyncRepository>();
+        services.AddSingleton<IProductSyncRepository>(sp =>
+            sp.GetRequiredService<ProductSyncRepository>());
 
         services.AddHttpClient<IElasticsearchIndexService, ElasticsearchIndexService>()
             .ConfigureHttpClient((sp, client) => ConfigureElasticClient(client, configuration, 1));
@@ -41,6 +47,9 @@ public static class ServiceCollectionExtensions {
 
         services.AddHttpClient<ISearchSyncStateStore, SearchSyncStateStore>()
             .ConfigureHttpClient((sp, client) => ConfigureElasticClient(client, configuration, 1));
+
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<ISearchServingGenerationResolver, SearchServingGenerationResolver>();
 
         services.AddHttpClient<IElasticsearchSyncService, ElasticsearchSyncService>()
             .ConfigureHttpClient((sp, client) => ConfigureElasticClient(client, configuration, 10));

@@ -12,6 +12,7 @@ using GBA.Domain.Repositories.Organizations.Contracts;
 using GBA.Domain.Repositories.Pricings.Contracts;
 using GBA.Domain.Repositories.Storages.Contracts;
 using GBA.Services.Services.Clients.Contracts;
+using GBA.Services.Services.Products;
 
 namespace GBA.Services.Services.Clients;
 
@@ -22,6 +23,7 @@ public sealed class ClientAgreementService : IClientAgreementService {
     private readonly ICurrencyRepositoriesFactory _currencyRepositoriesFactory;
     private readonly IOrganizationRepositoriesFactory _organizationRepositoriesFactory;
     private readonly IPricingRepositoriesFactory _pricingRepositoriesFactory;
+    private readonly IPriceCacheService _priceCacheService;
     private readonly IStorageRepositoryFactory _storageRepositoryFactory;
 
     public ClientAgreementService(
@@ -31,7 +33,8 @@ public sealed class ClientAgreementService : IClientAgreementService {
         ICurrencyRepositoriesFactory currencyRepositoriesFactory,
         IPricingRepositoriesFactory pricingRepositoriesFactory,
         IAgreementRepositoriesFactory agreementRepositoriesFactory,
-        IStorageRepositoryFactory storageRepositoryFactory) {
+        IStorageRepositoryFactory storageRepositoryFactory,
+        IPriceCacheService priceCacheService) {
         _connectionFactory = connectionFactory;
 
         _clientRepositoriesFactory = clientRepositoriesFactory;
@@ -44,6 +47,7 @@ public sealed class ClientAgreementService : IClientAgreementService {
 
         _agreementRepositoriesFactory = agreementRepositoriesFactory;
         _storageRepositoryFactory = storageRepositoryFactory;
+        _priceCacheService = priceCacheService;
     }
 
     public Task AddDefaultAgreementForClient(Client client, bool isLocalPayment) {
@@ -159,6 +163,7 @@ public sealed class ClientAgreementService : IClientAgreementService {
                 }
             }
 
+        _priceCacheService.InvalidateForClient(clientNetId);
         return Task.FromResult(client);
     }
 }

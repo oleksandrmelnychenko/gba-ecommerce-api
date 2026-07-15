@@ -21,6 +21,7 @@ using GBA.Domain.DataSourceAdapters.SQL.Contracts;
 using GBA.Domain.DbConnectionFactory;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.IdentityEntities;
+using GBA.Domain.EntityHelpers;
 using GBA.Domain.Repositories.Accounting;
 using GBA.Domain.Repositories.Accounting.Contracts;
 using GBA.Domain.Repositories.Agreements;
@@ -87,6 +88,8 @@ using GBA.Services.Services.Transporters;
 using GBA.Services.Services.Transporters.Contracts;
 using GBA.Services.Services.UserManagement;
 using GBA.Services.Services.UserManagement.Contracts;
+using GBA.Services.Infrastructure.SalesMutations;
+using GBA.Ecommerce.DependencyInjection;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics;
@@ -149,6 +152,14 @@ public class Startup {
     public void ConfigureServices(IServiceCollection services) {
         ConfigureDbContext(services);
 
+        SalesMutationOutboxOptions salesMutationOutboxOptions =
+            Configuration.GetSection(SalesMutationOutboxOptions.SectionName)
+                .Get<SalesMutationOutboxOptions>() ?? new SalesMutationOutboxOptions();
+        salesMutationOutboxOptions.Validate();
+        services.AddSingleton(salesMutationOutboxOptions);
+        services.AddSalesMutationInternalAuthentication(Configuration);
+        services.AddSingleton<TimeProvider>(TimeProvider.System);
+
         services.AddResponseCompression(options => {
             options.EnableForHttps = true;
             options.Providers.Add<BrotliCompressionProvider>();
@@ -174,7 +185,10 @@ public class Startup {
         });
 
         services.AddMemoryCache();
-        services.AddHttpClient();
+        services.AddHttpClient(SalesMutationOutboxDispatcher.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.HttpClientHandler {
+                AllowAutoRedirect = false
+            });
         services.AddRequestDecompression();
         services.AddHealthChecks()
             .AddCheck("db-main", () => {
@@ -191,7 +205,10 @@ public class Startup {
                 } catch (Exception ex) {
                     return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Unhealthy(ex.Message);
                 }
-            });
+            })
+            .AddCheck<PricingChangeTrackingHealthCheck>("pricing-cache-change-tracking")
+            .AddCheck<ElasticsearchReadinessHealthCheck>("elasticsearch-active-generation")
+            .AddCheck<SalesMutationOutboxHealthCheck>("sales-mutation-outbox");
         services.AddRateLimiter(options => {
             options.RejectionStatusCode = 429;
             options.OnRejected = async (context, cancellationToken) => {
@@ -390,6 +407,12 @@ public class Startup {
         services.AddScoped<IRetailClientRepositoriesFactory, RetailClientRepositoriesFactory>();
 
         services.AddScoped<IDbConnectionFactory, DbConnectionFactory>();
+        services.AddScoped<ISalesCreationLedgerStore, SqlSalesCreationLedgerStore>();
+        services.AddScoped<ISalesMutationOutboxStore, SqlSalesMutationOutboxStore>();
+        services.AddScoped<ISalesMutationOutboxPublisher, SalesMutationOutboxPublisher>();
+        services.AddScoped<ISalesMutationOutboxDispatcher, SalesMutationOutboxDispatcher>();
+        services.AddHostedService<GBA.Ecommerce.Background.SalesMutationOutboxSchemaInitializer>();
+        services.AddHostedService<GBA.Ecommerce.Background.SalesMutationOutboxBackgroundService>();
 
         services.AddScoped<IRequestTokenService, RequestTokenService>();
         services.AddScoped<ISignUpService, SignUpService>();
@@ -401,6 +424,8 @@ public class Startup {
         services.AddSingleton<GBA.Common.Search.ISearchReindexSignal, GBA.Common.Search.SearchReindexSignal>();
         services.AddHostedService<GBA.Ecommerce.Background.ProductReindexBackgroundService>();
         services.AddScoped<IProductService, ProductService>();
+        services.AddScoped<IPricingDependencyRevisionProvider, SqlPricingDependencyRevisionProvider>();
+        services.AddScoped<IRetailCatalogSelectionProvider, SqlRetailCatalogSelectionProvider>();
         services.AddScoped<IClientAgreementService, ClientAgreementService>();
         services.AddScoped<IRegionService, RegionService>();
         services.AddScoped<IRegionCodeService, RegionCodeService>();
@@ -515,7 +540,8 @@ public class Startup {
                         checks = report.Entries.Select(e => new {
                             name = e.Key,
                             status = e.Value.Status.ToString(),
-                            duration = e.Value.Duration.TotalMilliseconds
+                            duration = e.Value.Duration.TotalMilliseconds,
+                            data = e.Value.Data
                         })
                     });
                     await context.Response.WriteAsync(result);

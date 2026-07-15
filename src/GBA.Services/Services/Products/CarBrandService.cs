@@ -4,10 +4,11 @@ using System.Data;
 using System.Threading.Tasks;
 using GBA.Common.ResourceNames.ECommerce;
 using GBA.Domain.DbConnectionFactory.Contracts;
-using GBA.Domain.Entities.Clients;
 using GBA.Domain.Entities.Products;
+using GBA.Domain.EntityHelpers;
 using GBA.Domain.Repositories.Clients.Contracts;
 using GBA.Domain.Repositories.Products.Contracts;
+using GBA.Domain.Repositories.Storages.Contracts;
 using GBA.Services.Services.Products.Contracts;
 
 namespace GBA.Services.Services.Products;
@@ -16,14 +17,23 @@ public sealed class CarBrandService : ICarBrandService {
     private readonly IClientRepositoriesFactory _clientRepositoriesFactory;
     private readonly IDbConnectionFactory _connectionFactory;
     private readonly IProductRepositoriesFactory _productRepositoriesFactory;
+    private readonly IStorageRepositoryFactory _storageRepositoryFactory;
+    private readonly IPricingDependencyRevisionProvider _pricingDependencyRevisionProvider;
+    private readonly IRetailCatalogSelectionProvider _retailCatalogSelectionProvider;
 
     public CarBrandService(
         IDbConnectionFactory connectionFactory,
         IProductRepositoriesFactory productRepositoriesFactory,
-        IClientRepositoriesFactory clientRepositoriesFactory) {
+        IClientRepositoriesFactory clientRepositoriesFactory,
+        IStorageRepositoryFactory storageRepositoryFactory,
+        IPricingDependencyRevisionProvider pricingDependencyRevisionProvider,
+        IRetailCatalogSelectionProvider retailCatalogSelectionProvider) {
         _connectionFactory = connectionFactory;
         _productRepositoriesFactory = productRepositoriesFactory;
         _clientRepositoriesFactory = clientRepositoriesFactory;
+        _storageRepositoryFactory = storageRepositoryFactory;
+        _pricingDependencyRevisionProvider = pricingDependencyRevisionProvider;
+        _retailCatalogSelectionProvider = retailCatalogSelectionProvider;
     }
 
     public Task<IEnumerable<CarBrand>> GetAllCarBrands() {
@@ -39,20 +49,26 @@ public sealed class CarBrandService : ICarBrandService {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
         IGetMultipleProductsRepository getMultipleProductsRepository = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection);
 
-        if (currentClientNetId.Equals(Guid.Empty))
-            return Task.FromResult(getMultipleProductsRepository.GetAllProductsByCarBrandNetId(carBrandNetId, Guid.Empty, null, limit, offset));
+        ProductPricingContextSet pricingContexts = ProductPricingContextResolver.ResolveSet(
+            connection,
+            _clientRepositoriesFactory,
+            _storageRepositoryFactory,
+            _pricingDependencyRevisionProvider,
+            _retailCatalogSelectionProvider,
+            currentClientNetId,
+            withVat: false);
 
-        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-
-        ClientAgreement nonVatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(currentClientNetId, false);
-        ClientAgreement vatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(currentClientNetId, true);
+        if (pricingContexts == null) return Task.FromResult(new List<Product>());
 
         return Task.FromResult(
             getMultipleProductsRepository
                 .GetAllProductsByCarBrandNetId(
                     carBrandNetId,
-                    nonVatAgreement?.NetUid ?? Guid.Empty,
-                    vatAgreement?.NetUid,
+                    pricingContexts.NonVat?.Context.ClientAgreementNetId ?? Guid.Empty,
+                    pricingContexts.Vat?.Context.ClientAgreementNetId,
+                    pricingContexts.Selected.Context.OrganizationId,
+                    pricingContexts.NonVat?.Context.Source ?? string.Empty,
+                    pricingContexts.Vat?.Context.Source,
                     limit,
                     offset
                 )
@@ -67,20 +83,26 @@ public sealed class CarBrandService : ICarBrandService {
 
         IGetMultipleProductsRepository getMultipleProductsRepository = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection);
 
-        if (currentClientNetId.Equals(Guid.Empty))
-            return Task.FromResult(getMultipleProductsRepository.GetAllProductsByCarBrandNetId(carBrandAlias, Guid.Empty, Guid.Empty, limit, offset));
+        ProductPricingContextSet pricingContexts = ProductPricingContextResolver.ResolveSet(
+            connection,
+            _clientRepositoriesFactory,
+            _storageRepositoryFactory,
+            _pricingDependencyRevisionProvider,
+            _retailCatalogSelectionProvider,
+            currentClientNetId,
+            withVat: false);
 
-        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-
-        ClientAgreement nonVatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(currentClientNetId, false);
-        ClientAgreement vatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(currentClientNetId, true);
+        if (pricingContexts == null) return Task.FromResult(new List<Product>());
 
         return Task.FromResult(
             getMultipleProductsRepository
                 .GetAllProductsByCarBrandNetId(
                     carBrandAlias,
-                    nonVatAgreement?.NetUid ?? Guid.Empty,
-                    vatAgreement?.NetUid,
+                    pricingContexts.NonVat?.Context.ClientAgreementNetId ?? Guid.Empty,
+                    pricingContexts.Vat?.Context.ClientAgreementNetId,
+                    pricingContexts.Selected.Context.OrganizationId,
+                    pricingContexts.NonVat?.Context.Source ?? string.Empty,
+                    pricingContexts.Vat?.Context.Source,
                     limit,
                     offset
                 )

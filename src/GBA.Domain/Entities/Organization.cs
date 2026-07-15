@@ -120,6 +120,11 @@ public sealed class Organization : EntityBase {
 
     public bool IsVatAgreements { get; set; }
 
+    /// <summary>
+    /// Selects the product-pricing source owned by this organization.
+    /// </summary>
+    public bool PriceSourceIsAmg { get; set; }
+
     public VatRate VatRate { get; set; }
 
     public Currency Currency { get; set; }

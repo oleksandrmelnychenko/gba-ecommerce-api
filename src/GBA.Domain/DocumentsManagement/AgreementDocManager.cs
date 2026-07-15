@@ -59,7 +59,7 @@ public sealed class AgreementDocManager : BaseXlsManager, IAgreementDocManager {
         myFooter.SetHeaderFooter(footer);
         CT_HdrFtrRef myFooterRef = secPr.AddNewFooterReference();
         myFooterRef.type = ST_HdrFtr.@default;
-        myFooterRef.id = myFooter.GetPackageRelationship().Id;
+        myFooterRef.id = document.Document.GetRelationId(myFooter);
 
         DateTime from = agreement.FromDate ?? current;
 
@@ -945,7 +945,7 @@ public sealed class AgreementDocManager : BaseXlsManager, IAgreementDocManager {
         myFooter.SetHeaderFooter(footer);
         CT_HdrFtrRef myFooterRef = secPr.AddNewFooterReference();
         myFooterRef.type = ST_HdrFtr.@default;
-        myFooterRef.id = myFooter.GetPackageRelationship().Id;
+        myFooterRef.id = document.Document.GetRelationId(myFooter);
 
         XWPFParagraph titleParagraph = document.AddParagraph(ParagraphAlignment.CENTER)
             .SetStyleId("Title")

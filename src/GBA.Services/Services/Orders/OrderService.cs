@@ -1,7 +1,8 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Data;
+using System.Data.Common;
 using System.Dynamic;
 using System.Globalization;
 using System.IO;
@@ -10,6 +11,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Transactions;
 using GBA.Common.Helpers;
 using GBA.Common.Models;
 using GBA.Common.ResourceNames;
@@ -33,6 +35,7 @@ using GBA.Domain.Repositories.Sales.Contracts;
 using GBA.Domain.Repositories.Storages.Contracts;
 using GBA.Domain.Repositories.Users.Contracts;
 using GBA.Services.Infrastructure;
+using GBA.Services.Infrastructure.SalesMutations;
 using GBA.Services.Services.Messengers.Contracts;
 using GBA.Services.Services.Orders.Contracts;
 using Microsoft.Extensions.Http;
@@ -57,6 +60,10 @@ public sealed class OrderService : IOrderService {
     private readonly IUserRepositoriesFactory _userRepositoriesFactory;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ISearchReindexSignal _reindexSignal;
+    private readonly ISalesCreationLedgerStore _salesCreationLedgerStore;
+    private readonly ISalesMutationOutboxPublisher _salesMutationOutboxPublisher;
+    private readonly Uri _salesMutationInternalBaseUri;
+    private readonly TimeProvider _timeProvider;
 
     public OrderService(
         ISaleRepositoriesFactory saleRepositoriesFactory,
@@ -71,7 +78,11 @@ public sealed class OrderService : IOrderService {
         IDbConnectionFactory connectionFactory,
         IPaymentLinkService paymentLinkService,
         IHttpClientFactory httpClientFactory,
-        ISearchReindexSignal reindexSignal) {
+        ISearchReindexSignal reindexSignal,
+        ISalesCreationLedgerStore salesCreationLedgerStore,
+        ISalesMutationOutboxPublisher salesMutationOutboxPublisher,
+        SalesMutationOutboxOptions salesMutationOutboxOptions,
+        TimeProvider timeProvider) {
         _saleRepositoriesFactory = saleRepositoriesFactory;
         _reindexSignal = reindexSignal;
         _clientRepositoriesFactory = clientRepositoriesFactory;
@@ -85,6 +96,14 @@ public sealed class OrderService : IOrderService {
         _connectionFactory = connectionFactory;
         _paymentLinkService = paymentLinkService;
         _httpClientFactory = httpClientFactory;
+        _salesCreationLedgerStore = salesCreationLedgerStore ??
+            throw new ArgumentNullException(nameof(salesCreationLedgerStore));
+        _salesMutationOutboxPublisher = salesMutationOutboxPublisher ??
+            throw new ArgumentNullException(nameof(salesMutationOutboxPublisher));
+        _salesMutationInternalBaseUri = (salesMutationOutboxOptions ??
+            throw new ArgumentNullException(nameof(salesMutationOutboxOptions)))
+            .GetValidatedAllowedInternalBaseUri();
+        _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
     }
 
     private static Sale BuildCreatedSaleResponse(Sale sale) {
@@ -137,144 +156,316 @@ public sealed class OrderService : IOrderService {
         };
     }
 
-    private void QueueEcommerceSaleUpdate(string crmApiUrl, string payload, string operationName) {
+    private Task<Guid> PersistEcommerceSaleUpdateAsync(
+        IDbConnection connection,
+        string crmApiUrl,
+        string payload,
+        string operationName,
+        Guid operationNetUid) =>
+        _salesMutationOutboxPublisher.EnqueueAsync(
+            connection,
+            crmApiUrl,
+            payload,
+            operationName,
+            operationNetUid);
+
+    private async Task<SalesCreationReceipt> GetCreatedSaleReplayAsync(
+        SalesCreationRequest request) {
+        SalesCreationLedgerEntry entry = await _salesCreationLedgerStore.GetAsync(
+            request.OperationNetUid,
+            default);
+        if (entry == null) return null;
+        SalesCreationRequestKey.EnsureMatches(request, entry);
+        if (string.IsNullOrWhiteSpace(entry.ResponsePayload))
+            throw new InvalidOperationException(
+                "The durable sales creation replay receipt is incomplete.");
+
+        SalesCreationReceipt receipt = JsonSerializer.Deserialize<SalesCreationReceipt>(
+            entry.ResponsePayload,
+            _jsonSerializerOptions);
+        if (receipt?.Sale != null && receipt.Sale.NetUid != Guid.Empty) return receipt;
+
+        Sale legacySale = JsonSerializer.Deserialize<Sale>(
+            entry.ResponsePayload,
+            _jsonSerializerOptions);
+        if (legacySale == null || legacySale.NetUid == Guid.Empty)
+            throw new InvalidOperationException(
+                "The durable sales creation replay payload is invalid.");
+        return new SalesCreationReceipt { Sale = legacySale };
+    }
+
+    private static string SerializeSalesCreationReceipt(
+        Sale sale,
+        string paymentLink = null) =>
+        JsonSerializer.Serialize(new SalesCreationReceipt {
+            Sale = sale,
+            PaymentLink = paymentLink
+        });
+
+    private Task<string> ResolveReplayPaymentLinkAsync(
+        SalesCreationReceipt receipt,
+        Guid retailClientNetId) =>
+        !string.IsNullOrWhiteSpace(receipt.PaymentLink)
+            ? Task.FromResult(receipt.PaymentLink)
+            : _paymentLinkService.GenerateSalePaymentInfoMessage(
+                retailClientNetId,
+                receipt.Sale.NetUid);
+
+    private async Task ReserveSalesCreationAsync(
+        IDbConnection connection,
+        SalesCreationRequest request) {
+        SalesCreationLedgerRegistration registration =
+            await _salesCreationLedgerStore.RegisterAsync(
+                connection,
+                request,
+                UtcNow(),
+                default);
+        if (!registration.WasInserted) throw new SalesCreationReplayRequiredException();
+    }
+
+    private Task CompleteSalesCreationAsync(
+        IDbConnection connection,
+        SalesCreationRequest request,
+        string responsePayload) =>
+        _salesCreationLedgerStore.CompleteAsync(
+            connection,
+            request,
+            responsePayload,
+            UtcNow(),
+            default);
+
+    private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
+
+    private sealed class SalesCreationReceipt {
+        public Sale Sale { get; init; }
+        public string PaymentLink { get; init; }
+    }
+
+    private static TransactionScope CreateSalesMutationTransaction(IDbConnection connection) {
+        ArgumentNullException.ThrowIfNull(connection);
+        if (connection.State != ConnectionState.Closed) connection.Close();
+
+        return new TransactionScope(
+            TransactionScopeOption.Required,
+            new System.Transactions.TransactionOptions {
+                IsolationLevel = System.Transactions.IsolationLevel.ReadCommitted,
+                Timeout = TimeSpan.FromMinutes(2)
+            },
+            TransactionScopeAsyncFlowOption.Enabled);
+    }
+
+    private static async Task AcquireProductMutationLocksAsync(
+        IDbConnection connection,
+        IEnumerable<OrderItem> orderItems) {
+        if (connection is not DbConnection dbConnection)
+            throw new InvalidOperationException(
+                "Sales creation requires an asynchronous database connection.");
+
+        if (dbConnection.State == ConnectionState.Closed)
+            await dbConnection.OpenAsync();
+
+        long[] productIds = orderItems
+            .Select(item => item.Product?.Id > 0 ? item.Product.Id : item.ProductId)
+            .Where(productId => productId > 0)
+            .Distinct()
+            .OrderBy(productId => productId)
+            .ToArray();
+
+        foreach (long productId in productIds) {
+            await using DbCommand command = dbConnection.CreateCommand();
+            command.CommandText = """
+DECLARE @LockResult int;
+EXEC @LockResult = sys.sp_getapplock
+    @Resource = @Resource,
+    @LockMode = N'Exclusive',
+    @LockOwner = N'Transaction',
+    @LockTimeout = 60000;
+SELECT @LockResult;
+""";
+
+            DbParameter resource = command.CreateParameter();
+            resource.ParameterName = "@Resource";
+            resource.DbType = DbType.String;
+            resource.Size = 255;
+            resource.Value = $"gba-ecommerce:product:{productId}";
+            command.Parameters.Add(resource);
+
+            int lockResult = Convert.ToInt32(await command.ExecuteScalarAsync());
+            if (lockResult < 0)
+                throw new TimeoutException(
+                    $"Unable to acquire the sales product mutation lock for product {productId}.");
+        }
+    }
+
+    private string GetEcommerceSaleUpdateUrl() =>
+        new Uri(
+            _salesMutationInternalBaseUri,
+            $"api/v1/{CultureInfo.CurrentCulture.TwoLetterISOLanguageName}/sales/update/ecommerce")
+            .AbsoluteUri;
+
+    private void QueueProductAvailabilitySync(Guid productNetUid, string operationName) {
         BackgroundSyncRunner.Run(async cancellationToken => {
-            using HttpClient httpClient = _httpClientFactory.CreateClient();
-            using HttpRequestMessage requestMessage = new(HttpMethod.Post, crmApiUrl) {
-                Content = new StringContent(payload, Encoding.UTF8, "application/json")
-            };
+            string saleSyncCrmUrl;
 
-            HttpResponseMessage responseMessage =
-                await httpClient.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-
-            if (responseMessage.IsSuccessStatusCode) return;
-
-            using (responseMessage) {
-                string responseContent = await responseMessage.Content.ReadAsStringAsync(cancellationToken);
-                string responseErrorMessage = ExtractErrorMessage(responseContent);
-                throw new Exception(responseErrorMessage);
+            if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                EcommerceCrmConfig data = ReadEcommerceCrmConfig();
+#if DEBUG
+                saleSyncCrmUrl =
+                    $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={productNetUid}";
+#else
+                saleSyncCrmUrl =
+                    $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={productNetUid}";
+#endif
+            } else {
+                saleSyncCrmUrl =
+                    $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={productNetUid}";
             }
+
+            using HttpClient httpClient = _httpClientFactory.CreateClient();
+            await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+        }, operationName);
+    }
+
+    private void QueueSaleSync(Guid saleNetUid, string operationName) {
+        BackgroundSyncRunner.Run(async cancellationToken => {
+            string saleSyncCrmUrl;
+
+            if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                EcommerceCrmConfig data = ReadEcommerceCrmConfig();
+#if DEBUG
+                saleSyncCrmUrl =
+                    $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={saleNetUid}";
+#else
+                saleSyncCrmUrl =
+                    $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={saleNetUid}";
+#endif
+            } else {
+                saleSyncCrmUrl =
+                    $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={saleNetUid}";
+            }
+
+            using HttpClient httpClient = _httpClientFactory.CreateClient();
+            await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
         }, operationName);
     }
 
     public Task<Sale> GenerateNewOrderAndSaleFromClientShoppingCart(Guid clientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-            ClientShoppingCart clientShoppingCart =
-                _clientRepositoriesFactory.NewClientShoppingCartRepository(connection).GetByClientNetId(clientNetId, withVat);
+        ClientShoppingCart clientShoppingCart =
+            _clientRepositoriesFactory.NewClientShoppingCartRepository(connection).GetByClientNetId(clientNetId, withVat);
 
-            if (clientShoppingCart == null || !clientShoppingCart.OrderItems.Any()) throw new Exception("You need to add products first.");
+        if (clientShoppingCart == null || !clientShoppingCart.OrderItems.Any()) throw new Exception("You need to add products first.");
 
-            Order order = new() {
-                OrderSource = OrderSource.Shop,
-                OrderStatus = OrderStatus.NewOrderCart,
-                UserId = _userRepositoriesFactory.NewUserRepository(connection).GetManagerOrGBAIdByClientNetId(clientNetId),
-                ClientAgreement = _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetActiveByRootClientNetId(clientNetId, withVat)
-            };
+        Order order = new() {
+            OrderSource = OrderSource.Shop,
+            OrderStatus = OrderStatus.NewOrderCart,
+            UserId = _userRepositoriesFactory.NewUserRepository(connection).GetManagerOrGBAIdByClientNetId(clientNetId),
+            ClientAgreement = _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetActiveByRootClientNetId(clientNetId, withVat)
+        };
 
-            order.ClientAgreementId = order.ClientAgreement.Id;
+        order.ClientAgreementId = order.ClientAgreement.Id;
+        order.Id = _saleRepositoriesFactory
+            .NewOrderRepository(connection)
+            .Add(order);
 
-            order.Id = _saleRepositoriesFactory
-                .NewOrderRepository(connection)
-                .Add(order);
+        _saleRepositoriesFactory
+            .NewOrderItemRepository(connection)
+            .Update(
+                clientShoppingCart
+                    .OrderItems
+                    .Select(item => {
+                        item.ClientShoppingCartId = null;
+                        item.OrderId = order.Id;
 
-            _saleRepositoriesFactory
-                .NewOrderItemRepository(connection)
-                .Update(
-                    clientShoppingCart
-                        .OrderItems
-                        .Select(item => {
-                            item.ClientShoppingCartId = null;
-                            item.OrderId = order.Id;
+                        return item;
+                    })
+            );
 
-                            return item;
-                        })
-                );
+        Sale sale = new() {
+            ClientAgreementId = order.ClientAgreementId,
+            OrderId = order.Id,
+            UserId = order.UserId,
+            IsVatSale = clientShoppingCart.IsVatCart,
+            BaseLifeCycleStatusId =
+                _saleRepositoriesFactory
+                    .NewBaseLifeCycleStatusRepository(connection)
+                    .Add(
+                        new BaseLifeCycleStatus {
+                            SaleLifeCycleType = SaleLifeCycleType.New
+                        }
+                    ),
+            BaseSalePaymentStatusId =
+                _saleRepositoriesFactory
+                    .NewBaseSalePaymentStatusRepository(connection)
+                    .Add(
+                        new BaseSalePaymentStatus {
+                            SalePaymentStatusType = SalePaymentStatusType.NotPaid
+                        }
+                    )
+        };
 
-            Sale sale = new() {
-                ClientAgreementId = order.ClientAgreementId,
-                OrderId = order.Id,
-                UserId = order.UserId,
-                IsVatSale = clientShoppingCart.IsVatCart,
-                BaseLifeCycleStatusId =
-                    _saleRepositoriesFactory
-                        .NewBaseLifeCycleStatusRepository(connection)
-                        .Add(
-                            new BaseLifeCycleStatus {
-                                SaleLifeCycleType = SaleLifeCycleType.New
-                            }
-                        ),
-                BaseSalePaymentStatusId =
-                    _saleRepositoriesFactory
-                        .NewBaseSalePaymentStatusRepository(connection)
-                        .Add(
-                            new BaseSalePaymentStatus {
-                                SalePaymentStatusType = SalePaymentStatusType.NotPaid
-                            }
-                        )
-            };
+        ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
 
-            ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
+        SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
+        SaleNumber saleNumber;
 
-            SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
-            SaleNumber saleNumber;
+        string currentMonth = MonthCodesResourceNames.GetCurrentMonthCode();
 
-            string currentMonth = MonthCodesResourceNames.GetCurrentMonthCode();
+        try {
+            if (lastSaleNumber != null && DateTime.Now.Year.Equals(lastSaleNumber.Created.Year)) {
+                saleNumber = new SaleNumber {
+                    OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
+                    Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}"
+                };
 
-            try {
-                if (lastSaleNumber != null && DateTime.Now.Year.Equals(lastSaleNumber.Created.Year)) {
-                    saleNumber = new SaleNumber {
-                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}"
-                    };
-
-                    saleNumber.Value +=
-                        string.Format("{0:D8}",
-                            Convert.ToInt32(
-                                lastSaleNumber.Value.Substring(
-                                    lastSaleNumber.Organization.Code.Length + currentMonth.Length,
-                                    lastSaleNumber.Value.Length - (lastSaleNumber.Organization.Code.Length + currentMonth.Length)))
-                            + 1);
-                } else {
-                    saleNumber = new SaleNumber {
-                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
-                    };
-                }
-            } catch (FormatException) {
+                saleNumber.Value +=
+                    string.Format("{0:D8}",
+                        Convert.ToInt32(
+                            lastSaleNumber.Value.Substring(
+                                lastSaleNumber.Organization.Code.Length + currentMonth.Length,
+                                lastSaleNumber.Value.Length - (lastSaleNumber.Organization.Code.Length + currentMonth.Length)))
+                        + 1);
+            } else {
                 saleNumber = new SaleNumber {
                     OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
                     Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
                 };
             }
+        } catch (FormatException) {
+            saleNumber = new SaleNumber {
+                OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
+                Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
+            };
+        }
 
-            sale.SaleNumberId = saleNumberRepository.Add(saleNumber);
+        sale.SaleNumberId = saleNumberRepository.Add(saleNumber);
 
-            ISaleRepository saleRepository = _saleRepositoriesFactory.NewSaleRepository(connection);
+        ISaleRepository saleRepository = _saleRepositoriesFactory.NewSaleRepository(connection);
 
-            sale.Id = saleRepository.Add(sale);
+        sale.Id = saleRepository.Add(sale);
 
-            sale = saleRepository.GetById(sale.Id);
+        sale = saleRepository.GetById(sale.Id);
 
-            BackgroundSyncRunner.Run(async cancellationToken => {
-                string saleSyncCrmUrl;
+        BackgroundSyncRunner.Run(async cancellationToken => {
+            string saleSyncCrmUrl;
 
-                if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                    EcommerceCrmConfig data = ReadEcommerceCrmConfig();
+            if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                EcommerceCrmConfig data = ReadEcommerceCrmConfig();
 
 #if DEBUG
-                    saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
+                saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
 #else
                             saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
 #endif
-                } else {
-                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
-                }
+            } else {
+                saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
+            }
 
-                using HttpClient httpClient = _httpClientFactory.CreateClient();
-                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
-            }, "Order sale sync");
+            using HttpClient httpClient = _httpClientFactory.CreateClient();
+            await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+        }, "Order sale sync");
 
-            return Task.FromResult(sale);
+        return Task.FromResult(sale);
     }
 
     public Task<Order> DynamicallyCalculateTotalPrices(Order order) {
@@ -298,1007 +489,1002 @@ public sealed class OrderService : IOrderService {
         return Task.FromResult(order);
     }
 
-    public async Task<Sale> GenerateNewSaleWithInvoice(Sale sale, Guid clientNetId, bool isWorkplace) {
+    public async Task<Sale> GenerateNewSaleWithInvoice(
+        Sale sale,
+        Guid clientNetId,
+        bool isWorkplace,
+        Guid operationNetUid,
+        byte[] attachmentFingerprint = null) {
+        SalesCreationRequest creationRequest = SalesCreationRequestKey.Create(
+            operationNetUid,
+            SalesMutationOperationNames.OrderInvoiceSaleUpdate,
+            clientNetId,
+            clientNetId,
+            isWorkplace,
+            sale,
+            attachmentFingerprint);
+        SalesCreationReceipt existingReceipt = await GetCreatedSaleReplayAsync(creationRequest);
+        if (existingReceipt != null) return BuildCreatedSaleResponse(existingReceipt.Sale);
+
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-            IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
-            IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
-            IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
-            IClientShoppingCartRepository clientShoppingCartRepository = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection);
+        IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
+        IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
+        IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
+        IClientShoppingCartRepository clientShoppingCartRepository = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection);
 
-            ClientAgreement selectedClientAgreement = isWorkplace
-                ? _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetSelectedByWorkplaceNetId(clientNetId)
-                : _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetSelectedByClientNetId(clientNetId);
+        ClientAgreement selectedClientAgreement = isWorkplace
+            ? _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetSelectedByWorkplaceNetId(clientNetId)
+            : _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetSelectedByClientNetId(clientNetId);
 
-            bool withVat = selectedClientAgreement.Agreement.WithVATAccounting;
+        bool withVat = selectedClientAgreement.Agreement.WithVATAccounting;
 
-            Order order = new() {
-                OrderSource = OrderSource.Shop,
-                OrderStatus = OrderStatus.NewOrderCart,
-                ClientAgreement = selectedClientAgreement
-            };
+        Order order = new() {
+            OrderSource = OrderSource.Shop,
+            OrderStatus = OrderStatus.NewOrderCart,
+            ClientAgreement = selectedClientAgreement
+        };
 
-            order.ClientAgreementId = order.ClientAgreement.Id;
+        order.ClientAgreementId = order.ClientAgreement.Id;
 
-            order.Id = _saleRepositoriesFactory
-                .NewOrderRepository(connection)
-                .Add(order);
+        HashSet<long> productIdsToReindex = [];
+        HashSet<Guid> productNetUidsToSync = [];
+        string crmApiUrl = GetEcommerceSaleUpdateUrl();
+        Sale createdSale;
 
-            Workplace workplace = null;
+        try {
+            using (TransactionScope transaction = CreateSalesMutationTransaction(connection)) {
+                await ReserveSalesCreationAsync(connection, creationRequest);
+                await AcquireProductMutationLocksAsync(connection, sale.Order.OrderItems);
 
-            if (isWorkplace) workplace = _clientRepositoriesFactory.NewWorkplaceRepository(connection).GetByNetIdWithClient(clientNetId);
+                order.Id = _saleRepositoriesFactory
+                    .NewOrderRepository(connection)
+                    .Add(order);
 
-            Client client = isWorkplace
-                ? workplace.MainClient
-                : _clientRepositoriesFactory.NewClientRepository(connection).GetByNetIdWithRegionCode(clientNetId);
+                Workplace workplace = null;
+
+                if (isWorkplace) workplace = _clientRepositoriesFactory.NewWorkplaceRepository(connection).GetByNetIdWithClient(clientNetId);
+
+                Client client = isWorkplace
+                    ? workplace.MainClient
+                    : _clientRepositoriesFactory.NewClientRepository(connection).GetByNetIdWithRegionCode(clientNetId);
 
 
-            ClientShoppingCart currentCart =
-                _clientRepositoriesFactory
-                    .NewClientShoppingCartRepository(connection)
-                    .GetByClientAgreementNetId(
-                        selectedClientAgreement.NetUid,
-                        withVat,
-                        workplace?.Id
-                    );
-
-            if (currentCart == null) {
-                currentCart = new ClientShoppingCart {
-                    ValidUntil = DateTime.Now.Date.AddDays(client.ClearCartAfterDays),
-                    ClientAgreementId = order.ClientAgreement.Id,
-                    IsVatCart = order.ClientAgreement.Agreement.WithVATAccounting
-                };
-
-                currentCart.Id = clientShoppingCartRepository.Add(currentCart);
-
-                currentCart.OrderItems = sale.Order.OrderItems;
-            }
-
-            foreach (OrderItem orderItem in sale.Order.OrderItems)
-                if (currentCart.OrderItems.Any(i => i.ProductId.Equals(orderItem.Product.Id)))
-                    orderItem.Id = currentCart.OrderItems.First(i => i.ProductId.Equals(orderItem.Product.Id)).Id;
-
-            foreach (OrderItem orderItem in sale.Order.OrderItems.Where(i => !i.IsNew() && i.Qty > 0))
-                if (currentCart.OrderItems.Any(i => i.Id.Equals(orderItem.Id))) {
-                    OrderItem fromCartItem = currentCart.OrderItems.First(i => i.Id.Equals(orderItem.Id));
-
-                    orderItem.ClientShoppingCartId = null;
-                    orderItem.OrderId = order.Id;
-
-                    orderItemRepository.UpdateItemAssignment(orderItem);
-
-                    if (fromCartItem.Qty.Equals(orderItem.Qty)) {
-                        orderItemRepository.Update(orderItem);
-                    } else {
-                        if (fromCartItem.Qty > orderItem.Qty) {
-                            double toDecreaseAmount = fromCartItem.Qty - orderItem.Qty;
-
-                            fromCartItem.Qty -= orderItem.Qty;
-
-                            orderItemRepository.Update(fromCartItem);
-
-                            IEnumerable<ProductReservation> reservations =
-                                productReservationRepository
-                                    .GetAllByOrderItemIdWithAvailability(
-                                        fromCartItem.Id
-                                    );
-
-                            List<Tuple<ProductReservation, double>> usedReservations = new();
-
-                            foreach (ProductReservation reservation in reservations) {
-                                if (toDecreaseAmount.Equals(0d)) break;
-
-                                if (reservation.Qty >= toDecreaseAmount) {
-                                    usedReservations.Add(new Tuple<ProductReservation, double>(reservation, toDecreaseAmount));
-
-                                    reservation.Qty -= toDecreaseAmount;
-
-                                    toDecreaseAmount = 0d;
-
-                                    if (reservation.Qty > 0)
-                                        productReservationRepository.Update(reservation);
-                                    else
-                                        productReservationRepository.Delete(reservation.NetUid);
-                                } else {
-                                    usedReservations.Add(new Tuple<ProductReservation, double>(reservation, reservation.Qty));
-
-                                    toDecreaseAmount -= reservation.Qty;
-
-                                    productReservationRepository.Delete(reservation.NetUid);
-                                }
-                            }
-
-                            orderItem.Id = orderItemRepository.Add(orderItem);
-
-                            foreach ((ProductReservation productReservation, double usedQty) in usedReservations) {
-                                ProductReservation reservation =
-                                    productReservationRepository
-                                        .GetByOrderItemAndProductAvailabilityIds(
-                                            orderItem.Id,
-                                            productReservation.ProductAvailabilityId
-                                        );
-
-                                if (reservation != null) {
-                                    reservation.Qty += usedQty;
-
-                                    productReservationRepository.Update(reservation);
-                                } else {
-                                    productReservationRepository.Add(new ProductReservation {
-                                        ProductAvailabilityId = productReservation.ProductAvailabilityId,
-                                        OrderItemId = orderItem.Id,
-                                        Qty = usedQty
-                                    });
-                                }
-                            }
-                        } else {
-                            IEnumerable<ProductAvailability> productAvailabilities =
-                                productAvailabilityRepository
-                                    .GetByProductAndOrganizationIds(
-                                        orderItem.ProductId,
-                                        order.ClientAgreement.Agreement.Organization.Id,
-                                        withVat
-                                    );
-
-                            double toDecreaseAmount = orderItem.Qty - fromCartItem.Qty;
-
-                            fromCartItem.Qty = 0d;
-
-                            orderItemRepository.Update(fromCartItem);
-
-                            if (productAvailabilities.Sum(a => a.Amount) < toDecreaseAmount) {
-                                orderItem.Qty -= toDecreaseAmount - productAvailabilities.Sum(a => a.Amount);
-
-                                toDecreaseAmount = productAvailabilities.Sum(a => a.Amount);
-                            }
-
-                            orderItem.Id = orderItemRepository.Add(orderItem);
-
-                            IEnumerable<ProductReservation> reservations =
-                                productReservationRepository
-                                    .GetAllByOrderItemIdWithAvailability(
-                                        fromCartItem.Id
-                                    );
-
-                            foreach (ProductReservation reservation in reservations) {
-                                reservation.OrderItemId = orderItem.Id;
-
-                                productReservationRepository.Update(reservation);
-                            }
-
-                            foreach (ProductAvailability productAvailability in productAvailabilities.Where(a => a.Amount > 0)) {
-                                if (toDecreaseAmount.Equals(0d)) break;
-
-                                ProductReservation reservation =
-                                    productReservationRepository
-                                        .GetByOrderItemAndProductAvailabilityIds(
-                                            orderItem.Id,
-                                            productAvailability.Id
-                                        );
-
-                                if (productAvailability.Amount >= toDecreaseAmount) {
-                                    productAvailability.Amount -= toDecreaseAmount;
-
-                                    if (reservation != null) {
-                                        reservation.Qty += toDecreaseAmount;
-
-                                        productReservationRepository.Update(reservation);
-                                    } else {
-                                        productReservationRepository.Add(new ProductReservation {
-                                            ProductAvailabilityId = productAvailability.Id,
-                                            OrderItemId = orderItem.Id,
-                                            Qty = toDecreaseAmount
-                                        });
-                                    }
-
-                                    toDecreaseAmount = 0d;
-                                } else {
-                                    if (reservation != null) {
-                                        reservation.Qty += productAvailability.Amount;
-
-                                        productReservationRepository.Update(reservation);
-                                    } else {
-                                        productReservationRepository.Add(new ProductReservation {
-                                            ProductAvailabilityId = productAvailability.Id,
-                                            OrderItemId = orderItem.Id,
-                                            Qty = productAvailability.Amount,
-                                            RegionCode = client.RegionCode != null ? client.RegionCode.Value : string.Empty
-                                        });
-                                    }
-
-                                    toDecreaseAmount -= productAvailability.Amount;
-
-                                    productAvailability.Amount = 0d;
-                                }
-
-                                productAvailabilityRepository.Update(productAvailability);
-                            }
-                        }
-                    }
-                } else {
-                    orderItem.ClientShoppingCartId = null;
-                    orderItem.OrderId = order.Id;
-
-                    orderItemRepository.Update(orderItem);
-                }
-
-            foreach (OrderItem orderItem in sale.Order.OrderItems.Where(i => i.IsNew())) {
-                orderItem.ClientShoppingCartId = null;
-                orderItem.OrderId = order.Id;
-                orderItem.ProductId = orderItem.Product.Id;
-
-                IEnumerable<ProductAvailability> productAvailabilities =
-                    productAvailabilityRepository
-                        .GetByProductAndOrganizationIds(
-                            orderItem.ProductId,
-                            order.ClientAgreement.Agreement.Organization.Id,
-                            withVat
+                ClientShoppingCart currentCart =
+                    _clientRepositoriesFactory
+                        .NewClientShoppingCartRepository(connection)
+                        .GetByClientAgreementNetId(
+                            selectedClientAgreement.NetUid,
+                            withVat,
+                            workplace?.Id
                         );
 
-                if (!productAvailabilities.Any()) continue;
-
-                if (productAvailabilities.Sum(a => a.Amount) < orderItem.Qty) orderItem.Qty = productAvailabilities.Sum(a => a.Amount);
-
-                double toDecreaseQty = orderItem.Qty;
-
-                orderItem.Id = orderItemRepository.Add(orderItem);
-
-                foreach (ProductAvailability productAvailability in productAvailabilities.Where(a => a.Amount > 0)) {
-                    if (toDecreaseQty.Equals(0d)) break;
-
-                    if (productAvailability.Amount >= toDecreaseQty) {
-                        productReservationRepository
-                            .Add(new ProductReservation {
-                                OrderItemId = orderItem.Id,
-                                ProductAvailabilityId = productAvailability.Id,
-                                Qty = toDecreaseQty
-                            });
-
-                        productAvailability.Amount -= toDecreaseQty;
-
-                        toDecreaseQty = 0d;
-                    } else {
-                        productReservationRepository
-                            .Add(new ProductReservation {
-                                OrderItemId = orderItem.Id,
-                                ProductAvailabilityId = productAvailability.Id,
-                                Qty = productAvailability.Amount
-                            });
-
-                        toDecreaseQty -= productAvailability.Amount;
-
-                        productAvailability.Amount = 0d;
-                    }
-
-                    productAvailabilityRepository.Update(productAvailability);
-                }
-
-                _reindexSignal.Request(orderItem.ProductId);
-
-                BackgroundSyncRunner.Run(async cancellationToken => {
-                    string saleSyncCrmUrl;
-
-                    if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                        EcommerceCrmConfig data = ReadEcommerceCrmConfig();
-
-#if DEBUG
-                        saleSyncCrmUrl =
-                            $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-#else
-                                saleSyncCrmUrl =
- $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-#endif
-                    } else {
-                        saleSyncCrmUrl =
-                            $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                    }
-
-                    using HttpClient httpClient = _httpClientFactory.CreateClient();
-                    await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
-                }, "Order invoice product availability sync");
-            }
-
-            sale.ClientAgreementId = order.ClientAgreementId;
-            sale.OrderId = order.Id;
-            sale.IsVatSale = currentCart.IsVatCart;
-            sale.ChangedToInvoice = null;
-
-            sale.BaseLifeCycleStatusId =
-                _saleRepositoriesFactory
-                    .NewBaseLifeCycleStatusRepository(connection)
-                    .Add(
-                        new BaseLifeCycleStatus {
-                            SaleLifeCycleType = SaleLifeCycleType.New
-                        }
-                    );
-
-            sale.BaseSalePaymentStatusId =
-                _saleRepositoriesFactory
-                    .NewBaseSalePaymentStatusRepository(connection)
-                    .Add(
-                        new BaseSalePaymentStatus {
-                            SalePaymentStatusType = SalePaymentStatusType.NotPaid
-                        }
-                    );
-
-            ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
-
-            SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
-            SaleNumber saleNumber;
-
-            string currentMonth = MonthCodesResourceNames.GetCurrentMonthCode();
-
-            try {
-                if (lastSaleNumber != null && DateTime.Now.Year.Equals(lastSaleNumber.Created.Year)) {
-                    saleNumber = new SaleNumber {
-                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}"
+                if (currentCart == null) {
+                    currentCart = new ClientShoppingCart {
+                        ValidUntil = DateTime.Now.Date.AddDays(client.ClearCartAfterDays),
+                        ClientAgreementId = order.ClientAgreement.Id,
+                        IsVatCart = order.ClientAgreement.Agreement.WithVATAccounting
                     };
 
-                    saleNumber.Value +=
-                        string.Format("{0:D8}",
-                            Convert.ToInt32(
-                                lastSaleNumber.Value.Substring(
-                                    lastSaleNumber.Organization.Code.Length + currentMonth.Length,
-                                    lastSaleNumber.Value.Length - (lastSaleNumber.Organization.Code.Length + currentMonth.Length)))
-                            + 1);
-                } else {
-                    saleNumber = new SaleNumber {
-                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
-                    };
-                }
-            } catch (FormatException) {
-                saleNumber = new SaleNumber {
-                    OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                    Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
-                };
-            }
+                    currentCart.Id = clientShoppingCartRepository.Add(currentCart);
 
-            sale.SaleNumberId = saleNumberRepository.Add(saleNumber);
-
-            if (isWorkplace) sale.WorkplaceId = workplace.Id;
-
-            ISaleRepository saleRepository = _saleRepositoriesFactory.NewSaleRepository(connection);
-
-            if (sale.CustomersOwnTtn != null && !(sale.CustomersOwnTtn.IsNew() && sale.CustomersOwnTtn.IsEmpty()))
-                sale.CustomersOwnTtnId = saleRepository.AddCustomersOwnTtn(sale.CustomersOwnTtn);
-
-            sale.Id = saleRepository.Add(sale);
-
-            Sale createdSale = saleRepository.GetByIdWithCalculatedDynamicPrices(sale.Id);
-
-            BackgroundSyncRunner.Run(async cancellationToken => {
-                string saleSyncCrmUrl;
-
-                if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                    EcommerceCrmConfig data = ReadEcommerceCrmConfig();
-#if DEBUG
-                    saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
-#else
-                            saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
-#endif
-                } else {
-                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
+                    currentCart.OrderItems = sale.Order.OrderItems;
                 }
 
-                using HttpClient httpClient = _httpClientFactory.CreateClient();
-                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
-            }, "Order invoice sale sync");
+                foreach (OrderItem orderItem in sale.Order.OrderItems)
+                    if (currentCart.OrderItems.Any(i => i.ProductId.Equals(orderItem.Product.Id)))
+                        orderItem.Id = currentCart.OrderItems.First(i => i.ProductId.Equals(orderItem.Product.Id)).Id;
 
-            createdSale.DeliveryRecipient = sale.DeliveryRecipient;
-            createdSale.DeliveryRecipientAddress = sale.DeliveryRecipientAddress;
-            createdSale.Transporter = sale.Transporter;
+                foreach (OrderItem orderItem in sale.Order.OrderItems.Where(i => !i.IsNew() && i.Qty > 0))
+                    if (currentCart.OrderItems.Any(i => i.Id.Equals(orderItem.Id))) {
+                        OrderItem fromCartItem = currentCart.OrderItems.First(i => i.Id.Equals(orderItem.Id));
 
-            string crmApiUrl;
+                        orderItem.ClientShoppingCartId = null;
+                        orderItem.OrderId = order.Id;
 
-            if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                EcommerceCrmConfig data = ReadEcommerceCrmConfig();
-#if DEBUG
-                crmApiUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
-#else
-                        crmApiUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
-#endif
-            } else {
-                crmApiUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
-            }
+                        orderItemRepository.UpdateItemAssignment(orderItem);
 
-            string payload = JsonSerializer.Serialize(createdSale);
+                        if (fromCartItem.Qty.Equals(orderItem.Qty)) {
+                            orderItemRepository.Update(orderItem);
+                        } else {
+                            if (fromCartItem.Qty > orderItem.Qty) {
+                                double toDecreaseAmount = fromCartItem.Qty - orderItem.Qty;
 
-            QueueEcommerceSaleUpdate(crmApiUrl, payload, "Order invoice sale update");
+                                fromCartItem.Qty -= orderItem.Qty;
 
-            return BuildCreatedSaleResponse(createdSale);
-    }
+                                orderItemRepository.Update(fromCartItem);
 
-    public async Task<string> GenerateNewRetailSale(Sale sale, Guid retailClientNetId, bool fullPayment) {
-        using IDbConnection connection = _connectionFactory.NewSqlConnection();
-            IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
-            IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
-            IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
-            IClientRepository clientRepository = _clientRepositoriesFactory.NewClientRepository(connection);
-            IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-            IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
-            IMisplacedSaleRepository misplacedSaleRepository = _saleRepositoriesFactory.NewMisplacedSaleRepository(connection);
-            IRetailClientRepository retailClientRepository = _retailClientRepositoriesFactory.NewRetailClientRepository(connection);
+                                IEnumerable<ProductReservation> reservations =
+                                    productReservationRepository
+                                        .GetAllByOrderItemIdWithAvailability(
+                                            fromCartItem.Id
+                                        );
 
-            Client clientForRetail = clientRepository.GetRetailClient();
-            RetailClient retailClient = retailClientRepository.GetByNetId(retailClientNetId);
+                                List<Tuple<ProductReservation, double>> usedReservations = new();
 
-            Storage storage = storageRepository.GetWithHighestPriority();
+                                foreach (ProductReservation reservation in reservations) {
+                                    if (toDecreaseAmount.Equals(0d)) break;
 
-            List<OrderItem> misplacedOrderItems = new();
+                                    if (reservation.Qty >= toDecreaseAmount) {
+                                        usedReservations.Add(new Tuple<ProductReservation, double>(reservation, toDecreaseAmount));
 
-            ClientAgreement clientAgreement =
-                clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(clientForRetail.NetUid, storage.OrganizationId.Value, storage.ForVatProducts);
+                                        reservation.Qty -= toDecreaseAmount;
 
-            bool withVat = clientAgreement.Agreement.WithVATAccounting;
+                                        toDecreaseAmount = 0d;
 
-            Order order = new() {
-                OrderSource = OrderSource.Shop,
-                OrderStatus = OrderStatus.NewOrderCart,
-                ClientAgreement = clientAgreement,
-                ClientAgreementId = clientAgreement.Id
-            };
+                                        if (reservation.Qty > 0)
+                                            productReservationRepository.Update(reservation);
+                                        else
+                                            productReservationRepository.Delete(reservation.NetUid);
+                                    } else {
+                                        usedReservations.Add(new Tuple<ProductReservation, double>(reservation, reservation.Qty));
 
-            order.Id = _saleRepositoriesFactory
-                .NewOrderRepository(connection)
-                .Add(order);
+                                        toDecreaseAmount -= reservation.Qty;
 
-            foreach (OrderItem orderItem in sale.Order.OrderItems.Where(i => i.IsNew() && i.Qty > 0)) {
-                ProductAvailability productAvailability =
-                    productAvailabilityRepository.GetByProductAndStorageIds(orderItem.Product.Id, storage.Id);
+                                        productReservationRepository.Delete(reservation.NetUid);
+                                    }
+                                }
 
-                if (productAvailability == null || productAvailability.Amount.Equals(0)) {
-                    orderItem.IsMisplacedItem = true;
-                    misplacedOrderItems.Add(orderItem);
-                    continue;
-                }
+                                orderItem.Id = orderItemRepository.Add(orderItem);
 
-                if (productAvailability.Amount < orderItem.Qty) {
-                    misplacedOrderItems.Add(new OrderItem {
-                        IsValidForCurrentSale = true,
-                        Product = orderItem.Product,
-                        ProductId = orderItem.ProductId,
-                        IsMisplacedItem = true,
-                        Qty = orderItem.Qty - productAvailability.Amount,
-                        Vat = orderItem.Vat
-                    });
+                                foreach ((ProductReservation productReservation, double usedQty) in usedReservations) {
+                                    ProductReservation reservation =
+                                        productReservationRepository
+                                            .GetByOrderItemAndProductAvailabilityIds(
+                                                orderItem.Id,
+                                                productReservation.ProductAvailabilityId
+                                            );
 
-                    orderItem.Qty = productAvailability.Amount;
-                }
+                                    if (reservation != null) {
+                                        reservation.Qty += usedQty;
 
-                orderItem.ClientShoppingCartId = null;
-                orderItem.OrderId = order.Id;
-                orderItem.ProductId = orderItem.Product.Id;
+                                        productReservationRepository.Update(reservation);
+                                    } else {
+                                        productReservationRepository.Add(new ProductReservation {
+                                            ProductAvailabilityId = productReservation.ProductAvailabilityId,
+                                            OrderItemId = orderItem.Id,
+                                            Qty = usedQty
+                                        });
+                                    }
+                                }
+                            } else {
+                                IEnumerable<ProductAvailability> productAvailabilities =
+                                    productAvailabilityRepository
+                                        .GetByProductAndOrganizationIds(
+                                            orderItem.ProductId,
+                                            order.ClientAgreement.Agreement.Organization.Id,
+                                            withVat
+                                        );
 
-                double toDecreaseQty = orderItem.Qty;
+                                double toDecreaseAmount = orderItem.Qty - fromCartItem.Qty;
 
-                orderItem.Id = orderItemRepository.Add(orderItem);
+                                fromCartItem.Qty = 0d;
 
-                if (productAvailability.Amount > 0 && !toDecreaseQty.Equals(0d)) {
-                    if (productAvailability.Amount >= toDecreaseQty) {
-                        productReservationRepository
-                            .Add(new ProductReservation {
-                                OrderItemId = orderItem.Id,
-                                ProductAvailabilityId = productAvailability.Id,
-                                Qty = toDecreaseQty
-                            });
+                                orderItemRepository.Update(fromCartItem);
 
-                        productAvailability.Amount -= toDecreaseQty;
+                                if (productAvailabilities.Sum(a => a.Amount) < toDecreaseAmount) {
+                                    orderItem.Qty -= toDecreaseAmount - productAvailabilities.Sum(a => a.Amount);
+
+                                    toDecreaseAmount = productAvailabilities.Sum(a => a.Amount);
+                                }
+
+                                orderItem.Id = orderItemRepository.Add(orderItem);
+
+                                IEnumerable<ProductReservation> reservations =
+                                    productReservationRepository
+                                        .GetAllByOrderItemIdWithAvailability(
+                                            fromCartItem.Id
+                                        );
+
+                                foreach (ProductReservation reservation in reservations) {
+                                    reservation.OrderItemId = orderItem.Id;
+
+                                    productReservationRepository.Update(reservation);
+                                }
+
+                                foreach (ProductAvailability productAvailability in productAvailabilities.Where(a => a.Amount > 0)) {
+                                    if (toDecreaseAmount.Equals(0d)) break;
+
+                                    ProductReservation reservation =
+                                        productReservationRepository
+                                            .GetByOrderItemAndProductAvailabilityIds(
+                                                orderItem.Id,
+                                                productAvailability.Id
+                                            );
+
+                                    if (productAvailability.Amount >= toDecreaseAmount) {
+                                        productAvailability.Amount -= toDecreaseAmount;
+
+                                        if (reservation != null) {
+                                            reservation.Qty += toDecreaseAmount;
+
+                                            productReservationRepository.Update(reservation);
+                                        } else {
+                                            productReservationRepository.Add(new ProductReservation {
+                                                ProductAvailabilityId = productAvailability.Id,
+                                                OrderItemId = orderItem.Id,
+                                                Qty = toDecreaseAmount
+                                            });
+                                        }
+
+                                        toDecreaseAmount = 0d;
+                                    } else {
+                                        if (reservation != null) {
+                                            reservation.Qty += productAvailability.Amount;
+
+                                            productReservationRepository.Update(reservation);
+                                        } else {
+                                            productReservationRepository.Add(new ProductReservation {
+                                                ProductAvailabilityId = productAvailability.Id,
+                                                OrderItemId = orderItem.Id,
+                                                Qty = productAvailability.Amount,
+                                                RegionCode = client.RegionCode != null ? client.RegionCode.Value : string.Empty
+                                            });
+                                        }
+
+                                        toDecreaseAmount -= productAvailability.Amount;
+
+                                        productAvailability.Amount = 0d;
+                                    }
+
+                                    productAvailabilityRepository.Update(productAvailability);
+                                }
+                            }
+                        }
                     } else {
-                        productReservationRepository
-                            .Add(new ProductReservation {
-                                OrderItemId = orderItem.Id,
-                                ProductAvailabilityId = productAvailability.Id,
-                                Qty = productAvailability.Amount
-                            });
+                        orderItem.ClientShoppingCartId = null;
+                        orderItem.OrderId = order.Id;
 
-                        productAvailability.Amount = 0d;
+                        orderItemRepository.Update(orderItem);
                     }
 
-                    productAvailabilityRepository.Update(productAvailability);
-                }
+                foreach (OrderItem orderItem in sale.Order.OrderItems.Where(i => i.IsNew())) {
+                    orderItem.ClientShoppingCartId = null;
+                    orderItem.OrderId = order.Id;
+                    orderItem.ProductId = orderItem.Product.Id;
 
-                _reindexSignal.Request(orderItem.ProductId);
-
-                BackgroundSyncRunner.Run(async cancellationToken => {
-                    string saleSyncCrmUrl;
-
-                    if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                        EcommerceCrmConfig data = ReadEcommerceCrmConfig();
-
-#if DEBUG
-                        saleSyncCrmUrl =
-                            $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-#else
-                                saleSyncCrmUrl =
- $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-#endif
-                    } else {
-                        saleSyncCrmUrl =
-                            $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                    }
-
-                    using HttpClient httpClient = _httpClientFactory.CreateClient();
-                    await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
-                }, "Retail sale product availability sync");
-            }
-
-            sale.ClientAgreementId = order.ClientAgreementId;
-            sale.OrderId = order.Id;
-            sale.IsVatSale = withVat;
-            sale.IsFullPayment = fullPayment;
-            sale.ChangedToInvoice = null;
-            sale.RetailClientId = retailClient.Id;
-
-            sale.BaseLifeCycleStatusId =
-                _saleRepositoriesFactory
-                    .NewBaseLifeCycleStatusRepository(connection)
-                    .Add(
-                        new BaseLifeCycleStatus {
-                            SaleLifeCycleType = SaleLifeCycleType.New
-                        }
-                    );
-
-            sale.BaseSalePaymentStatusId =
-                _saleRepositoriesFactory
-                    .NewBaseSalePaymentStatusRepository(connection)
-                    .Add(
-                        new BaseSalePaymentStatus {
-                            SalePaymentStatusType = SalePaymentStatusType.NotPaid
-                        }
-                    );
-
-            ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
-
-            SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
-            SaleNumber saleNumber;
-
-            string currentMonth = MonthCodesResourceNames.GetCurrentMonthCode();
-
-            try {
-                if (lastSaleNumber != null && DateTime.Now.Year.Equals(lastSaleNumber.Created.Year)) {
-                    saleNumber = new SaleNumber {
-                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}"
-                    };
-
-                    saleNumber.Value +=
-                        string.Format("{0:D8}",
-                            Convert.ToInt32(
-                                lastSaleNumber.Value.Substring(
-                                    lastSaleNumber.Organization.Code.Length + currentMonth.Length,
-                                    lastSaleNumber.Value.Length - (lastSaleNumber.Organization.Code.Length + currentMonth.Length)))
-                            + 1);
-                } else {
-                    saleNumber = new SaleNumber {
-                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
-                    };
-                }
-            } catch (FormatException) {
-                saleNumber = new SaleNumber {
-                    OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                    Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
-                };
-            }
-
-            sale.SaleNumberId = saleNumberRepository.Add(saleNumber);
-
-            ISaleRepository saleRepository = _saleRepositoriesFactory.NewSaleRepository(connection);
-
-            sale.Id = saleRepository.Add(sale);
-
-            Sale createdSale = saleRepository.GetByIdWithCalculatedDynamicPrices(sale.Id);
-
-            if (misplacedOrderItems.Any()) {
-                long misplacedSaleId = misplacedSaleRepository.Add(new MisplacedSale { RetailClientId = retailClient.Id });
-
-                misplacedOrderItems.ForEach(o => {
-                    o.MisplacedSaleId = misplacedSaleId;
-                    o.ProductId = o.Product.Id;
-                });
-
-                orderItemRepository.Add(misplacedOrderItems);
-
-                MisplacedSale misplacedSale = misplacedSaleRepository.GetById(misplacedSaleId);
-
-                misplacedSale.SaleId = sale.Id;
-                createdSale.MisplacedSaleId = misplacedSaleId;
-
-                misplacedSaleRepository.Update(misplacedSale);
-                saleRepository.Update(createdSale);
-            }
-
-            BackgroundSyncRunner.Run(async cancellationToken => {
-                string saleSyncCrmUrl;
-
-                if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                    EcommerceCrmConfig data = ReadEcommerceCrmConfig();
-
-#if DEBUG
-                    saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
-#else
-                            saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
-#endif
-                } else {
-                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
-                }
-
-                using HttpClient httpClient = _httpClientFactory.CreateClient();
-                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
-            }, "Retail sale sync");
-
-            createdSale.DeliveryRecipient = sale.DeliveryRecipient;
-            createdSale.DeliveryRecipientAddress = sale.DeliveryRecipientAddress;
-            createdSale.Transporter = sale.Transporter;
-
-            string crmApiUrl;
-
-            if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                EcommerceCrmConfig data = ReadEcommerceCrmConfig();
-
-#if DEBUG
-                //crmApiUrl = $"http://localhost:35981/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
-                crmApiUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
-#else
-                        crmApiUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
-#endif
-            } else {
-                crmApiUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
-            }
-
-            string payload = JsonSerializer.Serialize(createdSale);
-
-
-            QueueEcommerceSaleUpdate(crmApiUrl, payload, "Retail sale update");
-
-            // sale = saleRepository.GetByNetId(createdSale.NetUid);
-
-            long statusId = _retailClientRepositoriesFactory.NewRetailPaymentStatusRepository(connection).Add(new RetailPaymentStatus {
-                RetailPaymentStatusType = RetailPaymentStatusType.New
-            });
-
-            _retailClientRepositoriesFactory.NewRetailClientPaymentImageRepository(connection)
-                .Add(new RetailClientPaymentImage {
-                    RetailClientId = retailClient.Id,
-                    SaleId = sale.Id,
-                    RetailPaymentStatusId = statusId
-                });
-
-            return await _paymentLinkService.GenerateSalePaymentInfoMessage(retailClientNetId, createdSale.NetUid);
-    }
-
-    // Old 
-    public async Task<string> GenerateNewQuickSaleWithInvoice(Sale sale, Guid retailClientNetId, bool fullPayment) {
-        using IDbConnection connection = _connectionFactory.NewSqlConnection();
-            IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
-            IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
-            IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
-            IClientRepository clientRepository = _clientRepositoriesFactory.NewClientRepository(connection);
-            IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-            IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
-            IMisplacedSaleRepository misplacedSaleRepository = _saleRepositoriesFactory.NewMisplacedSaleRepository(connection);
-            IRetailClientRepository retailClientRepository = _retailClientRepositoriesFactory.NewRetailClientRepository(connection);
-
-            Client clientForRetail = clientRepository.GetRetailClient();
-            RetailClient retailClient = retailClientRepository.GetByNetId(retailClientNetId);
-
-            Storage storage = storageRepository.GetWithHighestPriority();
-
-            ClientAgreement clientAgreement =
-                clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(clientForRetail.NetUid, storage.OrganizationId.Value, retailClient.EcommerceRegion.IsLocalPayment);
-
-            bool withVat = clientAgreement.Agreement.WithVATAccounting;
-
-            Order order = new() {
-                OrderSource = OrderSource.Shop,
-                OrderStatus = OrderStatus.NewOrderCart,
-                ClientAgreement = clientAgreement
-            };
-
-            order.ClientAgreementId = order.ClientAgreement.Id;
-
-            order.Id = _saleRepositoriesFactory
-                .NewOrderRepository(connection)
-                .Add(order);
-
-            List<Storage> allStorages = storageRepository.GetAllNonDefectiveByCurrentLocale().ToList();
-
-            List<Storage> storages = new(allStorages.Where(s => s.AvailableForReSale));
-            storages.AddRange(allStorages.Where(e => e.OrganizationId.Equals(clientAgreement.Agreement.OrganizationId)));
-
-            List<OrderItem> misplacedOrderItems = new();
-
-            foreach (OrderItem orderItem in sale.Order.OrderItems) {
-                if (!orderItem.IsMisplacedItem) continue;
-
-                misplacedOrderItems.Add(orderItem);
-            }
-
-            sale.Order.OrderItems = sale.Order.OrderItems.Where(o => !o.IsMisplacedItem).ToImmutableHashSet();
-
-            foreach (OrderItem orderItem in sale.Order.OrderItems.Where(i => i.IsNew() && i.Qty > 0)) {
-                orderItem.ClientShoppingCartId = null;
-                orderItem.OrderId = order.Id;
-                orderItem.ProductId = orderItem.Product.Id;
-
-                IEnumerable<ProductAvailability> productAvailabilities;
-
-                if (withVat)
-                    productAvailabilities =
+                    IEnumerable<ProductAvailability> productAvailabilities =
                         productAvailabilityRepository
                             .GetByProductAndOrganizationIds(
                                 orderItem.ProductId,
                                 order.ClientAgreement.Agreement.Organization.Id,
-                                true
+                                withVat
                             );
-                else
-                    productAvailabilities = productAvailabilityRepository
-                        .GetAllByProductAndStorageIds(
-                            orderItem.ProductId,
-                            storages.Select(e => e.Id).ToList());
 
-                if (!productAvailabilities.Any()) continue;
+                    if (!productAvailabilities.Any()) continue;
 
-                if (productAvailabilities.Sum(a => a.Amount) < orderItem.Qty) orderItem.Qty = productAvailabilities.Sum(a => a.Amount);
+                    if (productAvailabilities.Sum(a => a.Amount) < orderItem.Qty) orderItem.Qty = productAvailabilities.Sum(a => a.Amount);
 
-                double toDecreaseQty = orderItem.Qty;
+                    double toDecreaseQty = orderItem.Qty;
 
-                orderItem.Id = orderItemRepository.Add(orderItem);
+                    orderItem.Id = orderItemRepository.Add(orderItem);
 
-                foreach (ProductAvailability productAvailability in productAvailabilities.Where(a => a.Amount > 0)) {
-                    if (toDecreaseQty.Equals(0d)) break;
+                    foreach (ProductAvailability productAvailability in productAvailabilities.Where(a => a.Amount > 0)) {
+                        if (toDecreaseQty.Equals(0d)) break;
 
-                    if (productAvailability.Amount >= toDecreaseQty) {
-                        productReservationRepository
-                            .Add(new ProductReservation {
-                                OrderItemId = orderItem.Id,
-                                ProductAvailabilityId = productAvailability.Id,
-                                Qty = toDecreaseQty
-                            });
+                        if (productAvailability.Amount >= toDecreaseQty) {
+                            productReservationRepository
+                                .Add(new ProductReservation {
+                                    OrderItemId = orderItem.Id,
+                                    ProductAvailabilityId = productAvailability.Id,
+                                    Qty = toDecreaseQty
+                                });
 
-                        productAvailability.Amount -= toDecreaseQty;
+                            productAvailability.Amount -= toDecreaseQty;
 
-                        toDecreaseQty = 0d;
-                    } else {
-                        productReservationRepository
-                            .Add(new ProductReservation {
-                                OrderItemId = orderItem.Id,
-                                ProductAvailabilityId = productAvailability.Id,
-                                Qty = productAvailability.Amount
-                            });
+                            toDecreaseQty = 0d;
+                        } else {
+                            productReservationRepository
+                                .Add(new ProductReservation {
+                                    OrderItemId = orderItem.Id,
+                                    ProductAvailabilityId = productAvailability.Id,
+                                    Qty = productAvailability.Amount
+                                });
 
-                        toDecreaseQty -= productAvailability.Amount;
+                            toDecreaseQty -= productAvailability.Amount;
 
-                        productAvailability.Amount = 0d;
+                            productAvailability.Amount = 0d;
+                        }
+
+                        productAvailabilityRepository.Update(productAvailability);
                     }
 
-                    productAvailabilityRepository.Update(productAvailability);
+                    productIdsToReindex.Add(orderItem.ProductId);
+                    productNetUidsToSync.Add(orderItem.Product.NetUid);
                 }
 
-                _reindexSignal.Request(orderItem.ProductId);
+                sale.ClientAgreementId = order.ClientAgreementId;
+                sale.OrderId = order.Id;
+                sale.IsVatSale = currentCart.IsVatCart;
+                sale.ChangedToInvoice = null;
 
-                BackgroundSyncRunner.Run(async cancellationToken => {
-                    string saleSyncCrmUrl;
+                sale.BaseLifeCycleStatusId =
+                    _saleRepositoriesFactory
+                        .NewBaseLifeCycleStatusRepository(connection)
+                        .Add(
+                            new BaseLifeCycleStatus {
+                                SaleLifeCycleType = SaleLifeCycleType.New
+                            }
+                        );
 
-                    if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                        EcommerceCrmConfig data = ReadEcommerceCrmConfig();
+                sale.BaseSalePaymentStatusId =
+                    _saleRepositoriesFactory
+                        .NewBaseSalePaymentStatusRepository(connection)
+                        .Add(
+                            new BaseSalePaymentStatus {
+                                SalePaymentStatusType = SalePaymentStatusType.NotPaid
+                            }
+                        );
 
-#if DEBUG
-                        saleSyncCrmUrl =
-                            $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-#else
-                                saleSyncCrmUrl =
- $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-#endif
+                ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
+
+                SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
+                SaleNumber saleNumber;
+
+                string currentMonth = MonthCodesResourceNames.GetCurrentMonthCode();
+
+                try {
+                    if (lastSaleNumber != null && DateTime.Now.Year.Equals(lastSaleNumber.Created.Year)) {
+                        saleNumber = new SaleNumber {
+                            OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
+                            Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}"
+                        };
+
+                        saleNumber.Value +=
+                            string.Format("{0:D8}",
+                                Convert.ToInt32(
+                                    lastSaleNumber.Value.Substring(
+                                        lastSaleNumber.Organization.Code.Length + currentMonth.Length,
+                                        lastSaleNumber.Value.Length - (lastSaleNumber.Organization.Code.Length + currentMonth.Length)))
+                                + 1);
                     } else {
-                        saleSyncCrmUrl =
-                            $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+                        saleNumber = new SaleNumber {
+                            OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
+                            Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
+                        };
                     }
-
-                    using HttpClient httpClient = _httpClientFactory.CreateClient();
-                    await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
-                }, "Quick sale product availability sync");
-            }
-
-            sale.ClientAgreementId = order.ClientAgreementId;
-            sale.OrderId = order.Id;
-            sale.IsVatSale = withVat;
-            sale.IsFullPayment = fullPayment;
-            sale.ChangedToInvoice = null;
-            sale.RetailClientId = retailClient.Id;
-
-            sale.BaseLifeCycleStatusId =
-                _saleRepositoriesFactory
-                    .NewBaseLifeCycleStatusRepository(connection)
-                    .Add(
-                        new BaseLifeCycleStatus {
-                            SaleLifeCycleType = SaleLifeCycleType.New
-                        }
-                    );
-
-            sale.BaseSalePaymentStatusId =
-                _saleRepositoriesFactory
-                    .NewBaseSalePaymentStatusRepository(connection)
-                    .Add(
-                        new BaseSalePaymentStatus {
-                            SalePaymentStatusType = SalePaymentStatusType.NotPaid
-                        }
-                    );
-
-            ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
-
-            SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
-            SaleNumber saleNumber;
-
-            string currentMonth = MonthCodesResourceNames.GetCurrentMonthCode();
-
-            try {
-                if (lastSaleNumber != null && DateTime.Now.Year.Equals(lastSaleNumber.Created.Year)) {
-                    saleNumber = new SaleNumber {
-                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}"
-                    };
-
-                    saleNumber.Value +=
-                        string.Format("{0:D8}",
-                            Convert.ToInt32(
-                                lastSaleNumber.Value.Substring(
-                                    lastSaleNumber.Organization.Code.Length + currentMonth.Length,
-                                    lastSaleNumber.Value.Length - (lastSaleNumber.Organization.Code.Length + currentMonth.Length)))
-                            + 1);
-                } else {
+                } catch (FormatException) {
                     saleNumber = new SaleNumber {
                         OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
                         Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
                     };
                 }
-            } catch (FormatException) {
-                saleNumber = new SaleNumber {
-                    OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                    Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
-                };
+
+                sale.SaleNumberId = saleNumberRepository.Add(saleNumber);
+
+                if (isWorkplace) sale.WorkplaceId = workplace.Id;
+
+                ISaleRepository saleRepository = _saleRepositoriesFactory.NewSaleRepository(connection);
+
+                if (sale.CustomersOwnTtn != null && !(sale.CustomersOwnTtn.IsNew() && sale.CustomersOwnTtn.IsEmpty()))
+                    sale.CustomersOwnTtnId = saleRepository.AddCustomersOwnTtn(sale.CustomersOwnTtn);
+
+                sale.Id = saleRepository.Add(sale);
+
+                createdSale = saleRepository.GetByIdWithCalculatedDynamicPrices(sale.Id);
+
+                createdSale.DeliveryRecipient = sale.DeliveryRecipient;
+                createdSale.DeliveryRecipientAddress = sale.DeliveryRecipientAddress;
+                createdSale.Transporter = sale.Transporter;
+                createdSale.CustomersOwnTtn = sale.CustomersOwnTtn;
+
+                string payload = JsonSerializer.Serialize(createdSale);
+
+                await PersistEcommerceSaleUpdateAsync(
+                    connection,
+                    crmApiUrl,
+                    payload,
+                    SalesMutationOperationNames.OrderInvoiceSaleUpdate,
+                    operationNetUid);
+                await CompleteSalesCreationAsync(
+                    connection,
+                    creationRequest,
+                    SerializeSalesCreationReceipt(createdSale));
+                transaction.Complete();
             }
+        } catch (SalesCreationReplayRequiredException) {
+            SalesCreationReceipt concurrentReplay = await GetCreatedSaleReplayAsync(creationRequest) ??
+                throw new InvalidOperationException(
+                    "The durable sales creation replay receipt is missing.");
+            return BuildCreatedSaleResponse(concurrentReplay.Sale);
+        } catch {
+            SalesCreationReceipt concurrentReplay = await GetCreatedSaleReplayAsync(creationRequest);
+            if (concurrentReplay != null) return BuildCreatedSaleResponse(concurrentReplay.Sale);
+            throw;
+        }
 
-            sale.SaleNumberId = saleNumberRepository.Add(saleNumber);
+        foreach (long productId in productIdsToReindex) _reindexSignal.Request(productId);
+        foreach (Guid productNetUid in productNetUidsToSync)
+            QueueProductAvailabilitySync(productNetUid, "Order invoice product availability sync");
+        QueueSaleSync(createdSale.NetUid, "Order invoice sale sync");
 
-            ISaleRepository saleRepository = _saleRepositoriesFactory.NewSaleRepository(connection);
+        return BuildCreatedSaleResponse(createdSale);
+    }
 
-            sale.Id = saleRepository.Add(sale);
+    public async Task<string> GenerateNewRetailSale(
+        Sale sale,
+        Guid retailClientNetId,
+        bool fullPayment,
+        Guid operationNetUid) {
+        SalesCreationRequest creationRequest = SalesCreationRequestKey.Create(
+            operationNetUid,
+            SalesMutationOperationNames.RetailSaleUpdate,
+            retailClientNetId,
+            retailClientNetId,
+            fullPayment,
+            sale);
+        SalesCreationReceipt existingReceipt = await GetCreatedSaleReplayAsync(creationRequest);
+        if (existingReceipt != null)
+            return await ResolveReplayPaymentLinkAsync(existingReceipt, retailClientNetId);
 
-            Sale createdSale = saleRepository.GetByIdWithCalculatedDynamicPrices(sale.Id);
+        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+        IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
+        IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
+        IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
+        IClientRepository clientRepository = _clientRepositoriesFactory.NewClientRepository(connection);
+        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
+        IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
+        IMisplacedSaleRepository misplacedSaleRepository = _saleRepositoriesFactory.NewMisplacedSaleRepository(connection);
+        IRetailClientRepository retailClientRepository = _retailClientRepositoriesFactory.NewRetailClientRepository(connection);
 
-            if (misplacedOrderItems.Any()) {
-                long misplacedSaleId = misplacedSaleRepository.Add(new MisplacedSale { RetailClientId = retailClient.Id });
+        Client clientForRetail = clientRepository.GetRetailClient();
+        RetailClient retailClient = retailClientRepository.GetByNetId(retailClientNetId);
 
-                misplacedOrderItems.ForEach(o => {
-                    o.MisplacedSaleId = misplacedSaleId;
-                    o.ProductId = o.Product.Id;
-                });
+        Storage storage = storageRepository.GetWithHighestPriority();
 
-                orderItemRepository.Add(misplacedOrderItems);
+        List<OrderItem> misplacedOrderItems = new();
 
-                MisplacedSale misplacedSale = misplacedSaleRepository.GetById(misplacedSaleId);
+        ClientAgreement clientAgreement =
+            clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(clientForRetail.NetUid, storage.OrganizationId.Value, storage.ForVatProducts);
 
-                misplacedSale.SaleId = sale.Id;
-                createdSale.MisplacedSaleId = misplacedSaleId;
+        bool withVat = clientAgreement.Agreement.WithVATAccounting;
 
-                misplacedSaleRepository.Update(misplacedSale);
-                saleRepository.Update(createdSale);
-            }
+        Order order = new() {
+            OrderSource = OrderSource.Shop,
+            OrderStatus = OrderStatus.NewOrderCart,
+            ClientAgreement = clientAgreement,
+            ClientAgreementId = clientAgreement.Id
+        };
 
-            BackgroundSyncRunner.Run(async cancellationToken => {
-                string saleSyncCrmUrl;
+        HashSet<long> productIdsToReindex = [];
+        HashSet<Guid> productNetUidsToSync = [];
+        string crmApiUrl = GetEcommerceSaleUpdateUrl();
+        Sale createdSale;
+        string paymentLink;
 
-                if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                    EcommerceCrmConfig data = ReadEcommerceCrmConfig();
+        try {
+            using (TransactionScope transaction = CreateSalesMutationTransaction(connection)) {
+                await ReserveSalesCreationAsync(connection, creationRequest);
+                await AcquireProductMutationLocksAsync(connection, sale.Order.OrderItems);
 
-#if DEBUG
-                    saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
-#else
-                            saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
-#endif
-                } else {
-                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
+                order.Id = _saleRepositoriesFactory
+                    .NewOrderRepository(connection)
+                    .Add(order);
+
+                foreach (OrderItem orderItem in sale.Order.OrderItems.Where(i => i.IsNew() && i.Qty > 0)) {
+                    ProductAvailability productAvailability =
+                        productAvailabilityRepository.GetByProductAndStorageIds(orderItem.Product.Id, storage.Id);
+
+                    if (productAvailability == null || productAvailability.Amount.Equals(0)) {
+                        orderItem.IsMisplacedItem = true;
+                        misplacedOrderItems.Add(orderItem);
+                        continue;
+                    }
+
+                    if (productAvailability.Amount < orderItem.Qty) {
+                        misplacedOrderItems.Add(new OrderItem {
+                            IsValidForCurrentSale = true,
+                            Product = orderItem.Product,
+                            ProductId = orderItem.ProductId,
+                            IsMisplacedItem = true,
+                            Qty = orderItem.Qty - productAvailability.Amount,
+                            Vat = orderItem.Vat
+                        });
+
+                        orderItem.Qty = productAvailability.Amount;
+                    }
+
+                    orderItem.ClientShoppingCartId = null;
+                    orderItem.OrderId = order.Id;
+                    orderItem.ProductId = orderItem.Product.Id;
+
+                    double toDecreaseQty = orderItem.Qty;
+
+                    orderItem.Id = orderItemRepository.Add(orderItem);
+
+                    if (productAvailability.Amount > 0 && !toDecreaseQty.Equals(0d)) {
+                        if (productAvailability.Amount >= toDecreaseQty) {
+                            productReservationRepository
+                                .Add(new ProductReservation {
+                                    OrderItemId = orderItem.Id,
+                                    ProductAvailabilityId = productAvailability.Id,
+                                    Qty = toDecreaseQty
+                                });
+
+                            productAvailability.Amount -= toDecreaseQty;
+                        } else {
+                            productReservationRepository
+                                .Add(new ProductReservation {
+                                    OrderItemId = orderItem.Id,
+                                    ProductAvailabilityId = productAvailability.Id,
+                                    Qty = productAvailability.Amount
+                                });
+
+                            productAvailability.Amount = 0d;
+                        }
+
+                        productAvailabilityRepository.Update(productAvailability);
+                    }
+
+                    productIdsToReindex.Add(orderItem.ProductId);
+                    productNetUidsToSync.Add(orderItem.Product.NetUid);
                 }
 
-                using HttpClient httpClient = _httpClientFactory.CreateClient();
-                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
-            }, "Quick sale sync");
+                sale.ClientAgreementId = order.ClientAgreementId;
+                sale.OrderId = order.Id;
+                sale.IsVatSale = withVat;
+                sale.IsFullPayment = fullPayment;
+                sale.ChangedToInvoice = null;
+                sale.RetailClientId = retailClient.Id;
 
-            createdSale.DeliveryRecipient = sale.DeliveryRecipient;
-            createdSale.DeliveryRecipientAddress = sale.DeliveryRecipientAddress;
-            createdSale.Transporter = sale.Transporter;
+                sale.BaseLifeCycleStatusId =
+                    _saleRepositoriesFactory
+                        .NewBaseLifeCycleStatusRepository(connection)
+                        .Add(
+                            new BaseLifeCycleStatus {
+                                SaleLifeCycleType = SaleLifeCycleType.New
+                            }
+                        );
 
-            string crmApiUrl;
+                sale.BaseSalePaymentStatusId =
+                    _saleRepositoriesFactory
+                        .NewBaseSalePaymentStatusRepository(connection)
+                        .Add(
+                            new BaseSalePaymentStatus {
+                                SalePaymentStatusType = SalePaymentStatusType.NotPaid
+                            }
+                        );
 
-            if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                EcommerceCrmConfig data = ReadEcommerceCrmConfig();
+                ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
 
-#if DEBUG
-                //crmApiUrl = $"http://localhost:35981/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
-                crmApiUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
-#else
-                        crmApiUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
-#endif
-            } else {
-                crmApiUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
-            }
+                SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
+                SaleNumber saleNumber;
 
-            string payload = JsonSerializer.Serialize(createdSale);
+                string currentMonth = MonthCodesResourceNames.GetCurrentMonthCode();
 
+                try {
+                    if (lastSaleNumber != null && DateTime.Now.Year.Equals(lastSaleNumber.Created.Year)) {
+                        saleNumber = new SaleNumber {
+                            OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
+                            Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}"
+                        };
 
-            QueueEcommerceSaleUpdate(crmApiUrl, payload, "Quick sale update");
+                        saleNumber.Value +=
+                            string.Format("{0:D8}",
+                                Convert.ToInt32(
+                                    lastSaleNumber.Value.Substring(
+                                        lastSaleNumber.Organization.Code.Length + currentMonth.Length,
+                                        lastSaleNumber.Value.Length - (lastSaleNumber.Organization.Code.Length + currentMonth.Length)))
+                                + 1);
+                    } else {
+                        saleNumber = new SaleNumber {
+                            OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
+                            Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
+                        };
+                    }
+                } catch (FormatException) {
+                    saleNumber = new SaleNumber {
+                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
+                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
+                    };
+                }
 
-            // sale = saleRepository.GetByNetId(createdSale.NetUid);
+                sale.SaleNumberId = saleNumberRepository.Add(saleNumber);
 
-            long statusId = _retailClientRepositoriesFactory.NewRetailPaymentStatusRepository(connection).Add(new RetailPaymentStatus {
-                RetailPaymentStatusType = RetailPaymentStatusType.New
-            });
+                ISaleRepository saleRepository = _saleRepositoriesFactory.NewSaleRepository(connection);
 
-            _retailClientRepositoriesFactory.NewRetailClientPaymentImageRepository(connection)
-                .Add(new RetailClientPaymentImage {
-                    RetailClientId = retailClient.Id,
-                    SaleId = sale.Id,
-                    RetailPaymentStatusId = statusId
+                sale.Id = saleRepository.Add(sale);
+
+                createdSale = saleRepository.GetByIdWithCalculatedDynamicPrices(sale.Id);
+
+                if (misplacedOrderItems.Any()) {
+                    long misplacedSaleId = misplacedSaleRepository.Add(new MisplacedSale { RetailClientId = retailClient.Id });
+
+                    misplacedOrderItems.ForEach(o => {
+                        o.MisplacedSaleId = misplacedSaleId;
+                        o.ProductId = o.Product.Id;
+                    });
+
+                    orderItemRepository.Add(misplacedOrderItems);
+
+                    MisplacedSale misplacedSale = misplacedSaleRepository.GetById(misplacedSaleId);
+
+                    misplacedSale.SaleId = sale.Id;
+                    createdSale.MisplacedSaleId = misplacedSaleId;
+
+                    misplacedSaleRepository.Update(misplacedSale);
+                    saleRepository.Update(createdSale);
+                }
+
+                createdSale.DeliveryRecipient = sale.DeliveryRecipient;
+                createdSale.DeliveryRecipientAddress = sale.DeliveryRecipientAddress;
+                createdSale.Transporter = sale.Transporter;
+
+                string payload = JsonSerializer.Serialize(createdSale);
+
+                await PersistEcommerceSaleUpdateAsync(
+                    connection,
+                    crmApiUrl,
+                    payload,
+                    SalesMutationOperationNames.RetailSaleUpdate,
+                    operationNetUid);
+
+                long statusId = _retailClientRepositoriesFactory.NewRetailPaymentStatusRepository(connection).Add(new RetailPaymentStatus {
+                    RetailPaymentStatusType = RetailPaymentStatusType.New
                 });
 
-            return await _paymentLinkService.GenerateSalePaymentInfoMessage(retailClientNetId, createdSale.NetUid);
+                _retailClientRepositoriesFactory.NewRetailClientPaymentImageRepository(connection)
+                    .Add(new RetailClientPaymentImage {
+                        RetailClientId = retailClient.Id,
+                        SaleId = sale.Id,
+                        RetailPaymentStatusId = statusId
+                    });
+
+                paymentLink = await _paymentLinkService.GenerateSalePaymentInfoMessage(retailClientNetId, createdSale.NetUid);
+                await CompleteSalesCreationAsync(
+                    connection,
+                    creationRequest,
+                    SerializeSalesCreationReceipt(createdSale, paymentLink));
+                transaction.Complete();
+            }
+        } catch (SalesCreationReplayRequiredException) {
+            SalesCreationReceipt concurrentReplay = await GetCreatedSaleReplayAsync(creationRequest) ??
+                throw new InvalidOperationException(
+                    "The durable sales creation replay receipt is missing.");
+            return await ResolveReplayPaymentLinkAsync(concurrentReplay, retailClientNetId);
+        } catch {
+            SalesCreationReceipt concurrentReplay = await GetCreatedSaleReplayAsync(creationRequest);
+            if (concurrentReplay != null)
+                return await ResolveReplayPaymentLinkAsync(concurrentReplay, retailClientNetId);
+            throw;
+        }
+
+        foreach (long productId in productIdsToReindex) _reindexSignal.Request(productId);
+        foreach (Guid productNetUid in productNetUidsToSync)
+            QueueProductAvailabilitySync(productNetUid, "Retail sale product availability sync");
+        QueueSaleSync(createdSale.NetUid, "Retail sale sync");
+
+        return paymentLink;
+    }
+
+    // Old 
+    public async Task<string> GenerateNewQuickSaleWithInvoice(
+        Sale sale,
+        Guid retailClientNetId,
+        bool fullPayment,
+        Guid operationNetUid) {
+        SalesCreationRequest creationRequest = SalesCreationRequestKey.Create(
+            operationNetUid,
+            SalesMutationOperationNames.QuickSaleUpdate,
+            retailClientNetId,
+            retailClientNetId,
+            fullPayment,
+            sale);
+        SalesCreationReceipt existingReceipt = await GetCreatedSaleReplayAsync(creationRequest);
+        if (existingReceipt != null)
+            return await ResolveReplayPaymentLinkAsync(existingReceipt, retailClientNetId);
+
+        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+        IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
+        IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
+        IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
+        IClientRepository clientRepository = _clientRepositoriesFactory.NewClientRepository(connection);
+        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
+        IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
+        IMisplacedSaleRepository misplacedSaleRepository = _saleRepositoriesFactory.NewMisplacedSaleRepository(connection);
+        IRetailClientRepository retailClientRepository = _retailClientRepositoriesFactory.NewRetailClientRepository(connection);
+
+        Client clientForRetail = clientRepository.GetRetailClient();
+        RetailClient retailClient = retailClientRepository.GetByNetId(retailClientNetId);
+
+        Storage storage = storageRepository.GetWithHighestPriority();
+
+        ClientAgreement clientAgreement =
+            clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(clientForRetail.NetUid, storage.OrganizationId.Value, retailClient.EcommerceRegion.IsLocalPayment);
+
+        bool withVat = clientAgreement.Agreement.WithVATAccounting;
+
+        Order order = new() {
+            OrderSource = OrderSource.Shop,
+            OrderStatus = OrderStatus.NewOrderCart,
+            ClientAgreement = clientAgreement
+        };
+
+        order.ClientAgreementId = order.ClientAgreement.Id;
+
+        HashSet<long> productIdsToReindex = [];
+        HashSet<Guid> productNetUidsToSync = [];
+        string crmApiUrl = GetEcommerceSaleUpdateUrl();
+        Sale createdSale;
+        string paymentLink;
+
+        try {
+            using (TransactionScope transaction = CreateSalesMutationTransaction(connection)) {
+                await ReserveSalesCreationAsync(connection, creationRequest);
+                await AcquireProductMutationLocksAsync(connection, sale.Order.OrderItems);
+
+                order.Id = _saleRepositoriesFactory
+                    .NewOrderRepository(connection)
+                    .Add(order);
+
+                List<Storage> allStorages = storageRepository.GetAllNonDefectiveByCurrentLocale().ToList();
+
+                List<Storage> storages = new(allStorages.Where(s => s.AvailableForReSale));
+                storages.AddRange(allStorages.Where(e => e.OrganizationId.Equals(clientAgreement.Agreement.OrganizationId)));
+
+                List<OrderItem> misplacedOrderItems = new();
+
+                foreach (OrderItem orderItem in sale.Order.OrderItems) {
+                    if (!orderItem.IsMisplacedItem) continue;
+
+                    misplacedOrderItems.Add(orderItem);
+                }
+
+                sale.Order.OrderItems = sale.Order.OrderItems.Where(o => !o.IsMisplacedItem).ToImmutableHashSet();
+
+                foreach (OrderItem orderItem in sale.Order.OrderItems.Where(i => i.IsNew() && i.Qty > 0)) {
+                    orderItem.ClientShoppingCartId = null;
+                    orderItem.OrderId = order.Id;
+                    orderItem.ProductId = orderItem.Product.Id;
+
+                    IEnumerable<ProductAvailability> productAvailabilities;
+
+                    if (withVat)
+                        productAvailabilities =
+                            productAvailabilityRepository
+                                .GetByProductAndOrganizationIds(
+                                    orderItem.ProductId,
+                                    order.ClientAgreement.Agreement.Organization.Id,
+                                    true
+                                );
+                    else
+                        productAvailabilities = productAvailabilityRepository
+                            .GetAllByProductAndStorageIds(
+                                orderItem.ProductId,
+                                storages.Select(e => e.Id).ToList());
+
+                    if (!productAvailabilities.Any()) continue;
+
+                    if (productAvailabilities.Sum(a => a.Amount) < orderItem.Qty) orderItem.Qty = productAvailabilities.Sum(a => a.Amount);
+
+                    double toDecreaseQty = orderItem.Qty;
+
+                    orderItem.Id = orderItemRepository.Add(orderItem);
+
+                    foreach (ProductAvailability productAvailability in productAvailabilities.Where(a => a.Amount > 0)) {
+                        if (toDecreaseQty.Equals(0d)) break;
+
+                        if (productAvailability.Amount >= toDecreaseQty) {
+                            productReservationRepository
+                                .Add(new ProductReservation {
+                                    OrderItemId = orderItem.Id,
+                                    ProductAvailabilityId = productAvailability.Id,
+                                    Qty = toDecreaseQty
+                                });
+
+                            productAvailability.Amount -= toDecreaseQty;
+
+                            toDecreaseQty = 0d;
+                        } else {
+                            productReservationRepository
+                                .Add(new ProductReservation {
+                                    OrderItemId = orderItem.Id,
+                                    ProductAvailabilityId = productAvailability.Id,
+                                    Qty = productAvailability.Amount
+                                });
+
+                            toDecreaseQty -= productAvailability.Amount;
+
+                            productAvailability.Amount = 0d;
+                        }
+
+                        productAvailabilityRepository.Update(productAvailability);
+                    }
+
+                    productIdsToReindex.Add(orderItem.ProductId);
+                    productNetUidsToSync.Add(orderItem.Product.NetUid);
+                }
+
+                sale.ClientAgreementId = order.ClientAgreementId;
+                sale.OrderId = order.Id;
+                sale.IsVatSale = withVat;
+                sale.IsFullPayment = fullPayment;
+                sale.ChangedToInvoice = null;
+                sale.RetailClientId = retailClient.Id;
+
+                sale.BaseLifeCycleStatusId =
+                    _saleRepositoriesFactory
+                        .NewBaseLifeCycleStatusRepository(connection)
+                        .Add(
+                            new BaseLifeCycleStatus {
+                                SaleLifeCycleType = SaleLifeCycleType.New
+                            }
+                        );
+
+                sale.BaseSalePaymentStatusId =
+                    _saleRepositoriesFactory
+                        .NewBaseSalePaymentStatusRepository(connection)
+                        .Add(
+                            new BaseSalePaymentStatus {
+                                SalePaymentStatusType = SalePaymentStatusType.NotPaid
+                            }
+                        );
+
+                ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
+
+                SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
+                SaleNumber saleNumber;
+
+                string currentMonth = MonthCodesResourceNames.GetCurrentMonthCode();
+
+                try {
+                    if (lastSaleNumber != null && DateTime.Now.Year.Equals(lastSaleNumber.Created.Year)) {
+                        saleNumber = new SaleNumber {
+                            OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
+                            Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}"
+                        };
+
+                        saleNumber.Value +=
+                            string.Format("{0:D8}",
+                                Convert.ToInt32(
+                                    lastSaleNumber.Value.Substring(
+                                        lastSaleNumber.Organization.Code.Length + currentMonth.Length,
+                                        lastSaleNumber.Value.Length - (lastSaleNumber.Organization.Code.Length + currentMonth.Length)))
+                                + 1);
+                    } else {
+                        saleNumber = new SaleNumber {
+                            OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
+                            Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
+                        };
+                    }
+                } catch (FormatException) {
+                    saleNumber = new SaleNumber {
+                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
+                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
+                    };
+                }
+
+                sale.SaleNumberId = saleNumberRepository.Add(saleNumber);
+
+                ISaleRepository saleRepository = _saleRepositoriesFactory.NewSaleRepository(connection);
+
+                sale.Id = saleRepository.Add(sale);
+
+                createdSale = saleRepository.GetByIdWithCalculatedDynamicPrices(sale.Id);
+
+                if (misplacedOrderItems.Any()) {
+                    long misplacedSaleId = misplacedSaleRepository.Add(new MisplacedSale { RetailClientId = retailClient.Id });
+
+                    misplacedOrderItems.ForEach(o => {
+                        o.MisplacedSaleId = misplacedSaleId;
+                        o.ProductId = o.Product.Id;
+                    });
+
+                    orderItemRepository.Add(misplacedOrderItems);
+
+                    MisplacedSale misplacedSale = misplacedSaleRepository.GetById(misplacedSaleId);
+
+                    misplacedSale.SaleId = sale.Id;
+                    createdSale.MisplacedSaleId = misplacedSaleId;
+
+                    misplacedSaleRepository.Update(misplacedSale);
+                    saleRepository.Update(createdSale);
+                }
+
+                createdSale.DeliveryRecipient = sale.DeliveryRecipient;
+                createdSale.DeliveryRecipientAddress = sale.DeliveryRecipientAddress;
+                createdSale.Transporter = sale.Transporter;
+
+                string payload = JsonSerializer.Serialize(createdSale);
+
+                await PersistEcommerceSaleUpdateAsync(
+                    connection,
+                    crmApiUrl,
+                    payload,
+                    SalesMutationOperationNames.QuickSaleUpdate,
+                    operationNetUid);
+
+                long statusId = _retailClientRepositoriesFactory.NewRetailPaymentStatusRepository(connection).Add(new RetailPaymentStatus {
+                    RetailPaymentStatusType = RetailPaymentStatusType.New
+                });
+
+                _retailClientRepositoriesFactory.NewRetailClientPaymentImageRepository(connection)
+                    .Add(new RetailClientPaymentImage {
+                        RetailClientId = retailClient.Id,
+                        SaleId = sale.Id,
+                        RetailPaymentStatusId = statusId
+                    });
+
+                paymentLink = await _paymentLinkService.GenerateSalePaymentInfoMessage(retailClientNetId, createdSale.NetUid);
+                await CompleteSalesCreationAsync(
+                    connection,
+                    creationRequest,
+                    SerializeSalesCreationReceipt(createdSale, paymentLink));
+                transaction.Complete();
+            }
+        } catch (SalesCreationReplayRequiredException) {
+            SalesCreationReceipt concurrentReplay = await GetCreatedSaleReplayAsync(creationRequest) ??
+                throw new InvalidOperationException(
+                    "The durable sales creation replay receipt is missing.");
+            return await ResolveReplayPaymentLinkAsync(concurrentReplay, retailClientNetId);
+        } catch {
+            SalesCreationReceipt concurrentReplay = await GetCreatedSaleReplayAsync(creationRequest);
+            if (concurrentReplay != null)
+                return await ResolveReplayPaymentLinkAsync(concurrentReplay, retailClientNetId);
+            throw;
+        }
+
+        foreach (long productId in productIdsToReindex) _reindexSignal.Request(productId);
+        foreach (Guid productNetUid in productNetUidsToSync)
+            QueueProductAvailabilitySync(productNetUid, "Quick sale product availability sync");
+        QueueSaleSync(createdSale.NetUid, "Quick sale sync");
+
+        return paymentLink;
     }
 
     public Task<List<OrderItem>> RemoveUnavailableProducts(List<OrderItem> orderItems, long retailClientId) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-            IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
-            IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
+        IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
+        IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
 
-            Storage storage = storageRepository.GetWithHighestPriority();
+        Storage storage = storageRepository.GetWithHighestPriority();
 
-            foreach (OrderItem orderItem in orderItems) {
-                ProductAvailability productAvailability = productAvailabilityRepository.GetByProductAndStorageIds(orderItem.Product.Id, storage.Id);
+        foreach (OrderItem orderItem in orderItems) {
+            ProductAvailability productAvailability = productAvailabilityRepository.GetByProductAndStorageIds(orderItem.Product.Id, storage.Id);
 
-                if (productAvailability == null || productAvailability.Amount.Equals(0))
-                    orderItem.IsMisplacedItem = true;
-            }
+            if (productAvailability == null || productAvailability.Amount.Equals(0))
+                orderItem.IsMisplacedItem = true;
+        }
 
-            if (!orderItems.All(i => i.IsMisplacedItem)) {
-                orderItems.ForEach(i => i.IsMisplacedItem = false);
-
-                return Task.FromResult(orderItems);
-            }
-
-            MisplacedSale misplacedSale = new() { RetailClientId = retailClientId };
-
-            long misplacedSaleId = _saleRepositoriesFactory.NewMisplacedSaleRepository(connection).Add(misplacedSale);
-
-            orderItems.ForEach(i => {
-                i.MisplacedSaleId = misplacedSaleId;
-                i.ProductId = i.Product.Id;
-            });
-
-            _saleRepositoriesFactory.NewOrderItemRepository(connection).Add(orderItems);
+        if (!orderItems.All(i => i.IsMisplacedItem)) {
+            orderItems.ForEach(i => i.IsMisplacedItem = false);
 
             return Task.FromResult(orderItems);
+        }
+
+        MisplacedSale misplacedSale = new() { RetailClientId = retailClientId };
+
+        long misplacedSaleId = _saleRepositoriesFactory.NewMisplacedSaleRepository(connection).Add(misplacedSale);
+
+        orderItems.ForEach(i => {
+            i.MisplacedSaleId = misplacedSaleId;
+            i.ProductId = i.Product.Id;
+        });
+
+        _saleRepositoriesFactory.NewOrderItemRepository(connection).Add(orderItems);
+
+        return Task.FromResult(orderItems);
     }
 
     public async Task SendPaymentImageToCrm(Guid saleNetId, Guid clientNetId, PaymentConfirmationImageModel paymentImage) {
         UriBuilder crmApiUrl;
 
-            // URI
+        // URI
 
-            if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                EcommerceCrmConfig data = ReadEcommerceCrmConfig();
+        if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+            EcommerceCrmConfig data = ReadEcommerceCrmConfig();
 #if DEBUG
-                //crmApiUrl = new UriBuilder($"http://localhost:35981/api/v1/{CultureInfo.CurrentCulture}/sales/payment/save");
-                crmApiUrl = new UriBuilder($"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/payment/save");
+            //crmApiUrl = new UriBuilder($"http://localhost:35981/api/v1/{CultureInfo.CurrentCulture}/sales/payment/save");
+            crmApiUrl = new UriBuilder($"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/payment/save");
 #else
                         crmApiUrl = new UriBuilder($"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/payment/save");
 #endif
-            } else {
-                crmApiUrl = new UriBuilder($"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/payment/save");
-            }
+        } else {
+            crmApiUrl = new UriBuilder($"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/payment/save");
+        }
 
-            crmApiUrl.Query = $"saleNetId={saleNetId}&clientNetId={clientNetId}";
+        crmApiUrl.Query = $"saleNetId={saleNetId}&clientNetId={clientNetId}";
 
-            string payload = JsonSerializer.Serialize(paymentImage);
+        string payload = JsonSerializer.Serialize(paymentImage);
 
         using HttpClient httpClient = _httpClientFactory.CreateClient();
         using HttpRequestMessage requestMessage = new(HttpMethod.Post, crmApiUrl.Uri) {
@@ -1492,4 +1678,6 @@ public sealed class OrderService : IOrderService {
             toReturnData[index] = result;
         }
     }
+
+    private sealed class SalesCreationReplayRequiredException : Exception { }
 }
