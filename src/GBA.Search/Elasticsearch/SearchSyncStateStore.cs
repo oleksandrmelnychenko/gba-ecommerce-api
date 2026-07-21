@@ -906,7 +906,7 @@ public sealed class SearchSyncStateStore : ISearchSyncStateStore {
 
     private async Task<StoredState?> ReadStateAsync(CancellationToken ct) {
         using HttpResponseMessage response = await _http.GetAsync(
-            $"{_stateIndex}/_doc/{SearchSyncStorage.StateDocumentId}?seq_no_primary_term=true",
+            $"{_stateIndex}/_doc/{SearchSyncStorage.StateDocumentId}",
             ct);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         if (!response.IsSuccessStatusCode) {
@@ -955,7 +955,7 @@ public sealed class SearchSyncStateStore : ISearchSyncStateStore {
 
     private async Task<StoredLease?> ReadLeaseAsync(CancellationToken ct) {
         using HttpResponseMessage response = await _http.GetAsync(
-            $"{_stateIndex}/_doc/{SearchSyncStorage.RebuildLeaseDocumentId}?seq_no_primary_term=true",
+            $"{_stateIndex}/_doc/{SearchSyncStorage.RebuildLeaseDocumentId}",
             ct);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         if (!response.IsSuccessStatusCode) {
@@ -993,7 +993,7 @@ public sealed class SearchSyncStateStore : ISearchSyncStateStore {
     private async Task<StoredGenerationControl?> ReadGenerationControlAsync(
         CancellationToken ct) {
         using HttpResponseMessage response = await _http.GetAsync(
-            $"{_stateIndex}/_doc/{SearchSyncStorage.GenerationControlDocumentId}?seq_no_primary_term=true",
+            $"{_stateIndex}/_doc/{SearchSyncStorage.GenerationControlDocumentId}",
             ct);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         if (!response.IsSuccessStatusCode) {
