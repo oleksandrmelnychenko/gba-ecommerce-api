@@ -2989,7 +2989,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 product.ProductSlug = productSlug;
                 product.CurrentLocalPrice = decimal.Round(product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
 
-                if (productAvailability != null)
+                if (productAvailability != null && storage != null)
                     if (!storage.ForDefective) {
                         if (storage.Locale.ToLower().Equals("pl")) {
                             if (storage.ForVatProducts)
@@ -3009,7 +3009,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                     }
 
                 products.Add(product);
-            } else if (productAvailability != null) {
+            } else if (productAvailability != null && storage != null) {
                 Product fromList = products.First(p => p.Id.Equals(product.Id));
 
                 if (storage.ForDefective) return product;
@@ -3086,6 +3086,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND [ProductAvailability].Deleted = 0 " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
+            "AND [Storage].Locale = @Culture " +
+            "AND [Storage].ForDefective = 0 " +
             "LEFT JOIN [ProductSlug] " +
             "ON [ProductSlug].ID = (" +
             "SELECT TOP(1) ID " +
@@ -3095,9 +3097,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND [ProductSlug].ProductID = [Product].ID" +
             ") " +
             "WHERE " + VendorCodePredicateSql +
-            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]") + " " +
-            "AND [Storage].Locale = @Culture " +
-            "AND [Storage].ForDefective = 0 ";
+            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]") + " ";
 
         sqlExpression += "ORDER BY [ProductAvailability].[Amount] DESC, [Product].NameUA, [Product].VendorCode";
 
@@ -3134,7 +3134,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                     product.ProductSlug = productSlug;
                     product.CurrentLocalPrice = decimal.Round(product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
 
-                    if (productAvailability != null)
+                    if (productAvailability != null && storage != null)
                         if (!storage.ForDefective) {
                             if (storage.Locale.ToLower().Equals("pl")) {
                                 if (storage.ForVatProducts)
@@ -3156,7 +3156,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                     analogue.AnalogueProduct = product;
 
                     parent.AnalogueProducts.Add(analogue);
-                } else if (productAvailability != null) {
+                } else if (productAvailability != null && storage != null) {
                     analogue = parent.AnalogueProducts.First(a => a.Id.Equals(analogue.Id));
 
                     if (storage.ForDefective) return product;
@@ -3234,6 +3234,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 "AND [ProductAvailability].Deleted = 0 " +
                 "LEFT JOIN [Storage] " +
                 "ON [Storage].ID = [ProductAvailability].StorageID " +
+                "AND [Storage].Locale = @Culture " +
+                "AND [Storage].ForDefective = 0 " +
                 "LEFT JOIN [ProductAnalogue] " +
                 "ON [ProductAnalogue].AnalogueProductID = [Product].ID " +
                 "AND [ProductAnalogue].Deleted = 0 " +
@@ -3246,9 +3248,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 "AND [ProductSlug].ProductID = [Product].ID" +
                 ") " +
                 "WHERE [ProductAnalogue].BaseProductID IN @ProductIds " +
-                "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]") + " " +
-                "AND [Storage].Locale = @Culture " +
-                "AND [Storage].ForDefective = 0";
+                "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]");
 
             analoguesSqlExpression += "ORDER BY [ProductAvailability].[Amount] DESC, [Product].NameUA, [Product].VendorCode";
 
@@ -3285,7 +3285,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 product.ProductSlug = productSlug;
                 product.CurrentLocalPrice = decimal.Round(product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
 
-                if (productAvailability != null)
+                if (productAvailability != null && storage != null)
                     if (!storage.ForDefective) {
                         if (storage.Locale.ToLower().Equals("pl")) {
                             if (storage.ForVatProducts)
@@ -3307,7 +3307,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 productSet.ComponentProduct = product;
 
                 parent.ComponentProducts.Add(productSet);
-            } else if (productAvailability != null) {
+            } else if (productAvailability != null && storage != null) {
                 productSet = parent.ComponentProducts.First(a => a.Id.Equals(productSet.Id));
 
                 if (storage.ForDefective) return product;
@@ -3385,6 +3385,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND [ProductAvailability].Deleted = 0 " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
+            "AND [Storage].Locale = @Culture " +
+            "AND [Storage].ForDefective = 0 " +
             "LEFT JOIN [ProductSet] " +
             "ON [ProductSet].ComponentProductID = [Product].ID " +
             "AND [ProductSet].Deleted = 0 " +
@@ -3397,9 +3399,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND [ProductSlug].ProductID = [Product].ID" +
             ") " +
             "WHERE [ProductSet].BaseProductID IN @ProductIds " +
-            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]") + " " +
-            "AND [Storage].Locale = @Culture " +
-            "AND [Storage].ForDefective = 0";
+            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]");
 
         componentsSqlExpression += "ORDER BY [ProductAvailability].[Amount] DESC, [Product].NameUA, [Product].VendorCode";
 

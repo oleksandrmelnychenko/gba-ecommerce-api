@@ -78,7 +78,9 @@ Live SQL додатково перевіряє:
 - Кандидати читаються по `Product.ID` батчами.
 - SQL-проєкція не викликає scalar pricing UDF і не джойнить залишки.
 - Ціни та наявність не є причиною повної перебудови.
-- Нове покоління стає активним лише після завершення generation fencing та alias promotion.
+- Нове покоління стає активним лише після завершення generation fencing та атомарного
+  оновлення durable generation-control pointer. `UseAliasSwap=false`, тому Elasticsearch
+  alias у цьому deployment не використовується.
 
 ### Інкремент
 
@@ -117,7 +119,7 @@ Live SQL додатково перевіряє:
 
 SQL-швидкість статичної проєкції становить близько 5,87 тис. товарів/с. Груба оцінка
 SQL-частини повного каталогу 373 тис. товарів: близько 64 с. Це не включає ES bulk,
-original numbers, alias promotion і мережеві витрати; фактичний end-to-end час треба
+original numbers, generation promotion і мережеві витрати; фактичний end-to-end час треба
 заміряти після dev-деплою.
 
 Попередня повна перебудова займала 417 с, бо виконувала scalar pricing UDF для всього
@@ -149,7 +151,7 @@ API suite проти старого dev-контейнера не є перев�
 1. Зібрати й задеплоїти новий образ `gba-ecommerce-api`.
 2. Переконатися, що контейнер використовує schema `web-catalog-v5-live-sql`.
 3. Запустити одну повну перебудову.
-4. Дочекатися успішного alias promotion.
+4. Дочекатися успішного promotion durable generation-control pointer.
 5. Перевірити кількість документів: очікується близько 373 208, а не 12 209.
 6. Перевірити артикули з Fenix-only, AMG-only та dual-source.
 7. Для кожного кейсу звірити ціну з договором/source world у SQL.
@@ -162,7 +164,7 @@ API suite проти старого dev-контейнера не є перев�
 Критерій виходу:
 
 - health/search ready;
-- активний alias вказує на нове покоління;
+- durable generation-control pointer вказує на нове покоління;
 - немає SQL timeout;
 - каталог не stock-gated;
 - ціни та залишки відповідають live SQL;
@@ -175,7 +177,7 @@ API suite проти старого dev-контейнера не є перев�
 
 1. успішний dev cutover з повним rebuild;
 2. виміряний end-to-end час перебудови;
-3. rollback на попередній alias/image;
+3. rollback на попередній generation-control pointer/image;
 4. алерт на відсутність active generation, lag watermark і повторні sync failures;
 5. перевірений Change Tracking bootstrap на prod;
 6. окреме maintenance window для першого покоління;

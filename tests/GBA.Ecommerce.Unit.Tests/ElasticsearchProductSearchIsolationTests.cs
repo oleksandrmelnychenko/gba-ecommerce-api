@@ -699,7 +699,10 @@ public sealed class ElasticsearchProductSearchIsolationTests {
         string protectedPrice = Assert.IsType<string>(product.P);
         string decodedPrice = DecodeProtectedPrices(protectedPrice);
         Assert.StartsWith("210.00,", decodedPrice, StringComparison.Ordinal);
-        Assert.DoesNotContain("999", decodedPrice, StringComparison.Ordinal);
+        // Compare the price section only: the payload's trailing timestamp can contain the
+        // indexed-price digits by coincidence and would make this assertion lie.
+        string decodedPrices = decodedPrice.Split('|')[0];
+        Assert.DoesNotContain("999", decodedPrices, StringComparison.Ordinal);
         products.VerifyAll();
         search.VerifyAll();
         prices.VerifyAll();
@@ -762,7 +765,10 @@ public sealed class ElasticsearchProductSearchIsolationTests {
         string protectedPrice = Assert.IsType<string>(product.P);
         string decodedPrice = DecodeProtectedPrices(protectedPrice);
         Assert.StartsWith("210.00,", decodedPrice, StringComparison.Ordinal);
-        Assert.DoesNotContain("999", decodedPrice, StringComparison.Ordinal);
+        // Compare the price section only: the payload's trailing timestamp can contain the
+        // indexed-price digits by coincidence and would make this assertion lie.
+        string decodedPrices = decodedPrice.Split('|')[0];
+        Assert.DoesNotContain("999", decodedPrices, StringComparison.Ordinal);
         state.VerifyAll();
         products.VerifyAll();
         search.VerifyAll();
