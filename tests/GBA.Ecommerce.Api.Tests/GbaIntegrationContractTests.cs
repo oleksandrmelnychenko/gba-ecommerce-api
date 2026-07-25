@@ -33,8 +33,6 @@ public sealed class GbaIntegrationContractTests(EcommerceApiFixture fixture) : I
     [InlineData("orders/items/delete?orderItemNetId=00000000-0000-0000-0000-000000000000", "DELETE")]
     [InlineData("orders/items/shift/current", "POST")]
     [InlineData("orders/items/shift/specific?saleFromNetId=00000000-0000-0000-0000-000000000000&saleToNetId=00000000-0000-0000-0000-000000000000", "POST")]
-    [InlineData("sales/update/ecommerce", "POST")]
-    [InlineData("sales/save/ttn", "POST")]
     public async Task Gba_sales_and_order_item_routes_require_bearer_token(string relativePath, string method) {
         using HttpRequestMessage request = new(new HttpMethod(method), _config.GbaApiPath(relativePath));
 
@@ -46,6 +44,17 @@ public sealed class GbaIntegrationContractTests(EcommerceApiFixture fixture) : I
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Contains("Bearer", response.Headers.WwwAuthenticate.ToString());
+    }
+
+    [Theory]
+    [InlineData("sales/update/ecommerce")]
+    [InlineData("sales/save/ttn")]
+    public async Task Gba_internal_ecommerce_routes_require_internal_authentication(string relativePath) {
+        using HttpResponseMessage response = await _client.PostAsJsonAsync(
+            _config.GbaApiPath(relativePath),
+            new { });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
