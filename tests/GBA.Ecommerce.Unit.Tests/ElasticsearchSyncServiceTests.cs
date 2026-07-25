@@ -15,11 +15,8 @@ public sealed class ElasticsearchSyncServiceTests {
     private const string ActiveIndex = "products_20260714030000000";
     private const string StagingIndex = "products_20260714040000000";
     private const string ConfigurationSignature = "config-v1";
-    private static readonly PricingDependencyRevisions PricingRevisions = new(
-        "product-pricing:db:1",
-        "pricing-hierarchy:db:1",
-        "discounts:db:1",
-        "exchange-rates:db:1");
+    private static readonly PricingDependencyRevisions PricingRevisions =
+        SearchIndexSchema.LiveHydrationMarker;
 
     [Fact]
     public void ProductDocumentMapper_PreservesExactProductAndAgreementSources() {
@@ -145,7 +142,7 @@ public sealed class ElasticsearchSyncServiceTests {
             fixture.Lease,
             StagingIndex,
             It.IsAny<DateTime>(),
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             It.Is<DateTime?>(value => value.HasValue),
             ConfigurationSignature,
             ConfigurationSignature,
@@ -155,15 +152,13 @@ public sealed class ElasticsearchSyncServiceTests {
     }
 
     [Fact]
-    public async Task Incremental_ClonesActiveAndMutatesOnlyStagingBeforePromotion() {
+    public async Task Incremental_WritesIntoTheLiveGenerationWithoutCloning() {
         SyncFixture fixture = CreateFixture(GenerationMode.Incremental, batchSize: 100);
-        fixture.Repository.Setup(repository => repository.GetChangedProductIdBatchAsync(
+        fixture.Repository.Setup(repository => repository.GetProductIdSyncPlanAsync(
                 It.IsAny<DateTime>(),
-                ConfigurationSignature,
-                0,
-                100))
-            .ReturnsAsync(new ProductIdSyncBatch(
-                [42], ConfigurationSignature, false, true, 42, false));
+                ConfigurationSignature))
+            .ReturnsAsync(new ProductIdSyncPlan(
+                [42], ConfigurationSignature, false, true));
         fixture.Repository.Setup(repository => repository.GetProductProjectionByIdsAsync(
                 It.Is<IReadOnlyCollection<long>>(ids => ids.SequenceEqual(new long[] { 42L })),
                 ConfigurationSignature))
@@ -179,21 +174,24 @@ public sealed class ElasticsearchSyncServiceTests {
         SyncResult result = await fixture.Service.IncrementalSyncAsync();
 
         Assert.True(result.Success, result.Error);
+        // Incremental ticks update the serving generation in place: no clone, no new index.
         fixture.Index.Verify(service => service.CloneGenerationAsync(
-            fixture.Lease,
-            ActiveIndex,
-            StagingIndex,
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<SearchRebuildLease>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Index.Verify(service => service.CreateVersionedIndexAsync(
+            It.IsAny<SearchRebuildLease>(),
+            It.IsAny<CancellationToken>()), Times.Never);
         Assert.All(fixture.Handler.BulkBodies, body => {
-            Assert.Contains($"\"_index\":\"{StagingIndex}\"", body, StringComparison.Ordinal);
+            Assert.Contains($"\"_index\":\"{ActiveIndex}\"", body, StringComparison.Ordinal);
             Assert.DoesNotContain("\"_index\":\"products\"", body, StringComparison.Ordinal);
-            Assert.DoesNotContain($"\"_index\":\"{ActiveIndex}\"", body, StringComparison.Ordinal);
         });
         fixture.State.Verify(store => store.PromoteGenerationAsync(
             fixture.Lease,
-            StagingIndex,
+            ActiveIndex,
             It.IsAny<DateTime>(),
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             It.Is<DateTime?>(value => !value.HasValue),
             ConfigurationSignature,
             ConfigurationSignature,
@@ -203,18 +201,62 @@ public sealed class ElasticsearchSyncServiceTests {
     }
 
     [Fact]
-    public async Task Incremental_WithRotatedPricingRevision_RequiresFullGeneration() {
+    public async Task Incremental_MaterializesPlanOnce_ThenProjectsBoundedChunks() {
+        SyncFixture fixture = CreateFixture(GenerationMode.Incremental, batchSize: 100);
+        long[] productIds = Enumerable.Range(1, 201).Select(id => (long)id).ToArray();
+        fixture.Repository.Setup(repository => repository.GetProductIdSyncPlanAsync(
+                It.IsAny<DateTime>(),
+                ConfigurationSignature))
+            .ReturnsAsync(new ProductIdSyncPlan(
+                productIds.ToList(), ConfigurationSignature, false, true));
+        fixture.Repository.Setup(repository => repository.GetProductProjectionByIdsAsync(
+                It.IsAny<IReadOnlyCollection<long>>(),
+                ConfigurationSignature))
+            .ReturnsAsync((IReadOnlyCollection<long> ids, string? _) =>
+                new ProductProjectionSnapshot(
+                    ids.Select(Product).ToList(),
+                    ConfigurationSignature,
+                    true));
+        fixture.Repository.Setup(repository => repository.GetDeletedProductIdBatchAsync(
+                It.IsAny<DateTime>(),
+                0,
+                100))
+            .ReturnsAsync([]);
+        fixture.Handler.BulkResponses.Enqueue(BulkSuccess("index", 100));
+        fixture.Handler.BulkResponses.Enqueue(BulkSuccess("index", 100));
+        fixture.Handler.BulkResponses.Enqueue(BulkSuccess("index"));
+
+        SyncResult result = await fixture.Service.IncrementalSyncAsync();
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal(201, result.DocumentsIndexed);
+        fixture.Repository.Verify(repository => repository.GetProductIdSyncPlanAsync(
+            It.IsAny<DateTime>(),
+            ConfigurationSignature), Times.Once);
+        fixture.Repository.Verify(repository => repository.GetProductProjectionByIdsAsync(
+            It.Is<IReadOnlyCollection<long>>(ids => ids.Count <= 100),
+            ConfigurationSignature), Times.Exactly(3));
+        fixture.Repository.Verify(repository => repository.GetChangedProductIdBatchAsync(
+            It.IsAny<DateTime>(),
+            It.IsAny<string?>(),
+            It.IsAny<long>(),
+            It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Incremental_WithLegacyIndexedPricingMarker_RemainsIncremental() {
         SyncFixture fixture = CreateFixture(GenerationMode.Incremental, batchSize: 100);
         PricingDependencyRevisions oldIncarnation = PricingRevisions with {
             ProductPricing = "product-pricing:old-incarnation"
         };
         SearchSyncState staleState = new(
             DateTime.UtcNow.AddMinutes(-5),
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             DateTime.UtcNow.AddHours(-1),
             ConfigurationSignature,
             RetailConfigurationEpoch: 3,
-            IndexedPricingRevisions: oldIncarnation);
+            IndexedPricingRevisions: oldIncarnation,
+            LastFullRebuildStartedUtc: DateTime.UtcNow.AddHours(-2));
         fixture.State.Setup(store => store.GetActiveGenerationAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new SearchActiveGeneration(
                 ActiveIndex,
@@ -222,31 +264,32 @@ public sealed class ElasticsearchSyncServiceTests {
                 staleState,
                 ConfigurationSignature,
                 ObservedConfigurationEpoch: 3));
-        fixture.Repository.Setup(repository => repository.GetProductProjectionBatchAsync(
-                0,
-                100,
+        fixture.Repository.Setup(repository => repository.GetProductIdSyncPlanAsync(
+                It.IsAny<DateTime>(),
                 ConfigurationSignature))
-            .ReturnsAsync(new ProductProjectionBatch(
-                [Product(42)],
-                ConfigurationSignature,
-                true,
-                42,
-                42,
-                false));
+            .ReturnsAsync(new ProductIdSyncPlan(
+                [42], ConfigurationSignature, false, true));
+        fixture.Repository.Setup(repository => repository.GetProductProjectionByIdsAsync(
+                It.Is<IReadOnlyCollection<long>>(ids => ids.SequenceEqual(new long[] { 42L })),
+                ConfigurationSignature))
+            .ReturnsAsync(new ProductProjectionSnapshot([Product(42)], ConfigurationSignature, true));
+        fixture.Repository.Setup(repository => repository.GetDeletedProductIdBatchAsync(
+                It.IsAny<DateTime>(),
+                0,
+                100))
+            .ReturnsAsync([]);
         fixture.Handler.BulkResponses.Enqueue(BulkSuccess("index"));
 
         SyncResult result = await fixture.Service.IncrementalSyncAsync();
 
         Assert.True(result.Success, result.Error);
         fixture.Repository.Verify(repository => repository.GetProductProjectionBatchAsync(
-            0,
-            100,
-            ConfigurationSignature), Times.Once);
-        fixture.Repository.Verify(repository => repository.GetChangedProductIdBatchAsync(
-            It.IsAny<DateTime>(),
-            It.IsAny<string?>(),
             It.IsAny<long>(),
-            It.IsAny<int>()), Times.Never);
+            It.IsAny<int>(),
+            It.IsAny<string?>()), Times.Never);
+        fixture.Repository.Verify(repository => repository.GetProductIdSyncPlanAsync(
+            It.IsAny<DateTime>(),
+            ConfigurationSignature), Times.Once);
         fixture.Index.Verify(service => service.CloneGenerationAsync(
             It.IsAny<SearchRebuildLease>(),
             It.IsAny<string>(),
@@ -255,7 +298,7 @@ public sealed class ElasticsearchSyncServiceTests {
     }
 
     [Fact]
-    public async Task Targeted_ConfigDriftAfterClone_LeavesPriorGenerationUntouched() {
+    public async Task Targeted_ConfigDriftBeforeWrite_LeavesLiveGenerationIntact() {
         SyncFixture fixture = CreateFixture(GenerationMode.Targeted, batchSize: 100);
         fixture.Repository.Setup(repository => repository.GetProductProjectionByIdsAsync(
                 It.IsAny<IReadOnlyCollection<long>>(),
@@ -276,10 +319,12 @@ public sealed class ElasticsearchSyncServiceTests {
             It.IsAny<string>(),
             It.IsAny<PricingDependencyRevisions>(),
             It.IsAny<CancellationToken>()), Times.Never);
+        // Targeted/incremental runs write into the serving index, so a failed run must never
+        // delete it — the live catalog has to survive configuration drift untouched.
         fixture.Index.Verify(service => service.DeleteFailedVersionedIndexAsync(
-            fixture.Lease,
-            StagingIndex,
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<SearchRebuildLease>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -324,15 +369,8 @@ public sealed class ElasticsearchSyncServiceTests {
     }
 
     [Fact]
-    public async Task PricingChangeTrackingAdvanceAfterBuild_NeverPromotesStaleIndexedPrices() {
-        PricingDependencyRevisions advancedRevisions = PricingRevisions with {
-            ProductPricing = "product-pricing:db:2"
-        };
+    public async Task DatabasePricingRevisions_DoNotParticipateInCatalogGeneration() {
         SyncFixture fixture = CreateFixture(GenerationMode.Full, batchSize: 100);
-        fixture.Repository.SetupSequence(repository =>
-                repository.GetPricingDependencyRevisionsAsync())
-            .ReturnsAsync(PricingRevisions)
-            .ReturnsAsync(advancedRevisions);
         fixture.Repository.Setup(repository => repository.GetProductProjectionBatchAsync(
                 0,
                 100,
@@ -348,18 +386,21 @@ public sealed class ElasticsearchSyncServiceTests {
 
         SyncResult result = await fixture.Service.FullRebuildAsync();
 
-        Assert.False(result.Success);
-        Assert.Contains("Change Tracking advanced", result.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.True(result.Success, result.Error);
+        fixture.Repository.Verify(
+            repository => repository.GetPricingDependencyRevisionsAsync(),
+            Times.Never);
         fixture.State.Verify(store => store.PromoteGenerationAsync(
-            It.IsAny<SearchRebuildLease>(),
-            It.IsAny<string>(),
+            fixture.Lease,
+            StagingIndex,
             It.IsAny<DateTime>(),
-            It.IsAny<string>(),
-            It.IsAny<DateTime?>(),
-            It.IsAny<string?>(),
-            It.IsAny<string>(),
-            It.IsAny<PricingDependencyRevisions>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+            SearchIndexSchema.CurrentVersion,
+            It.Is<DateTime?>(value => value.HasValue),
+            ConfigurationSignature,
+            ConfigurationSignature,
+            It.Is<PricingDependencyRevisions>(revisions =>
+                revisions.MatchesExactly(SearchIndexSchema.LiveHydrationMarker)),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -430,7 +471,7 @@ public sealed class ElasticsearchSyncServiceTests {
                 fixture.Lease,
                 StagingIndex,
                 It.IsAny<DateTime>(),
-                EcommercePricingSchema.Version,
+                SearchIndexSchema.CurrentVersion,
                 It.IsAny<DateTime?>(),
                 ConfigurationSignature,
                 ConfigurationSignature,
@@ -468,7 +509,7 @@ public sealed class ElasticsearchSyncServiceTests {
                 false));
         SearchSyncState committedState = new(
             DateTime.UtcNow,
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             DateTime.UtcNow,
             ConfigurationSignature,
             RetailConfigurationEpoch: fixture.Lease.ConfigurationEpoch,
@@ -492,7 +533,7 @@ public sealed class ElasticsearchSyncServiceTests {
                 fixture.Lease,
                 StagingIndex,
                 It.IsAny<DateTime>(),
-                EcommercePricingSchema.Version,
+                SearchIndexSchema.CurrentVersion,
                 It.IsAny<DateTime?>(),
                 ConfigurationSignature,
                 ConfigurationSignature,
@@ -571,11 +612,14 @@ public sealed class ElasticsearchSyncServiceTests {
         Mock<IProductSyncRepository> repository = new(MockBehavior.Strict);
         Mock<IElasticsearchIndexService> index = new(MockBehavior.Strict);
         Mock<ISearchSyncStateStore> state = new(MockBehavior.Strict);
+        // Only a full rebuild builds a new generation; incremental and targeted runs write
+        // into the live index, so the fenced calls carry the active index name.
+        string writeTarget = mode == GenerationMode.Full ? StagingIndex : ActiveIndex;
         GenerationHttpHandler handler = new();
         DateTime now = DateTime.UtcNow;
         SearchSyncState currentState = new(
             now.AddMinutes(-5),
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             now.AddHours(-1),
             ConfigurationSignature,
             RetailConfigurationEpoch: 3,
@@ -609,13 +653,13 @@ public sealed class ElasticsearchSyncServiceTests {
                 .ReturnsAsync(lease);
             state.Setup(store => store.RenewWriteLeaseAsync(
                     lease,
-                    StagingIndex,
+                    writeTarget,
                     It.IsAny<TimeSpan>(),
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(true);
             state.Setup(store => store.ValidateWriteLeaseAsync(
                     lease,
-                    StagingIndex,
+                    writeTarget,
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(true);
             state.Setup(store => store.ReleaseWriteLeaseAsync(
@@ -624,16 +668,16 @@ public sealed class ElasticsearchSyncServiceTests {
                 .Returns(Task.CompletedTask);
             state.Setup(store => store.PromoteGenerationAsync(
                     lease,
-                    StagingIndex,
+                    writeTarget,
                     It.IsAny<DateTime>(),
-                    EcommercePricingSchema.Version,
+                    SearchIndexSchema.CurrentVersion,
                     It.IsAny<DateTime?>(),
                     ConfigurationSignature,
                     ConfigurationSignature,
                     It.Is<PricingDependencyRevisions>(revisions =>
                         revisions.MatchesExactly(PricingRevisions)),
                     It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new SearchGenerationAcknowledgement("owner-a", 7, StagingIndex, 4));
+                .ReturnsAsync(new SearchGenerationAcknowledgement("owner-a", 7, writeTarget, 4));
 
             repository.Setup(repository => repository.GetRetailConfigurationSnapshotAsync())
                 .ReturnsAsync(new RetailConfigurationSnapshot {
@@ -656,26 +700,26 @@ public sealed class ElasticsearchSyncServiceTests {
             index.Setup(service => service.CreateVersionedIndexAsync(
                     lease,
                     It.IsAny<CancellationToken>()))
-                .ReturnsAsync(StagingIndex);
+                .ReturnsAsync(writeTarget);
             index.Setup(service => service.DeleteFailedVersionedIndexAsync(
                     lease,
-                    StagingIndex,
+                    writeTarget,
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(true);
             index.Setup(service => service.RefreshGenerationAsync(
                     lease,
-                    StagingIndex,
+                    writeTarget,
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(true);
             if (useAliasSwap) {
                 index.Setup(service => service.SwapAliasAsync(
                         lease,
-                        StagingIndex,
+                        writeTarget,
                         It.IsAny<CancellationToken>()))
                     .ReturnsAsync(true);
                 index.Setup(service => service.RestoreAliasAsync(
                         lease,
-                        StagingIndex,
+                        writeTarget,
                         It.IsAny<CancellationToken>()))
                     .ReturnsAsync(true);
             }
@@ -683,7 +727,7 @@ public sealed class ElasticsearchSyncServiceTests {
                 index.Setup(service => service.CloneGenerationAsync(
                         lease,
                         ActiveIndex,
-                        StagingIndex,
+                        writeTarget,
                         It.IsAny<CancellationToken>()))
                     .ReturnsAsync(true);
             }
@@ -757,7 +801,7 @@ public sealed class ElasticsearchSyncServiceTests {
                 return JsonResponse(BulkResponses.Dequeue());
             }
 
-            if (request.RequestUri.AbsolutePath == $"/{StagingIndex}/_refresh") {
+            if (request.RequestUri.AbsolutePath.EndsWith("/_refresh", StringComparison.Ordinal)) {
                 return new HttpResponseMessage(HttpStatusCode.OK);
             }
 

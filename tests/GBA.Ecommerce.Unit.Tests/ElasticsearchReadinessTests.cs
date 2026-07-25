@@ -255,7 +255,7 @@ public sealed class ElasticsearchReadinessTests {
         DateTime rebuildCompleted = watermark.AddMinutes(-9);
         SearchSyncState state = new(
             watermark,
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             rebuildCompleted,
             "config-v1",
             RetailConfigurationEpoch: 1,

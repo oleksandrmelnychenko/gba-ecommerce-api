@@ -8,91 +8,34 @@ public sealed class ProductSyncRepositoryTests {
     [InlineData(null, null)]
     [InlineData("ChangedProductIds AS (SELECT 1 AS ID)", "INNER JOIN ChangedProductIds c ON c.ID = p.ID")]
     [InlineData("RequestedProductIds AS (SELECT 1 AS ID)", "INNER JOIN RequestedProductIds c ON c.ID = p.ID")]
-    public void ProductProjection_UsesFenixSourceAwarePricesForEverySyncPath(
+    public void ProductProjection_IndexesOnlyStableWebCatalogFieldsForEverySyncPath(
         string? firstCte,
         string? productJoin) {
         string sql = BuildProductProjectionSql(firstCte, productJoin);
 
-        Assert.Equal(2, CountOccurrences(sql, "GetCalculatedProductPriceForPricingSource"));
-        Assert.Contains("o.PriceSourceIsAmg = 0", sql, StringComparison.Ordinal);
-        Assert.Contains("ca.Deleted = 0", sql, StringComparison.Ordinal);
-        Assert.Contains("a.IsActive = 1", sql, StringComparison.Ordinal);
-        Assert.Contains("a.Deleted = 0", sql, StringComparison.Ordinal);
-        Assert.Contains("DATALENGTH(a.SourceFenixID), 0) > 0 OR a.SourceFenixCode IS NOT NULL", sql, StringComparison.Ordinal);
-        Assert.Contains("ISNULL(DATALENGTH(a.SourceAmgID), 0) = 0", sql, StringComparison.Ordinal);
-        Assert.Contains("a.SourceAmgCode IS NULL", sql, StringComparison.Ordinal);
-        Assert.Contains("pr.Deleted = 0", sql, StringComparison.Ordinal);
-        Assert.Contains("currency.Deleted = 0", sql, StringComparison.Ordinal);
-        Assert.DoesNotContain("currency.Code = 'UAH'", sql, StringComparison.Ordinal);
-        Assert.DoesNotContain("pr.ID = 853", sql, StringComparison.Ordinal);
-        Assert.DoesNotContain("pr.ID = 848", sql, StringComparison.Ordinal);
-        Assert.Contains("CROSS JOIN FenixRetailAgreementPricing vat", sql, StringComparison.Ordinal);
-        Assert.Contains("nonVat.RowNumber = 1", sql, StringComparison.Ordinal);
-        Assert.Contains("vat.RowNumber = 1", sql, StringComparison.Ordinal);
-        Assert.Contains("rpc.NonVatAgreementNetUid", sql, StringComparison.Ordinal);
-        Assert.Contains("rpc.VatAgreementNetUid", sql, StringComparison.Ordinal);
-        Assert.Contains("rpc.CatalogOrganizationIdNonVat", sql, StringComparison.Ordinal);
-        Assert.Contains("rpc.CatalogOrganizationIdVat", sql, StringComparison.Ordinal);
-        Assert.Contains("rpc.CatalogAgreementSourceNonVat", sql, StringComparison.Ordinal);
-        Assert.Contains("rpc.CatalogAgreementSourceVat", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetCalculatedProductPrice", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("RetailPricing", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProductAvailability", sql, StringComparison.Ordinal);
+        Assert.Contains("p.IsForWeb = 1", sql, StringComparison.Ordinal);
+        Assert.Contains("CAST(0 AS decimal(19, 4)) AS RetailPrice", sql, StringComparison.Ordinal);
+        Assert.Contains("CAST(0 AS decimal(19, 4)) AS RetailPriceVat", sql, StringComparison.Ordinal);
         Assert.Contains("END AS ProductSourceFenix", sql, StringComparison.Ordinal);
         Assert.Contains("END AS ProductSourceAmg", sql, StringComparison.Ordinal);
         Assert.Contains("AS IsCanonicalFenix", sql, StringComparison.Ordinal);
         Assert.Contains("AS IsCanonicalAmg", sql, StringComparison.Ordinal);
         Assert.Contains("canonicalProduct.ID < p.ID", sql, StringComparison.Ordinal);
-        Assert.DoesNotContain(
-            "= rpc.CatalogAgreementSourceNonVat",
-            sql,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain(
-            "= rpc.CatalogAgreementSourceVat",
-            sql,
-            StringComparison.Ordinal);
-        Assert.Contains("rpc.CatalogAgreementNetUidNonVat", sql, StringComparison.Ordinal);
-        Assert.Contains("rpc.CatalogAgreementNetUidVat", sql, StringComparison.Ordinal);
-        Assert.Contains("rpc.CatalogPricingIdNonVat", sql, StringComparison.Ordinal);
-        Assert.Contains("rpc.CatalogPricingIdVat", sql, StringComparison.Ordinal);
-        Assert.Contains("rpc.CatalogCurrencyIdNonVat", sql, StringComparison.Ordinal);
-        Assert.Contains("rpc.CatalogCurrencyIdVat", sql, StringComparison.Ordinal);
-        Assert.Contains("ORDER BY CASE WHEN a.IsSelected = 1 THEN 0 ELSE 1 END", sql, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ProductProjection_IndexesSourceNeutralAvailabilityScopesForEveryEcommerceOrganization() {
+    public void ProductProjection_DoesNotUseStockAsCatalogEligibility() {
         string sql = BuildProductProjectionSql(null, null);
 
-        Assert.Contains("CatalogAvailability AS", sql, StringComparison.Ordinal);
-        Assert.Contains("INNER JOIN Organization o ON o.ID = s.OrganizationID", sql, StringComparison.Ordinal);
-        Assert.Contains("CASE WHEN o.PriceSourceIsAmg = 1 THEN 'amg' ELSE 'fenix' END", sql, StringComparison.Ordinal);
-        Assert.Contains("availability.OrganizationId AS organizationId", sql, StringComparison.Ordinal);
-        Assert.Contains("availability.SourceSystem AS sourceSystem", sql, StringComparison.Ordinal);
-        Assert.Contains("FOR JSON PATH", sql, StringComparison.Ordinal);
-        Assert.Contains("AS CatalogScopesJson", sql, StringComparison.Ordinal);
-        Assert.Contains("FROM CatalogAvailability availability", sql, StringComparison.Ordinal);
-        Assert.Contains("availability.SourceSystem = 'amg'", sql, StringComparison.Ordinal);
-        Assert.Contains("SourceAmgID", sql, StringComparison.Ordinal);
-        Assert.Contains("EXISTS (", sql, StringComparison.Ordinal);
-
-        // Anonymous indexed prices retain their exact selected Fenix availability projection.
-        Assert.Contains("FenixEcommerceStorages AS", sql, StringComparison.Ordinal);
-        Assert.Contains(
-            "INNER JOIN FenixRetailStorage selected",
-            sql,
-            StringComparison.Ordinal);
-        Assert.Contains("s.Deleted = 0", sql, StringComparison.Ordinal);
-        Assert.Contains("s.ForEcommerce = 1", sql, StringComparison.Ordinal);
-        Assert.Contains("s.ForDefective = 0", sql, StringComparison.Ordinal);
-        Assert.Contains(
-            "INNER JOIN FenixEcommerceStorages s ON s.ID = pa.StorageID",
-            sql,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "LEFT JOIN FenixProductAvailability nonVatAvailability",
-            sql,
-            StringComparison.Ordinal);
-        Assert.Contains("HasNonVatCatalogAvailability", sql, StringComparison.Ordinal);
-        Assert.Contains("HasVatCatalogAvailability", sql, StringComparison.Ordinal);
-        Assert.DoesNotContain("SELECT SUM(pa.Amount)", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("CatalogAvailability AS (", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProductAvailability", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("HAVING SUM", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("EXISTS (\n      SELECT 1\n      FROM CatalogAvailability", sql, StringComparison.Ordinal);
+        Assert.Contains("N'[]' AS CatalogScopesJson", sql, StringComparison.Ordinal);
+        Assert.Contains("CAST(0 AS float) AS AvailableQty", sql, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -102,27 +45,18 @@ public sealed class ProductSyncRepositoryTests {
         Assert.DoesNotContain("JOIN ProductPricing ", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("ProductProductGroup", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("LEFT JOIN ProductSlug", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("ROW_NUMBER() OVER", sql, StringComparison.Ordinal);
-        Assert.Contains("nonVat.RowNumber = 1", sql, StringComparison.Ordinal);
-        Assert.Contains("vat.RowNumber = 1", sql, StringComparison.Ordinal);
         Assert.Contains("OUTER APPLY", sql, StringComparison.Ordinal);
         Assert.Contains("SELECT TOP (1) slug.ID", sql, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void IncrementalChangeDetection_CoversProjectionAndPricingDependencies() {
+    public void IncrementalChangeDetection_CoversOnlyIndexedSearchDependencies() {
         string sql = InvokePrivateSqlBuilder("BuildChangedProductIdsSql");
 
         string[] targetedDependencies = [
             "ProductOriginalNumber",
             "OriginalNumber",
-            "ProductAvailability",
-            "ProductSlug",
-            "ProductPricing",
-            "ProductProductGroup",
-            "PricingProductGroupDiscount",
-            "ProductGroupDiscount",
-            "ProductGroup changedGroup"
+            "ProductSlug"
         ];
 
         foreach (string dependency in targetedDependencies) {
@@ -130,40 +64,41 @@ public sealed class ProductSyncRepositoryTests {
         }
 
         Assert.Contains("@Since", sql, StringComparison.Ordinal);
-        Assert.Contains("@ForceFullRefresh", sql, StringComparison.Ordinal);
-        Assert.Contains("FROM Pricing pricing", sql, StringComparison.Ordinal);
-        Assert.Contains("FROM Client retailClient", sql, StringComparison.Ordinal);
-        Assert.Contains("FROM Storage storage", sql, StringComparison.Ordinal);
-        Assert.Contains("o.PriceSourceIsAmg = 0", sql, StringComparison.Ordinal);
-        Assert.Contains("CROSS JOIN GlobalRetailDependencyChanges", sql, StringComparison.Ordinal);
-        Assert.Contains(
-            "FROM Product p\n    CROSS JOIN GlobalRetailDependencyChanges dependencyChange\n)",
-            sql,
-            StringComparison.Ordinal);
-        Assert.Contains("SourceChangedProducts AS", sql, StringComparison.Ordinal);
-        Assert.Contains("INNER JOIN SourceChangedProducts changed", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("@ForceFullRefresh", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProductAvailability", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProductPricing", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("PricingProductGroupDiscount", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("GlobalRetailDependencyChanges", sql, StringComparison.Ordinal);
+        Assert.Contains("CREATE TABLE #DirectChangedProductIds", sql, StringComparison.Ordinal);
+        Assert.Contains("CREATE TABLE #ChangedProductIds", sql, StringComparison.Ordinal);
+        Assert.Contains("IF EXISTS (SELECT 1 FROM #DirectChangedProductIds)", sql, StringComparison.Ordinal);
+        Assert.Contains("candidate.SourceFenixCode = changed.SourceFenixCode", sql, StringComparison.Ordinal);
+        Assert.Contains("candidate.SourceAmgCode = changed.SourceAmgCode", sql, StringComparison.Ordinal);
+        Assert.Contains("candidate.SourceFenixID = changed.SourceFenixID", sql, StringComparison.Ordinal);
+        Assert.Contains("candidate.SourceAmgID = changed.SourceAmgID", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("SourceChangedProducts AS", sql, StringComparison.Ordinal);
         Assert.Contains("candidate.Deleted = 0", sql, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void RetailConfigurationSignature_CoversUntimestampedSelectionChanges() {
+    public void IncrementalBatch_UsesMaterializedKeysetAndStablePagination() {
+        string sql = InvokePrivateSqlBuilder("BuildChangedProductIdBatchSql");
+
+        Assert.Contains("CREATE TABLE #DirectChangedProductIds", sql, StringComparison.Ordinal);
+        Assert.Contains("SELECT TOP (@Take) ID", sql, StringComparison.Ordinal);
+        Assert.Contains("WHERE ID > @AfterProductId", sql, StringComparison.Ordinal);
+        Assert.Contains("ORDER BY ID", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CatalogConfigurationSignature_IsIndependentFromPricingAndStock() {
         string sql = GetPrivateConstant("RetailConfigurationSignatureSql");
 
-        Assert.Contains("storage.RetailPriority", sql, StringComparison.Ordinal);
-        Assert.Contains("storage.ForEcommerce", sql, StringComparison.Ordinal);
-        Assert.Contains("organization.PriceSourceIsAmg", sql, StringComparison.Ordinal);
-        Assert.Contains("agreement.IsActive", sql, StringComparison.Ordinal);
-        Assert.Contains("agreement.WithVATAccounting", sql, StringComparison.Ordinal);
-        Assert.Contains("agreement.PricingID", sql, StringComparison.Ordinal);
-        Assert.Contains("agreement.SourceFenixID", sql, StringComparison.Ordinal);
-        Assert.Contains("agreement.SourceFenixCode", sql, StringComparison.Ordinal);
-        Assert.Contains("agreement.SourceAmgID", sql, StringComparison.Ordinal);
-        Assert.Contains("agreement.SourceAmgCode", sql, StringComparison.Ordinal);
-        Assert.Contains("pricing.BasePricingID", sql, StringComparison.Ordinal);
-        Assert.Contains("pricing.CalculatedExtraCharge", sql, StringComparison.Ordinal);
-        Assert.Contains("(SELECT COUNT(*) FROM FenixRetailStorage) = 2", sql, StringComparison.Ordinal);
-        Assert.Contains("EXISTS (SELECT 1 FROM RetailPricingConfig)", sql, StringComparison.Ordinal);
+        Assert.Contains("web-catalog-live-sql-v1", sql, StringComparison.Ordinal);
         Assert.Contains("AS IsValid", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("Storage", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("Pricing", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("Agreement", sql, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -208,9 +143,5 @@ public sealed class ProductSyncRepositoryTests {
 
         return (string)((field.IsLiteral ? field.GetRawConstantValue() : field.GetValue(null))
             ?? throw new InvalidOperationException($"{fieldName} was null."));
-    }
-
-    private static int CountOccurrences(string value, string fragment) {
-        return value.Split(fragment, StringSplitOptions.None).Length - 1;
     }
 }

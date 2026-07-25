@@ -98,6 +98,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         Task? heartbeatTask = null;
         string? stagingIndex = null;
         bool committed = false;
+        bool inPlaceGeneration = false;
 
         await _gate.WaitAsync(ct);
         try {
@@ -122,12 +123,9 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
                 return SyncResult.Failed("Retail pricing configuration is invalid or empty");
             }
 
-            PricingDependencyRevisions pricingRevisions =
-                await _repository.GetPricingDependencyRevisionsAsync();
-            if (!pricingRevisions.IsValid) {
-                return SyncResult.Failed(
-                    "Pricing Change Tracking is unavailable; indexed retail prices were not rebuilt");
-            }
+            // Search generations contain only stable catalog/search data. Prices are hydrated
+            // from SQL at request time, so database pricing revisions must never rebuild the index.
+            PricingDependencyRevisions pricingRevisions = SearchIndexSchema.LiveHydrationMarker;
 
             SearchRebuildLease? configurationLease =
                 await _state.BindWriteLeaseConfigurationAsync(
@@ -144,7 +142,6 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             GenerationSyncMode mode = requestedMode;
             bool activeRequiresFull = active == null
                                       || currentState.RequiresFullRebuild(SearchIndexSchema.CurrentVersion)
-                                      || !active.HasExactIndexedPricingRevisions(pricingRevisions)
                                       || !string.Equals(
                                           currentState.RetailConfigurationSignature,
                                           configuration.Signature,
@@ -163,10 +160,19 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
                     "Elasticsearch configured name conflicts with UseAliasSwap; no migration was attempted");
             }
 
-            stagingIndex = await _indexService.CreateVersionedIndexAsync(lease, ct);
-            if (string.IsNullOrWhiteSpace(stagingIndex)) {
-                return SyncResult.Failed("Failed to create a staging search generation");
+            // Only a full rebuild (or a schema/configuration change that forced one) needs a new
+            // generation. Incremental and targeted runs update the live generation in place —
+            // cloning the whole index every tick rewrote the entire corpus once per minute.
+            if (mode == GenerationSyncMode.Full) {
+                stagingIndex = await _indexService.CreateVersionedIndexAsync(lease, ct);
+                if (string.IsNullOrWhiteSpace(stagingIndex)) {
+                    return SyncResult.Failed("Failed to create a staging search generation");
+                }
+            } else {
+                stagingIndex = active!.IndexName;
+                inPlaceGeneration = true;
             }
+
             EnsureStagingIndex(stagingIndex);
 
             if (!await _state.RenewWriteLeaseAsync(
@@ -187,17 +193,6 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             using CancellationTokenSource operationCancellation =
                 CancellationTokenSource.CreateLinkedTokenSource(ct, leaseLost.Token);
             CancellationToken operationCt = operationCancellation.Token;
-
-            if (mode != GenerationSyncMode.Full) {
-                if (active == null
-                    || !await _indexService.CloneGenerationAsync(
-                        lease,
-                        active.IndexName,
-                        stagingIndex,
-                        operationCt)) {
-                    return SyncResult.Failed("Failed to clone the active search generation");
-                }
-            }
 
             (int indexed, int deleted) = mode switch {
                 GenerationSyncMode.Full => await BuildFullGenerationAsync(
@@ -232,14 +227,8 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
                     "Retail pricing configuration changed before generation promotion; live generation was preserved");
             }
 
-            if (!pricingRevisions.MatchesExactly(
-                    await _repository.GetPricingDependencyRevisionsAsync())) {
-                return SyncResult.Failed(
-                    "Pricing Change Tracking advanced during generation build; live generation was preserved");
-            }
-
             bool aliasCutOver = false;
-            if (_syncSettings.UseAliasSwap) {
+            if (_syncSettings.UseAliasSwap && !inPlaceGeneration) {
                 aliasCutOver = await _indexService.SwapAliasAsync(lease, stagingIndex, operationCt);
                 if (!aliasCutOver) {
                     return SyncResult.Failed("Failed to atomically cut over the fenced search alias");
@@ -252,15 +241,6 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
                 }
                 return SyncResult.Failed(
                     "Retail pricing configuration changed during generation cutover; active generation was preserved");
-            }
-
-            if (!pricingRevisions.MatchesExactly(
-                    await _repository.GetPricingDependencyRevisionsAsync())) {
-                if (aliasCutOver) {
-                    await RestoreAliasAfterFailedPromotionAsync(lease, stagingIndex);
-                }
-                return SyncResult.Failed(
-                    "Pricing Change Tracking advanced during generation cutover; active generation was preserved");
             }
 
             DateTime watermark = mode == GenerationSyncMode.Targeted
@@ -376,7 +356,10 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             await StopHeartbeatAsync(heartbeatStop, heartbeatTask);
             heartbeatStop?.Dispose();
 
-            if (lease != null && stagingIndex != null && !committed) {
+            // Never drop the live generation: an in-place run writes into the index that is
+            // currently serving, so a failed tick must leave it alone (documents are idempotent
+            // upserts and the watermark only advances on a successful promotion).
+            if (lease != null && stagingIndex != null && !committed && !inPlaceGeneration) {
                 try {
                     await _indexService.DeleteFailedVersionedIndexAsync(
                         lease,
@@ -452,34 +435,25 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         int idBatchSize = Math.Clamp(_syncSettings.BatchSize, 1, 2000);
         int indexed = 0;
         int deleted = 0;
-        long afterChangedId = 0;
 
-        while (true) {
-            ProductIdSyncBatch batch = await _repository.GetChangedProductIdBatchAsync(
-                since,
-                currentState.RetailConfigurationSignature,
-                afterChangedId,
-                idBatchSize);
-            if (!batch.HasValidRetailConfiguration || batch.RequiresFullReconciliation) {
-                throw new InvalidOperationException(
-                    "Retail pricing configuration changed during incremental planning; live generation was preserved.");
-            }
-            if (batch.ProductIds.Count == 0) break;
-            if (batch.LastScannedProductId <= afterChangedId) {
-                throw new InvalidOperationException("Incremental product keyset did not advance.");
-            }
+        ProductIdSyncPlan plan = await _repository.GetProductIdSyncPlanAsync(
+            since,
+            currentState.RetailConfigurationSignature);
+        if (!plan.HasValidRetailConfiguration || plan.RequiresFullReconciliation) {
+            throw new InvalidOperationException(
+                "Retail pricing configuration changed during incremental planning; live generation was preserved.");
+        }
 
+        foreach (long[] batch in plan.ProductIds.Chunk(idBatchSize)) {
             (int batchIndexed, int batchDeleted) = await ApplyProductIdsAsync(
                 lease,
-                batch.ProductIds,
+                batch,
                 stagingIndex,
                 expectedConfigurationSignature,
                 pricingRevisions,
                 ct);
             indexed += batchIndexed;
             deleted += batchDeleted;
-            afterChangedId = batch.LastScannedProductId;
-            if (!batch.HasMore) break;
         }
 
         long afterDeletedId = 0;
@@ -732,6 +706,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         string stagingIndex,
         string configurationSignature,
         PricingDependencyRevisions pricingRevisions) {
+        _ = pricingRevisions;
         try {
             SearchActiveGeneration? active = await _state.GetActiveGenerationAsync(CancellationToken.None);
             if (active != null
@@ -742,8 +717,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
                     active.State.RetailConfigurationSignature,
                     configurationSignature,
                     StringComparison.Ordinal)
-                && active.State.RetailConfigurationEpoch == lease.ConfigurationEpoch
-                && active.HasExactIndexedPricingRevisions(pricingRevisions)) {
+                && active.State.RetailConfigurationEpoch == lease.ConfigurationEpoch) {
                 return PromotionResolution.Promoted;
             }
 

@@ -26,15 +26,10 @@ namespace GBA.Ecommerce.Unit.Tests;
 
 public sealed class ElasticsearchProductSearchIsolationTests {
     [Theory]
-    [InlineData(false, "catalogOrganizationIdNonVat", "catalogSourceSystemNonVat", "hasNonVatCatalogAvailability", "retailPrice")]
-    [InlineData(true, "catalogOrganizationIdVat", "catalogSourceSystemVat", "hasVatCatalogAvailability", "retailPriceVat")]
-    public async Task Search_FiltersExactCatalogAndVatVariantBeforePaging(
-        bool withVat,
-        string expectedOrganizationField,
-        string expectedSourceField,
-        string expectedAvailabilityField,
-        string expectedPriceField) {
-        ProductSearchCatalogContext context = CreateCatalogContext(withVat, useIndexedRetailPrice: true);
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Search_FiltersStableWebCatalogIdentityBeforePaging(bool withVat) {
+        ProductSearchCatalogContext context = CreateCatalogContext(withVat, useIndexedRetailPrice: false);
         CapturingHttpMessageHandler handler = new(CreateSearchResponse(context));
         ElasticsearchProductSearchService service = CreateSearchService(handler);
 
@@ -46,12 +41,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
             offset: 14);
 
         ProductSearchDocument product = Assert.Single(result.Documents);
-        Assert.Equal(
-            context.OrganizationId,
-            withVat ? product.CatalogOrganizationIdVat : product.CatalogOrganizationIdNonVat);
-        Assert.Equal(
-            context.Source,
-            withVat ? product.CatalogSourceSystemVat : product.CatalogSourceSystemNonVat);
+        Assert.False(product.Available);
 
         using JsonDocument request = JsonDocument.Parse(Assert.IsType<string>(handler.RequestBody));
         JsonElement root = request.RootElement;
@@ -64,20 +54,14 @@ public sealed class ElasticsearchProductSearchIsolationTests {
             .GetProperty("bool")
             .GetProperty("filter");
         string filterJson = filters.GetRawText();
-        Assert.Contains($"\"{expectedOrganizationField}\":{context.OrganizationId}", filterJson, StringComparison.Ordinal);
-        Assert.Contains($"\"{expectedSourceField}\":\"{context.Source}\"", filterJson, StringComparison.Ordinal);
-        Assert.Contains($"\"{expectedAvailabilityField}\":true", filterJson, StringComparison.Ordinal);
-        Assert.Contains(context.ClientAgreementNetId.ToString(), filterJson, StringComparison.Ordinal);
-        Assert.Contains($"\"{expectedPriceField}\":{{\"gt\":0}}", filterJson, StringComparison.Ordinal);
-        Assert.Contains(context.PricingRevisions!.ProductPricing, filterJson, StringComparison.Ordinal);
-        Assert.Contains(context.PricingRevisions.PricingHierarchy, filterJson, StringComparison.Ordinal);
-        Assert.Contains(context.PricingRevisions.Discounts, filterJson, StringComparison.Ordinal);
-        Assert.Contains(context.PricingRevisions.ExchangeRates, filterJson, StringComparison.Ordinal);
-        Assert.True(product.IndexedPricingRevisions.MatchesExactly(context.PricingRevisions));
-        Assert.DoesNotContain(
-            withVat ? "catalogSourceSystemNonVat" : "catalogSourceSystemVat",
-            filterJson,
-            StringComparison.Ordinal);
+        Assert.Contains("\"isForWeb\":true", filterJson, StringComparison.Ordinal);
+        Assert.Contains("\"productSourceFenix\":\"fenix:\"", filterJson, StringComparison.Ordinal);
+        Assert.Contains("\"isCanonicalFenix\":true", filterJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("catalogOrganizationId", filterJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("hasNonVatCatalogAvailability", filterJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("hasVatCatalogAvailability", filterJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("retailPrice", filterJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("indexedProductPricingRevision", filterJson, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -94,12 +78,12 @@ public sealed class ElasticsearchProductSearchIsolationTests {
         ProductSearchResultWithDocs result = await service.SearchWithDocsAsync("filter", context);
 
         Assert.Empty(result.Documents);
-        Assert.Contains("\"catalogScopes.sourceSystem\":\"amg\"", handler.RequestBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"catalogScopes.", handler.RequestBody, StringComparison.Ordinal);
         Assert.DoesNotContain("fenix:", handler.RequestBody, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Search_PureAmgProductUsesMatchingOrganizationAvailabilityScope() {
+    public async Task Search_LiveHydrationModeDoesNotTrustIndexedAvailability() {
         ProductSearchCatalogContext context = CreateCatalogContext(
             withVat: false,
             useIndexedRetailPrice: false,
@@ -110,12 +94,36 @@ public sealed class ElasticsearchProductSearchIsolationTests {
         ProductSearchResultWithDocs result = await service.SearchWithDocsAsync("filter", context);
 
         ProductSearchDocument product = Assert.Single(result.Documents);
-        Assert.True(product.Available);
-        Assert.Equal(10, product.AvailableQty);
-        Assert.Equal(7, product.AvailableQtyUk);
-        Assert.Equal(3, product.AvailableQtyPl);
+        Assert.False(product.Available);
+        Assert.Equal(0, product.AvailableQty);
+        Assert.Equal(0, product.AvailableQtyUk);
+        Assert.Equal(0, product.AvailableQtyPl);
         Assert.Contains("\"productSourceAmg\":\"amg:\"", handler.RequestBody, StringComparison.Ordinal);
-        Assert.Contains("\"catalogScopes.sourceSystem\":\"amg\"", handler.RequestBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"catalogScopes.", handler.RequestBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"available", handler.RequestBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\"retailPrice", handler.RequestBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\"indexedPricing", handler.RequestBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\"catalogOrganization", handler.RequestBody, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Search_NormalizedEmptyQueryUsesStableCatalogSortWithoutCommercialFields() {
+        ProductSearchCatalogContext context = CreateCatalogContext(
+            withVat: false,
+            useIndexedRetailPrice: false);
+        CapturingHttpMessageHandler handler = new(CreateSearchResponse(context));
+        ElasticsearchProductSearchService service = CreateSearchService(handler);
+
+        await service.SearchWithDocsAsync("---", context);
+
+        using JsonDocument request = JsonDocument.Parse(Assert.IsType<string>(handler.RequestBody));
+        string requestJson = request.RootElement.GetRawText();
+        Assert.True(request.RootElement.GetProperty("query").TryGetProperty("bool", out _));
+        Assert.Contains("\"nameUA.keyword\"", requestJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"available", requestJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\"retailPrice", requestJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\"catalogScopes", requestJson, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\"indexedPricing", requestJson, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
@@ -175,7 +183,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
     public async Task Search_RequestsAndReturnsExactTotalsBeyondTenThousand() {
         ProductSearchCatalogContext context = CreateCatalogContext(
             withVat: false,
-            useIndexedRetailPrice: true);
+            useIndexedRetailPrice: false);
         CapturingHttpMessageHandler handler = new(CreateSearchResponse(
             context,
             total: 25_001,
@@ -193,7 +201,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
     public async Task Search_NonExactTotalRelation_FailsClosed() {
         ProductSearchCatalogContext context = CreateCatalogContext(
             withVat: false,
-            useIndexedRetailPrice: true);
+            useIndexedRetailPrice: false);
         CapturingHttpMessageHandler handler = new(CreateSearchResponse(
             context,
             total: 10_000,
@@ -207,7 +215,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
     }
 
     [Fact]
-    public async Task Search_NeverAcceptsDocumentFromAnotherOrganization() {
+    public async Task Search_LiveHydrationModeDoesNotFilterByIndexedOrganization() {
         ProductSearchCatalogContext context = CreateCatalogContext(
             withVat: false,
             useIndexedRetailPrice: false);
@@ -218,32 +226,32 @@ public sealed class ElasticsearchProductSearchIsolationTests {
 
         ProductSearchResultWithDocs result = await service.SearchWithDocsAsync("filter", context);
 
-        Assert.Empty(result.Documents);
-        Assert.Contains(
-            $"\"catalogScopes.organizationId\":{context.OrganizationId}",
-            handler.RequestBody,
-            StringComparison.Ordinal);
+        Assert.Single(result.Documents);
+        Assert.DoesNotContain("\"catalogScopes.", handler.RequestBody, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Search_AnonymousZeroPriceHitFailsClosedEvenIfElasticsearchReturnsIt() {
+    public async Task Search_LiveHydrationModeDoesNotUseIndexedPriceAsEligibility() {
         ProductSearchCatalogContext context = CreateCatalogContext(
             withVat: true,
-            useIndexedRetailPrice: true);
+            useIndexedRetailPrice: false);
         CapturingHttpMessageHandler handler = new(CreateSearchResponse(context, retailPrice: 0m));
         ElasticsearchProductSearchService service = CreateSearchService(handler);
 
         ProductSearchResultWithDocs result = await service.SearchWithDocsAsync("filter", context);
 
-        Assert.Empty(result.Documents);
-        Assert.Contains("\"retailPriceVat\":{\"gt\":0}", handler.RequestBody, StringComparison.Ordinal);
+        Assert.Single(result.Documents);
+        Assert.DoesNotContain(
+            "\"range\":{\"retailPriceVat\"",
+            handler.RequestBody,
+            StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Search_AnonymousContextNeverAcceptsAnotherRetailAgreement() {
+    public async Task Search_LiveHydrationModeDoesNotFilterByIndexedAgreement() {
         ProductSearchCatalogContext context = CreateCatalogContext(
             withVat: false,
-            useIndexedRetailPrice: true);
+            useIndexedRetailPrice: false);
         CapturingHttpMessageHandler handler = new(CreateSearchResponse(
             context,
             documentAgreementNetUid: Guid.NewGuid()));
@@ -251,8 +259,8 @@ public sealed class ElasticsearchProductSearchIsolationTests {
 
         ProductSearchResultWithDocs result = await service.SearchWithDocsAsync("filter", context);
 
-        Assert.Empty(result.Documents);
-        Assert.Contains(context.ClientAgreementNetId.ToString(), handler.RequestBody, StringComparison.Ordinal);
+        Assert.Single(result.Documents);
+        Assert.DoesNotContain(context.ClientAgreementNetId.ToString(), handler.RequestBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -318,7 +326,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
     public async Task Search_RequestWindowIsBoundedAndOversizedQueryFailsClosed() {
         ProductSearchCatalogContext context = CreateCatalogContext(
             withVat: false,
-            useIndexedRetailPrice: true);
+            useIndexedRetailPrice: false);
         CapturingHttpMessageHandler handler = new(CreateSearchResponse(context));
         ElasticsearchProductSearchService service = CreateSearchService(handler);
 
@@ -519,16 +527,14 @@ public sealed class ElasticsearchProductSearchIsolationTests {
     }
 
     [Fact]
-    public async Task ChangeTrackingAdvanceAfterGeneration_CannotServeOldIndexedPrices() {
+    public async Task ChangeTrackingAdvanceAfterGeneration_DoesNotBlockStaticCatalogSearch() {
         ProductSearchCatalogContext context = CreateCatalogContext(
             withVat: false,
             useIndexedRetailPrice: true);
         PricingDependencyRevisions staleRevisions = context.PricingRevisions! with {
             ProductPricing = "product:0"
         };
-        CapturingHttpMessageHandler handler = new(
-            throwOnRequest: true,
-            responseJson: "");
+        CapturingHttpMessageHandler handler = new(CreateSearchResponse(context));
         Mock<ISearchSyncStateStore> stateStore = new(MockBehavior.Strict);
         stateStore.Setup(store => store.GetActiveGenerationAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateActiveGeneration(staleRevisions));
@@ -544,9 +550,11 @@ public sealed class ElasticsearchProductSearchIsolationTests {
             "filter",
             context);
 
-        Assert.Empty(result.Documents);
-        Assert.Equal(0, result.TotalCount);
-        Assert.Equal(0, handler.RequestCount);
+        Assert.Single(result.Documents);
+        Assert.Equal(1, result.TotalCount);
+        Assert.Equal(1, handler.RequestCount);
+        Assert.DoesNotContain("pricingRevisions", handler.RequestBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("retailPrice", handler.RequestBody, StringComparison.Ordinal);
         stateStore.VerifyAll();
     }
 
@@ -604,17 +612,27 @@ public sealed class ElasticsearchProductSearchIsolationTests {
                     && context.ClientAgreementNetId == pricingContext.ClientAgreementNetId
                     && context.PricingId == pricingContext.PricingId
                     && context.CurrencyId == pricingContext.CurrencyId
-                    && context.UseIndexedRetailPrice
+                    && !context.UseIndexedRetailPrice
                     && pricingContext.DependencyRevisions.MatchesExactly(
                         context.PricingRevisions)),
                 "uk",
-                20,
+                100,
                 0,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProductSearchResultWithDocs {
-                Documents = [new ProductSearchDocument { Id = 42, RetailPriceVat = 156m }]
+                TotalCount = 1,
+                Documents = [new ProductSearchDocument { Id = 42, RetailPriceVat = 999m }]
             });
         Mock<IPriceCacheService> prices = new(MockBehavior.Strict);
+        prices.Setup(service => service.GetPrices(
+                It.Is<List<long>>(ids => ids.SequenceEqual(new long[] { 42 })),
+                Guid.Empty,
+                pricingContext,
+                "uk",
+                It.IsAny<Func<List<long>, Dictionary<long, ProductPriceInfo>>>()))
+            .Returns(new Dictionary<long, ProductPriceInfo> {
+                [42] = new() { Price = 156m, CurrencyCode = "UAH" }
+            });
         ProductsController controller = CreateController(products, search, prices);
 
         IActionResult action = await controller.GetAllFromSearchAsync("filter", 20, 0, withVat: 1);
@@ -623,8 +641,12 @@ public sealed class ElasticsearchProductSearchIsolationTests {
         ProtectedSearchProduct product = Assert.Single(body);
         Assert.Equal(42, product.Id);
         Assert.Equal("UAH", product.CurrencyCode);
+        Assert.Equal(0, product.AvailableQtyUk);
+        Assert.Equal(7, product.AvailableQtyUkVAT);
+        Assert.Equal(0, product.AvailableQtyPl);
+        Assert.Equal(3, product.AvailableQtyPlVAT);
         products.Verify(service => service.GetPricingContext(Guid.Empty, true), Times.Once);
-        prices.VerifyNoOtherCalls();
+        prices.VerifyAll();
     }
 
     [Fact]
@@ -647,7 +669,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
                 "filter",
                 It.Is<ProductSearchCatalogContext>(context => !context.UseIndexedRetailPrice),
                 "uk",
-                1000,
+                100,
                 0,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProductSearchResultWithDocs {
@@ -675,8 +697,9 @@ public sealed class ElasticsearchProductSearchIsolationTests {
         Assert.Equal(42, product.Id);
         Assert.Equal("PLN", product.CurrencyCode);
         string protectedPrice = Assert.IsType<string>(product.P);
-        Assert.StartsWith("210.00,", protectedPrice, StringComparison.Ordinal);
-        Assert.DoesNotContain("999", protectedPrice, StringComparison.Ordinal);
+        string decodedPrice = DecodeProtectedPrices(protectedPrice);
+        Assert.StartsWith("210.00,", decodedPrice, StringComparison.Ordinal);
+        Assert.DoesNotContain("999", decodedPrice, StringComparison.Ordinal);
         products.VerifyAll();
         search.VerifyAll();
         prices.VerifyAll();
@@ -703,7 +726,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
                 "filter",
                 It.Is<ProductSearchCatalogContext>(context => !context.UseIndexedRetailPrice),
                 "uk",
-                1000,
+                100,
                 0,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProductSearchResultWithDocs {
@@ -737,8 +760,9 @@ public sealed class ElasticsearchProductSearchIsolationTests {
 
         ProtectedSearchProduct product = Assert.Single(ReadProducts(action));
         string protectedPrice = Assert.IsType<string>(product.P);
-        Assert.StartsWith("210.00,", protectedPrice, StringComparison.Ordinal);
-        Assert.DoesNotContain("999", protectedPrice, StringComparison.Ordinal);
+        string decodedPrice = DecodeProtectedPrices(protectedPrice);
+        Assert.StartsWith("210.00,", decodedPrice, StringComparison.Ordinal);
+        Assert.DoesNotContain("999", decodedPrice, StringComparison.Ordinal);
         state.VerifyAll();
         products.VerifyAll();
         search.VerifyAll();
@@ -758,7 +782,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
                     context.OrganizationId == pricingContext.OrganizationId
                     && context.Source == pricingContext.Source
                     && context.WithVat
-                    && context.UseIndexedRetailPrice
+                    && !context.UseIndexedRetailPrice
                     && pricingContext.DependencyRevisions.MatchesExactly(
                         context.PricingRevisions)),
                 "uk",
@@ -768,7 +792,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
             .ReturnsAsync(new ProductSearchResult { ProductIds = [42], TotalCount = 1 });
         Mock<ISearchSyncStateStore> state = new(MockBehavior.Strict);
         state.Setup(store => store.GetActiveGenerationAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateActiveGeneration(pricingContext.DependencyRevisions));
+            .ReturnsAsync(CreateActiveGeneration(SearchIndexSchema.LiveHydrationMarker));
         ElasticsearchController controller = new(
             Mock.Of<IElasticsearchIndexService>(),
             Mock.Of<IElasticsearchSyncService>(),
@@ -933,12 +957,12 @@ public sealed class ElasticsearchProductSearchIsolationTests {
                 "filter",
                 It.Is<ProductSearchCatalogContext>(context => !context.UseIndexedRetailPrice),
                 "uk",
-                1000,
+                100,
                 0,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProductSearchResultWithDocs {
-                TotalCount = 1002,
-                Documents = Enumerable.Range(1, 1000)
+                TotalCount = 102,
+                Documents = Enumerable.Range(1, 100)
                     .Select(id => new ProductSearchDocument { Id = id })
                     .ToList()
             });
@@ -946,39 +970,39 @@ public sealed class ElasticsearchProductSearchIsolationTests {
                 "filter",
                 It.Is<ProductSearchCatalogContext>(context => !context.UseIndexedRetailPrice),
                 "uk",
-                1000,
-                1000,
+                100,
+                100,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProductSearchResultWithDocs {
-                TotalCount = 1002,
+                TotalCount = 102,
                 Documents = [
-                    new ProductSearchDocument { Id = 1001 },
-                    new ProductSearchDocument { Id = 1002 }
+                    new ProductSearchDocument { Id = 101 },
+                    new ProductSearchDocument { Id = 102 }
                 ]
             });
         Mock<IPriceCacheService> prices = new(MockBehavior.Strict);
         prices.Setup(service => service.GetPrices(
-                It.Is<List<long>>(ids => ids.SequenceEqual(Enumerable.Range(1, 1000).Select(id => (long)id))),
+                It.Is<List<long>>(ids => ids.SequenceEqual(Enumerable.Range(1, 100).Select(id => (long)id))),
                 clientNetId,
                 pricingContext,
                 "uk",
                 It.IsAny<Func<List<long>, Dictionary<long, ProductPriceInfo>>>()))
             .Returns([]);
         prices.Setup(service => service.GetPrices(
-                It.Is<List<long>>(ids => ids.SequenceEqual(new long[] { 1001, 1002 })),
+                It.Is<List<long>>(ids => ids.SequenceEqual(new long[] { 101, 102 })),
                 clientNetId,
                 pricingContext,
                 "uk",
                 It.IsAny<Func<List<long>, Dictionary<long, ProductPriceInfo>>>()))
             .Returns(new Dictionary<long, ProductPriceInfo> {
-                [1001] = new() { Price = 120m, CurrencyCode = "UAH" },
-                [1002] = new() { Price = 121m, CurrencyCode = "UAH" }
+                [101] = new() { Price = 120m, CurrencyCode = "UAH" },
+                [102] = new() { Price = 121m, CurrencyCode = "UAH" }
             });
         ProductsController controller = CreateController(products, search, prices, clientNetId);
 
         IActionResult action = await controller.GetAllFromSearchAsync("filter", 2, 0);
 
-        Assert.Equal(new long[] { 1001, 1002 }, ReadProducts(action).Select(product => product.Id));
+        Assert.Equal(new long[] { 101, 102 }, ReadProducts(action).Select(product => product.Id));
         search.VerifyAll();
         prices.VerifyAll();
     }
@@ -995,7 +1019,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
                 "filter",
                 It.Is<ProductSearchCatalogContext>(context => !context.UseIndexedRetailPrice),
                 "uk",
-                1000,
+                100,
                 It.Is<int>(offset => offset >= 0 && offset < 10_000),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync((
@@ -1012,7 +1036,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
                 });
         Mock<IPriceCacheService> prices = new(MockBehavior.Strict);
         prices.Setup(service => service.GetPrices(
-                It.Is<List<long>>(ids => ids.Count == 1000),
+                It.Is<List<long>>(ids => ids.Count == 100),
                 clientNetId,
                 pricingContext,
                 "uk",
@@ -1027,15 +1051,33 @@ public sealed class ElasticsearchProductSearchIsolationTests {
             "filter",
             It.IsAny<ProductSearchCatalogContext>(),
             "uk",
-            1000,
+            100,
             It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Exactly(10));
+            It.IsAny<CancellationToken>()), Times.Exactly(100));
         prices.Verify(service => service.GetPrices(
             It.IsAny<List<long>>(),
             clientNetId,
             pricingContext,
             "uk",
-            It.IsAny<Func<List<long>, Dictionary<long, ProductPriceInfo>>>()), Times.Exactly(10));
+            It.IsAny<Func<List<long>, Dictionary<long, ProductPriceInfo>>>()), Times.Exactly(100));
+    }
+
+    /// <summary>
+    /// Mirrors the AES-CBC unwrap the storefront performs on the protected price payload,
+    /// so the tests assert the real wire format instead of plaintext prices.
+    /// </summary>
+    private static string DecodeProtectedPrices(string encoded) {
+        string base64 = encoded.Replace('-', '+').Replace('_', '/');
+        base64 = base64.PadRight(base64.Length + (4 - base64.Length % 4) % 4, '=');
+
+        using System.Security.Cryptography.Aes aes = System.Security.Cryptography.Aes.Create();
+        aes.Key = System.Text.Encoding.UTF8.GetBytes(GBA.Common.Configuration.SecuritySettings.Instance.PriceEncryptionKey);
+        aes.IV = System.Text.Encoding.UTF8.GetBytes(GBA.Common.Configuration.SecuritySettings.Instance.PriceEncryptionIV);
+        using System.Security.Cryptography.ICryptoTransform decryptor = aes.CreateDecryptor();
+
+        byte[] cipher = Convert.FromBase64String(base64);
+        byte[] plain = decryptor.TransformFinalBlock(cipher, 0, cipher.Length);
+        return System.Text.Encoding.UTF8.GetString(plain);
     }
 
     private static ProductSearchCatalogContext CreateCatalogContext(
@@ -1159,7 +1201,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
             .ReturnsAsync(new SearchActiveGeneration(
                 "products_20260714030000000",
                 1,
-                CreateReadySyncState(TestPricingRevisions())));
+                CreateReadySyncState(SearchIndexSchema.LiveHydrationMarker)));
         return new ElasticsearchProductSearchService(
             client,
             Options.Create(new ElasticsearchSettings { IndexName = "products" }),
@@ -1175,6 +1217,18 @@ public sealed class ElasticsearchProductSearchIsolationTests {
         Mock<IPriceCacheService> prices,
         Guid? clientNetId = null,
         Mock<ISearchSyncStateStore>? syncStateStore = null) {
+        products.Setup(service => service.GetCatalogAvailabilityOnly(
+                It.IsAny<List<long>>(),
+                It.IsAny<ProductPricingContext>()))
+            .Returns((List<long> ids, ProductPricingContext _) => ids.ToDictionary(
+                id => id,
+                id => new ProductCatalogAvailabilityInfo {
+                    Id = id,
+                    AvailableQtyUk = 7,
+                    AvailableQtyPl = 3,
+                    AvailableQty = 10
+                }));
+
         DefaultHttpContext httpContext = new();
         if (clientNetId.HasValue) {
             httpContext.Items[UserNetIdMiddleware.NetIdKey] = clientNetId.Value;
@@ -1183,7 +1237,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
         if (syncStateStore == null) {
             syncStateStore = new Mock<ISearchSyncStateStore>();
             syncStateStore.Setup(store => store.GetActiveGenerationAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(CreateActiveGeneration(TestPricingRevisions()));
+                .ReturnsAsync(CreateActiveGeneration(SearchIndexSchema.LiveHydrationMarker));
         }
 
         ProductsController controller = new(
@@ -1220,7 +1274,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
         DateTime rebuildCompleted = watermark.AddMinutes(-1);
         return new SearchSyncState(
             watermark,
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             rebuildCompleted,
             RetailConfigurationSignature: "test-config",
             RetailConfigurationEpoch: 1,
@@ -1248,7 +1302,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
             return stateStore;
         }
 
-        SearchActiveGeneration generation = CreateActiveGeneration(TestPricingRevisions());
+        SearchActiveGeneration generation = CreateActiveGeneration(SearchIndexSchema.LiveHydrationMarker);
         SearchSyncState state = failure switch {
             ServingStateFailure.MissingWatermark => generation.State with {
                 WatermarkUtc = DateTime.MinValue
@@ -1272,7 +1326,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
         DateTime watermark = DateTime.UtcNow.AddMinutes(-10);
         return new SearchSyncState(
             watermark,
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             LastFullRebuildUtc: watermark.AddMinutes(-1),
             RetailConfigurationSignature: "test-config",
             RetailConfigurationEpoch: 1,

@@ -23,9 +23,6 @@ public sealed record ProductSearchCatalogContext(
                 || string.IsNullOrWhiteSpace(Source))
                 return false;
 
-            if (UseIndexedRetailPrice && PricingRevisions?.IsValid != true)
-                return false;
-
             return ProductSourceIdentitySql.TryNormalizeSourceWorld(Source, out string normalized)
                    && string.Equals(Source, normalized, StringComparison.Ordinal);
         }

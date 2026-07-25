@@ -134,6 +134,7 @@ public sealed class ElasticsearchController(
         int withVat,
         SearchActiveGeneration servingGeneration,
         CancellationToken ct) {
+        _ = servingGeneration;
         string locale = RouteData.Values["culture"]?.ToString() ?? "uk";
         int esLimit = limit <= 0 ? _defaultSearchLimit : Math.Min(limit, _maxSearchLimit);
         int esOffset = offset < 0 ? 0 : Math.Min(offset, _maxSearchOffset);
@@ -144,14 +145,6 @@ public sealed class ElasticsearchController(
         }
 
         PricingDependencyRevisions pricingRevisions = pricingContext.DependencyRevisions;
-        if (!pricingRevisions.IsValid) {
-            return Ok(SuccessResponseBody(ProductSearchResult.Empty));
-        }
-
-        if (!servingGeneration.HasExactIndexedPricingRevisions(pricingRevisions)) {
-            return Ok(SuccessResponseBody(ProductSearchResult.Empty));
-        }
-
         ProductSearchCatalogContext catalogContext = new(
             pricingContext.OrganizationId,
             pricingContext.Source,
@@ -159,7 +152,7 @@ public sealed class ElasticsearchController(
             pricingContext.ClientAgreementNetId,
             pricingContext.PricingId.GetValueOrDefault(),
             pricingContext.CurrencyId.GetValueOrDefault(),
-            UseIndexedRetailPrice: true,
+            UseIndexedRetailPrice: false,
             pricingRevisions);
         ProductSearchResult result = catalogContext.IsValid
             ? await searchService.SearchAsync(query, catalogContext, locale, esLimit, esOffset, ct)

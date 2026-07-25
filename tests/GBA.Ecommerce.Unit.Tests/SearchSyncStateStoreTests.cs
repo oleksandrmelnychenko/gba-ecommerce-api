@@ -19,7 +19,7 @@ public sealed class SearchSyncStateStoreTests {
         SearchSyncState state = await store.GetStateAsync();
 
         Assert.Equal(watermark, state.WatermarkUtc, TimeSpan.FromMilliseconds(1));
-        Assert.True(state.RequiresFullRebuild(EcommercePricingSchema.Version));
+        Assert.True(state.RequiresFullRebuild(SearchIndexSchema.CurrentVersion));
     }
 
     [Fact]
@@ -32,7 +32,7 @@ public sealed class SearchSyncStateStoreTests {
 
         bool persisted = await store.SetStateAsync(
             watermark,
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             expectedConfigurationSignature: null,
             configurationSignature: "config-v1");
 
@@ -40,7 +40,7 @@ public sealed class SearchSyncStateStoreTests {
         HttpRequestMessage request = Assert.Single(handler.Requests, r => r.Method == HttpMethod.Put);
         Assert.Contains("op_type=create", request.RequestUri!.Query, StringComparison.Ordinal);
         string body = await request.Content!.ReadAsStringAsync();
-        Assert.Contains($"\"schemaVersion\":\"{EcommercePricingSchema.Version}\"", body, StringComparison.Ordinal);
+        Assert.Contains($"\"schemaVersion\":\"{SearchIndexSchema.CurrentVersion}\"", body, StringComparison.Ordinal);
         Assert.Contains("\"retailConfigurationSignature\":\"config-v1\"", body, StringComparison.Ordinal);
         Assert.Contains("\"lastSyncTime\"", body, StringComparison.Ordinal);
     }
@@ -60,7 +60,7 @@ public sealed class SearchSyncStateStoreTests {
 
         bool persisted = await store.SetFullRebuildStateAsync(
             requestedWatermark,
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             fullRebuildTime,
             expectedConfigurationSignature: null,
             configurationSignature: "config-v2");
@@ -108,11 +108,11 @@ public sealed class SearchSyncStateStoreTests {
         DateTime now = DateTime.UtcNow;
         SearchSyncState state = new(
             now,
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             LastFullRebuildUtc: now.AddMinutes(-1),
             LastFullRebuildStartedUtc: now.AddMinutes(-2));
 
-        Assert.False(state.RequiresFullRebuild(EcommercePricingSchema.Version));
+        Assert.False(state.RequiresFullRebuild(SearchIndexSchema.CurrentVersion));
     }
 
     [Fact]
@@ -120,10 +120,10 @@ public sealed class SearchSyncStateStoreTests {
         DateTime now = DateTime.UtcNow;
         SearchSyncState state = new(
             now,
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             LastFullRebuildUtc: now.AddMinutes(-1));
 
-        Assert.True(state.RequiresFullRebuild(EcommercePricingSchema.Version));
+        Assert.True(state.RequiresFullRebuild(SearchIndexSchema.CurrentVersion));
         Assert.False(state.HasCompletedRequiredIncrementalCatchUp);
     }
 
@@ -133,7 +133,7 @@ public sealed class SearchSyncStateStoreTests {
         DateTime rebuildCompleted = rebuildStarted.AddMinutes(1);
         SearchSyncState pending = new(
             DateTime.UtcNow,
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             rebuildCompleted,
             LastFullRebuildStartedUtc: rebuildStarted);
         SearchSyncState caughtUp = pending with {
@@ -147,7 +147,7 @@ public sealed class SearchSyncStateStoreTests {
     [Fact]
     public void FullRebuildDate_IsSharedThroughState() {
         DateTime fullRebuild = new(2026, 7, 14, 3, 10, 0, DateTimeKind.Utc);
-        SearchSyncState state = new(DateTime.UtcNow, EcommercePricingSchema.Version, fullRebuild);
+        SearchSyncState state = new(DateTime.UtcNow, SearchIndexSchema.CurrentVersion, fullRebuild);
 
         Assert.True(state.WasFullyRebuiltOn(new DateOnly(2026, 7, 14)));
         Assert.False(state.WasFullyRebuiltOn(new DateOnly(2026, 7, 15)));
@@ -249,14 +249,14 @@ public sealed class SearchSyncStateStoreTests {
 
         bool persisted = await firstReplica.SetStateAsync(
             DateTime.UtcNow,
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             expectedConfigurationSignature: null,
             configurationSignature: "config-shared-v1");
         SearchSyncState observed = await secondReplica.GetStateAsync();
 
         Assert.True(persisted);
         Assert.Equal("config-shared-v1", observed.RetailConfigurationSignature);
-        Assert.Equal(EcommercePricingSchema.Version, observed.SchemaVersion);
+        Assert.Equal(SearchIndexSchema.CurrentVersion, observed.SchemaVersion);
     }
 
     [Fact]
@@ -264,7 +264,7 @@ public sealed class SearchSyncStateStoreTests {
         DateTime watermark = DateTime.UtcNow;
         StubHttpMessageHandler handler = new(_ => StateDocumentResponse(
             $"{{\"lastSyncTime\":\"{watermark:O}\","
-            + $"\"schemaVersion\":\"{EcommercePricingSchema.Version}\","
+            + $"\"schemaVersion\":\"{SearchIndexSchema.CurrentVersion}\","
             + "\"retailConfigurationSignature\":\"config-v2\"}}",
             sequenceNumber: 12,
             primaryTerm: 4));
@@ -272,7 +272,7 @@ public sealed class SearchSyncStateStoreTests {
 
         bool persisted = await store.SetStateAsync(
             watermark.AddMinutes(1),
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             expectedConfigurationSignature: "config-v1",
             configurationSignature: "config-v1");
 

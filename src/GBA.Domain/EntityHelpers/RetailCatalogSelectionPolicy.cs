@@ -21,15 +21,16 @@ public sealed class SqlRetailCatalogSelectionProvider : IRetailCatalogSelectionP
 
 /// <summary>
 /// The single SQL policy used to resolve anonymous retail storage and pricing contexts.
-/// Search projection and request-time pricing must use this exact selector.
+/// Request-time price and availability hydration must use this exact selector.
 /// </summary>
 public static class RetailCatalogSelectionPolicy {
     public const string SqlCtes = @"
-FenixRetailStorageCandidates AS (
+RetailStorageCandidates AS (
     SELECT
         s.ID AS StorageId,
         s.OrganizationID,
         s.ForVatProducts,
+        o.PriceSourceIsAmg AS IsAmgWorld,
         s.Updated AS StorageUpdated,
         ROW_NUMBER() OVER (
             PARTITION BY s.ForVatProducts
@@ -41,7 +42,6 @@ FenixRetailStorageCandidates AS (
       AND s.ForEcommerce = 1
       AND s.ForDefective = 0
       AND o.Deleted = 0
-      AND o.PriceSourceIsAmg = 0
       AND EXISTS (
           SELECT 1
           FROM Client retailClient
@@ -63,32 +63,42 @@ FenixRetailStorageCandidates AS (
             AND retailClient.IsForRetail = 1
             AND retailAgreement.OrganizationID = s.OrganizationID
             AND retailAgreement.WithVATAccounting = s.ForVatProducts
-            AND (ISNULL(DATALENGTH(retailAgreement.SourceFenixID), 0) > 0
-              OR retailAgreement.SourceFenixCode IS NOT NULL)
-            AND ISNULL(DATALENGTH(retailAgreement.SourceAmgID), 0) = 0
-            AND retailAgreement.SourceAmgCode IS NULL
+            -- The agreement must be marked for the SAME pricing world as its organization:
+            -- Fenix orgs carry SourceFenix*, AMG orgs carry SourceAmg*, never both.
+            AND (
+                (o.PriceSourceIsAmg = 0
+                 AND (ISNULL(DATALENGTH(retailAgreement.SourceFenixID), 0) > 0
+                   OR retailAgreement.SourceFenixCode IS NOT NULL)
+                 AND ISNULL(DATALENGTH(retailAgreement.SourceAmgID), 0) = 0
+                 AND retailAgreement.SourceAmgCode IS NULL)
+             OR (o.PriceSourceIsAmg = 1
+                 AND (ISNULL(DATALENGTH(retailAgreement.SourceAmgID), 0) > 0
+                   OR retailAgreement.SourceAmgCode IS NOT NULL)
+                 AND ISNULL(DATALENGTH(retailAgreement.SourceFenixID), 0) = 0
+                 AND retailAgreement.SourceFenixCode IS NULL)
+            )
       )
 ),
-FenixRetailStorage AS (
-    SELECT StorageId, OrganizationID, ForVatProducts, StorageUpdated
-    FROM FenixRetailStorageCandidates
+RetailStorage AS (
+    SELECT StorageId, OrganizationID, ForVatProducts, IsAmgWorld, StorageUpdated
+    FROM RetailStorageCandidates
     WHERE RowNumber = 1
 ),
-FenixEcommerceStorages AS (
+RetailEcommerceStorages AS (
     SELECT
         s.ID,
         s.Locale,
         selected.ForVatProducts AS CatalogWithVat,
         selected.OrganizationID AS CatalogOrganizationId
     FROM Storage s
-    INNER JOIN FenixRetailStorage selected
+    INNER JOIN RetailStorage selected
         ON selected.OrganizationID = s.OrganizationID
        AND selected.ForVatProducts = s.ForVatProducts
     WHERE s.Deleted = 0
       AND s.ForEcommerce = 1
       AND s.ForDefective = 0
 ),
-FenixProductAvailability AS (
+RetailProductAvailability AS (
     SELECT
         pa.ProductID,
         s.CatalogWithVat,
@@ -97,11 +107,11 @@ FenixProductAvailability AS (
         SUM(CASE WHEN s.Locale = 'pl' THEN pa.Amount ELSE 0 END) AS AvailableQtyPl,
         SUM(pa.Amount) AS AvailableQty
     FROM ProductAvailability pa
-    INNER JOIN FenixEcommerceStorages s ON s.ID = pa.StorageID
+    INNER JOIN RetailEcommerceStorages s ON s.ID = pa.StorageID
     WHERE pa.Deleted = 0
     GROUP BY pa.ProductID, s.CatalogWithVat, s.CatalogOrganizationId
 ),
-FenixRetailAgreementPricing AS (
+RetailAgreementPricing AS (
     SELECT
         a.WithVATAccounting,
         a.OrganizationID AS CatalogOrganizationId,
@@ -109,16 +119,32 @@ FenixRetailAgreementPricing AS (
         a.CurrencyID AS CatalogCurrencyId,
         a.SourceFenixID,
         a.SourceFenixCode,
+        a.SourceAmgID,
+        a.SourceAmgCode,
+        selectedStorage.IsAmgWorld,
         a.Updated AS AgreementUpdated,
         ca.Updated AS ClientAgreementUpdated,
         CASE
-            WHEN DATALENGTH(a.SourceFenixID) > 0
-                THEN CONCAT(
-                    'fenix:id-', CONVERT(varchar(128), a.SourceFenixID, 2),
-                    CASE WHEN a.SourceFenixCode IS NOT NULL
-                        THEN CONCAT('|code-', CONVERT(varchar(20), a.SourceFenixCode))
-                        ELSE '' END)
-            ELSE CONCAT('fenix:code-', CONVERT(varchar(20), a.SourceFenixCode))
+            WHEN selectedStorage.IsAmgWorld = 1 THEN
+                CASE
+                    WHEN DATALENGTH(a.SourceAmgID) > 0
+                        THEN CONCAT(
+                            'amg:id-', CONVERT(varchar(128), a.SourceAmgID, 2),
+                            CASE WHEN a.SourceAmgCode IS NOT NULL
+                                THEN CONCAT('|code-', CONVERT(varchar(20), a.SourceAmgCode))
+                                ELSE '' END)
+                    ELSE CONCAT('amg:code-', CONVERT(varchar(20), a.SourceAmgCode))
+                END
+            ELSE
+                CASE
+                    WHEN DATALENGTH(a.SourceFenixID) > 0
+                        THEN CONCAT(
+                            'fenix:id-', CONVERT(varchar(128), a.SourceFenixID, 2),
+                            CASE WHEN a.SourceFenixCode IS NOT NULL
+                                THEN CONCAT('|code-', CONVERT(varchar(20), a.SourceFenixCode))
+                                ELSE '' END)
+                    ELSE CONCAT('fenix:code-', CONVERT(varchar(20), a.SourceFenixCode))
+                END
         END AS CatalogAgreementSource,
         currency.Code AS CatalogCurrencyCode,
         pr.NetUID AS PricingNetUid,
@@ -135,7 +161,7 @@ FenixRetailAgreementPricing AS (
     INNER JOIN Agreement a ON a.ID = ca.AgreementID
     INNER JOIN Pricing pr ON pr.ID = a.PricingID
     INNER JOIN Currency currency ON currency.ID = a.CurrencyID
-    INNER JOIN FenixRetailStorage selectedStorage
+    INNER JOIN RetailStorage selectedStorage
         ON selectedStorage.OrganizationID = a.OrganizationID
        AND selectedStorage.ForVatProducts = a.WithVATAccounting
     WHERE c.IsForRetail = 1
@@ -144,9 +170,16 @@ FenixRetailAgreementPricing AS (
       AND ca.Deleted = 0
       AND a.IsActive = 1
       AND a.Deleted = 0
-      AND (ISNULL(DATALENGTH(a.SourceFenixID), 0) > 0 OR a.SourceFenixCode IS NOT NULL)
-      AND ISNULL(DATALENGTH(a.SourceAmgID), 0) = 0
-      AND a.SourceAmgCode IS NULL
+      AND (
+            (selectedStorage.IsAmgWorld = 0
+             AND (ISNULL(DATALENGTH(a.SourceFenixID), 0) > 0 OR a.SourceFenixCode IS NOT NULL)
+             AND ISNULL(DATALENGTH(a.SourceAmgID), 0) = 0
+             AND a.SourceAmgCode IS NULL)
+         OR (selectedStorage.IsAmgWorld = 1
+             AND (ISNULL(DATALENGTH(a.SourceAmgID), 0) > 0 OR a.SourceAmgCode IS NOT NULL)
+             AND ISNULL(DATALENGTH(a.SourceFenixID), 0) = 0
+             AND a.SourceFenixCode IS NULL)
+      )
       AND pr.Deleted = 0
       AND currency.Deleted = 0
 ),
@@ -168,8 +201,8 @@ RetailPricingConfig AS (
         nonVat.ClientAgreementNetUid AS NonVatAgreementNetUid,
         vat.PricingNetUid AS VatPricingNetUid,
         vat.ClientAgreementNetUid AS VatAgreementNetUid
-    FROM FenixRetailAgreementPricing nonVat
-    CROSS JOIN FenixRetailAgreementPricing vat
+    FROM RetailAgreementPricing nonVat
+    CROSS JOIN RetailAgreementPricing vat
     WHERE nonVat.WithVATAccounting = 0
       AND nonVat.RowNumber = 1
       AND vat.WithVATAccounting = 1
@@ -190,11 +223,13 @@ SELECT TOP (1)
     agreement.CatalogCurrencyId AS CurrencyId,
     agreement.SourceFenixID,
     agreement.SourceFenixCode,
+    agreement.SourceAmgID,
+    agreement.SourceAmgCode,
     agreement.CatalogAgreementSource,
     agreement.ClientAgreementUpdated,
     agreement.AgreementUpdated
-FROM FenixRetailStorage storage
-INNER JOIN FenixRetailAgreementPricing agreement
+FROM RetailStorage storage
+INNER JOIN RetailAgreementPricing agreement
     ON agreement.CatalogOrganizationId = storage.OrganizationID
    AND agreement.WithVATAccounting = storage.ForVatProducts
    AND agreement.RowNumber = 1
@@ -217,9 +252,20 @@ public sealed class RetailCatalogSelection {
     public long CurrencyId { get; set; }
     public byte[]? SourceFenixId { get; set; }
     public long? SourceFenixCode { get; set; }
+    public byte[]? SourceAmgId { get; set; }
+    public long? SourceAmgCode { get; set; }
     public string CatalogAgreementSource { get; set; } = string.Empty;
     public DateTime ClientAgreementUpdated { get; set; }
     public DateTime AgreementUpdated { get; set; }
+
+    public string SourceWorld => ExternalSourceIdentity.TryCreate(
+        SourceFenixId,
+        SourceFenixCode,
+        SourceAmgId,
+        SourceAmgCode,
+        out ExternalSourceIdentity? source)
+        ? source!.System
+        : string.Empty;
 
     public bool IsValid => StorageId > 0
                            && OrganizationId > 0
@@ -230,8 +276,8 @@ public sealed class RetailCatalogSelection {
                            && ExternalSourceIdentity.TryCreate(
                                SourceFenixId,
                                SourceFenixCode,
-                               null,
-                               null,
+                               SourceAmgId,
+                               SourceAmgCode,
                                out ExternalSourceIdentity? source)
                            && string.Equals(source!.Value, CatalogAgreementSource, StringComparison.Ordinal);
 
@@ -243,11 +289,19 @@ public sealed class RetailCatalogSelection {
                 IsActive = true,
                 WithVATAccounting = WithVat,
                 OrganizationId = OrganizationId,
-                Organization = new Organization { Id = OrganizationId },
+                Organization = new Organization {
+                    Id = OrganizationId,
+                    PriceSourceIsAmg = string.Equals(
+                        SourceWorld,
+                        ProductSourceIdentitySql.Amg,
+                        StringComparison.Ordinal)
+                },
                 PricingId = PricingId,
                 CurrencyId = CurrencyId,
-                SourceFenixId = SourceFenixId!,
+                SourceFenixId = SourceFenixId,
                 SourceFenixCode = SourceFenixCode,
+                SourceAmgId = SourceAmgId,
+                SourceAmgCode = SourceAmgCode,
                 Updated = AgreementUpdated
             }
         };

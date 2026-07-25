@@ -10,7 +10,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using GBA.Search.Configuration;
 using GBA.Search.Sync;
-using GBA.Services.Services.Products;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -82,6 +81,12 @@ public interface IElasticsearchIndexService {
     Task<bool> RestoreAliasAsync(
         SearchRebuildLease lease,
         string failedTargetIndex,
+        CancellationToken ct = default);
+
+    /// <summary>Samples document ids from a generation so the sync can spot an orphaned index.</summary>
+    Task<IReadOnlyList<long>> SampleGenerationProductIdsAsync(
+        string indexName,
+        int size,
         CancellationToken ct = default);
 
     /// <summary>Deletes one failed rebuild index when it is not protected by live search state.</summary>
@@ -241,23 +246,9 @@ public sealed class ElasticsearchIndexService : IElasticsearchIndexService {
             reasons.Add("The active generation configuration is stale or cannot be verified.");
         }
 
-        bool pricingRevisionsCurrent = false;
-        if (configurationConsistent) {
-            try {
-                PricingDependencyRevisions currentPricingRevisions =
-                    await _repository.GetPricingDependencyRevisionsAsync();
-                pricingRevisionsCurrent = currentPricingRevisions.IsValid
-                                          && active.HasExactIndexedPricingRevisions(
-                                              currentPricingRevisions);
-            } catch (Exception ex) when (ex is not OperationCanceledException) {
-                _log.LogWarning(ex, "Pricing revision health check failed");
-            }
-
-            if (!pricingRevisionsCurrent) {
-                reasons.Add(
-                    "The active generation does not contain the current exact pricing revision.");
-            }
-        }
+        // Compatibility diagnostic: prices are hydrated from SQL and are not part of index
+        // readiness. SchemaVersion is the authoritative one-time migration gate.
+        const bool pricingRevisionsCurrent = true;
 
         if (_syncSettings.UseAliasSwap) {
             try {
@@ -649,6 +640,47 @@ public sealed class ElasticsearchIndexService : IElasticsearchIndexService {
             alias,
             lease.ExpectedActiveIndex ?? "<none>");
         return true;
+    }
+
+    public async Task<IReadOnlyList<long>> SampleGenerationProductIdsAsync(
+        string indexName,
+        int size,
+        CancellationToken ct = default) {
+        if (string.IsNullOrWhiteSpace(indexName) || size <= 0) return [];
+
+        try {
+            using HttpResponseMessage response = await _http.PostAsJsonAsync(
+                $"{Uri.EscapeDataString(indexName)}/_search",
+                new {
+                    size,
+                    _source = new[] { "id" },
+                    query = new { function_score = new { random_score = new { } } }
+                },
+                ct);
+            if (!response.IsSuccessStatusCode) return [];
+
+            using JsonDocument document = JsonDocument.Parse(
+                await response.Content.ReadAsStringAsync(ct));
+            List<long> ids = [];
+            foreach (JsonElement hit in document.RootElement
+                         .GetProperty("hits").GetProperty("hits").EnumerateArray()) {
+                if (hit.TryGetProperty("_source", out JsonElement source)
+                    && source.TryGetProperty("id", out JsonElement id)
+                    && id.TryGetInt64(out long productId)
+                    && productId > 0)
+                    ids.Add(productId);
+            }
+
+            return ids;
+        } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+            throw;
+        } catch (Exception ex) {
+            _log.LogWarning(
+                ex,
+                "Failed to sample product ids from search generation {Index}",
+                indexName);
+            return [];
+        }
     }
 
     public async Task<bool> DeleteFailedVersionedIndexAsync(

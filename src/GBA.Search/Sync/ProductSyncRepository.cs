@@ -13,7 +13,11 @@ namespace GBA.Search.Sync;
 
 public interface IProductSyncRepository {
     Task<PricingDependencyRevisions> GetPricingDependencyRevisionsAsync();
+    Task<int> CountLiveProductIdsAsync(IReadOnlyCollection<long> productIds);
     Task<RetailConfigurationSnapshot> GetRetailConfigurationSnapshotAsync();
+    Task<ProductIdSyncPlan> GetProductIdSyncPlanAsync(
+        DateTime since,
+        string? acknowledgedConfigurationSignature);
     Task<ProductProjectionBatch> GetProductProjectionBatchAsync(
         long afterProductId,
         int take,
@@ -34,42 +38,15 @@ public interface IProductSyncRepository {
 public sealed class ProductSyncRepository(Func<IDbConnection> connectionFactory) : IProductSyncRepository {
     private const int ProductIdsBatchSize = 2000;
     private const int MaxCatalogScopesPerProduct = 1024;
+    private const string CatalogConfigurationSignature = "web-catalog-live-sql-v1";
     private static readonly IPricingDependencyRevisionProvider PricingRevisionProvider =
         new SqlPricingDependencyRevisionProvider();
-
-    private const string FenixRetailPricingCtes = RetailCatalogSelectionPolicy.SqlCtes;
 
     public Task<PricingDependencyRevisions> GetPricingDependencyRevisionsAsync() {
         using IDbConnection connection = connectionFactory();
         connection.Open();
         return Task.FromResult(PricingRevisionProvider.Get(connection));
     }
-
-    private const string SourceNeutralCatalogAvailabilityCte = @",
-CatalogAvailability AS (
-    SELECT
-        pa.ProductID,
-        s.OrganizationID AS OrganizationId,
-        s.ForVatProducts AS WithVat,
-        CASE WHEN o.PriceSourceIsAmg = 1 THEN 'amg' ELSE 'fenix' END AS SourceSystem,
-        SUM(CASE WHEN s.Locale = 'uk' THEN pa.Amount ELSE 0 END) AS AvailableQtyUk,
-        SUM(CASE WHEN s.Locale = 'pl' THEN pa.Amount ELSE 0 END) AS AvailableQtyPl,
-        SUM(pa.Amount) AS AvailableQty
-    FROM ProductAvailability pa
-    INNER JOIN Storage s ON s.ID = pa.StorageID
-    INNER JOIN Organization o ON o.ID = s.OrganizationID
-    WHERE pa.Deleted = 0
-      AND s.Deleted = 0
-      AND s.ForEcommerce = 1
-      AND s.ForDefective = 0
-      AND o.Deleted = 0
-    GROUP BY
-        pa.ProductID,
-        s.OrganizationID,
-        s.ForVatProducts,
-        CASE WHEN o.PriceSourceIsAmg = 1 THEN 'amg' ELSE 'fenix' END
-    HAVING SUM(pa.Amount) > 0
-)";
 
     private static readonly string ProductProjectionSql = @"
 	SELECT
@@ -100,16 +77,13 @@ CatalogAvailability AS (
     p.HasImage,
     ISNULL(p.Image, '') AS Image,
     p.MeasureUnitID AS MeasureUnitId,
-    ISNULL(nonVatAvailability.AvailableQtyUk, 0) AS AvailableQtyUk,
-    ISNULL(vatAvailability.AvailableQtyUk, 0) AS AvailableQtyUkVat,
-    ISNULL(nonVatAvailability.AvailableQtyPl, 0) AS AvailableQtyPl,
-    ISNULL(vatAvailability.AvailableQtyPl, 0) AS AvailableQtyPlVat,
-    ISNULL(nonVatAvailability.AvailableQty, 0)
-        + ISNULL(vatAvailability.AvailableQty, 0) AS AvailableQty,
-    CAST(CASE WHEN ISNULL(nonVatAvailability.AvailableQty, 0) > 0 THEN 1 ELSE 0 END AS bit)
-        AS HasNonVatCatalogAvailability,
-    CAST(CASE WHEN ISNULL(vatAvailability.AvailableQty, 0) > 0 THEN 1 ELSE 0 END AS bit)
-        AS HasVatCatalogAvailability,
+    CAST(0 AS float) AS AvailableQtyUk,
+    CAST(0 AS float) AS AvailableQtyUkVat,
+    CAST(0 AS float) AS AvailableQtyPl,
+    CAST(0 AS float) AS AvailableQtyPlVat,
+    CAST(0 AS float) AS AvailableQty,
+    CAST(0 AS bit) AS HasNonVatCatalogAvailability,
+    CAST(0 AS bit) AS HasVatCatalogAvailability,
     CAST(CASE WHEN (" + ProductSourceIdentitySql.CanonicalExpression("p", "fenix") + @")
         <> '' THEN 1 ELSE 0 END AS bit)
         AS HasNonVatCatalogSource,
@@ -127,56 +101,31 @@ CatalogAvailability AS (
     CAST(CASE WHEN (" + ProductSourceIdentitySql.CanonicalExpression("p", "amg") + @") <> ''
         AND " + ProductSourceIdentitySql.CanonicalProductForSourcePredicate("p", "amg") + @"
         THEN 1 ELSE 0 END AS bit) AS IsCanonicalAmg,
-    (
-        SELECT
-            availability.OrganizationId AS organizationId,
-            availability.SourceSystem AS sourceSystem,
-            CAST(availability.WithVat AS bit) AS withVat,
-            availability.AvailableQtyUk AS availableQtyUk,
-            availability.AvailableQtyPl AS availableQtyPl,
-            availability.AvailableQty AS availableQty
-        FROM CatalogAvailability availability
-        WHERE availability.ProductID = p.ID
-          AND ((availability.SourceSystem = 'fenix'
-                AND (" + ProductSourceIdentitySql.CanonicalExpression("p", "fenix") + @") <> '')
-            OR (availability.SourceSystem = 'amg'
-                AND (" + ProductSourceIdentitySql.CanonicalExpression("p", "amg") + @") <> ''))
-        ORDER BY availability.OrganizationId, availability.WithVat, availability.SourceSystem
-        FOR JSON PATH
-    ) AS CatalogScopesJson,
+    N'[]' AS CatalogScopesJson,
     ISNULL(ps.ID, 0) AS SlugId,
     ISNULL(ps.NetUID, '00000000-0000-0000-0000-000000000000') AS SlugNetUid,
     ISNULL(ps.Url, '') AS SlugUrl,
     ISNULL(ps.Locale, '') AS SlugLocale,
-    rpc.CatalogOrganizationIdNonVat,
-    rpc.CatalogOrganizationIdVat,
-    rpc.CatalogAgreementSourceNonVat,
-    rpc.CatalogAgreementSourceVat,
-    rpc.CatalogAgreementNetUidNonVat,
-    rpc.CatalogAgreementNetUidVat,
-    rpc.CatalogPricingIdNonVat,
-    rpc.CatalogPricingIdVat,
-    rpc.CatalogCurrencyIdNonVat,
-    rpc.CatalogCurrencyIdVat,
-    ISNULL(dbo.GetCalculatedProductPriceForPricingSource(
-        p.NetUID, rpc.NonVatPricingNetUid, rpc.NonVatAgreementNetUid), 0) AS RetailPrice,
-    ISNULL(dbo.GetCalculatedProductPriceForPricingSource(
-        p.NetUID, rpc.VatPricingNetUid, rpc.VatAgreementNetUid), 0) AS RetailPriceVat,
-    rpc.CatalogCurrencyCodeNonVat AS RetailCurrencyCode,
-    rpc.CatalogCurrencyCodeVat AS RetailCurrencyCodeVat,
+    CAST(0 AS bigint) AS CatalogOrganizationIdNonVat,
+    CAST(0 AS bigint) AS CatalogOrganizationIdVat,
+    N'' AS CatalogAgreementSourceNonVat,
+    N'' AS CatalogAgreementSourceVat,
+    CAST('00000000-0000-0000-0000-000000000000' AS uniqueidentifier)
+        AS CatalogAgreementNetUidNonVat,
+    CAST('00000000-0000-0000-0000-000000000000' AS uniqueidentifier)
+        AS CatalogAgreementNetUidVat,
+    CAST(0 AS bigint) AS CatalogPricingIdNonVat,
+    CAST(0 AS bigint) AS CatalogPricingIdVat,
+    CAST(0 AS bigint) AS CatalogCurrencyIdNonVat,
+    CAST(0 AS bigint) AS CatalogCurrencyIdVat,
+    CAST(0 AS decimal(19, 4)) AS RetailPrice,
+    CAST(0 AS decimal(19, 4)) AS RetailPriceVat,
+    N'UAH' AS RetailCurrencyCode,
+    N'UAH' AS RetailCurrencyCodeVat,
     p.Updated
 FROM Product p";
 
     private static readonly string ProductProjectionTailSql = @"
-CROSS JOIN RetailPricingConfig rpc
-LEFT JOIN FenixProductAvailability nonVatAvailability
-    ON nonVatAvailability.ProductID = p.ID
-   AND nonVatAvailability.CatalogWithVat = 0
-   AND nonVatAvailability.CatalogOrganizationId = rpc.CatalogOrganizationIdNonVat
-LEFT JOIN FenixProductAvailability vatAvailability
-    ON vatAvailability.ProductID = p.ID
-   AND vatAvailability.CatalogWithVat = 1
-   AND vatAvailability.CatalogOrganizationId = rpc.CatalogOrganizationIdVat
 OUTER APPLY (
     SELECT TOP (1) slug.ID, slug.NetUID, slug.Url, slug.Locale
     FROM ProductSlug slug
@@ -186,267 +135,39 @@ OUTER APPLY (
     ORDER BY slug.ID
 ) ps
 WHERE p.Deleted = 0
+  AND p.IsForWeb = 1
   AND " + ProductSourceIdentitySql.AnyCanonicalSourcePredicate("p") + @"
-/*CATALOG_ELIGIBILITY*/
 ORDER BY p.ID";
 
-    private static readonly string ProductCatalogEligibilitySql = @"
-  AND EXISTS (
-      SELECT 1
-      FROM CatalogAvailability availability
-      WHERE availability.ProductID = p.ID
-        AND ((availability.SourceSystem = 'fenix'
-              AND (" + ProductSourceIdentitySql.CanonicalExpression("p", "fenix") + @") <> '')
-          OR (availability.SourceSystem = 'amg'
-              AND (" + ProductSourceIdentitySql.CanonicalExpression("p", "amg") + @") <> ''))
-  )";
+    private const string DirectChangedProductIdsSql = @"
+SELECT p.ID
+FROM Product p
+WHERE p.Updated > @Since OR p.Created > @Since
 
-    private static readonly string ChangedProductIdsCte = @"
-GlobalRetailDependencyChanges AS (
-    SELECT 1 AS HasChanges
-    WHERE @ForceFullRefresh = 1
-       OR EXISTS (
-            SELECT 1
-            FROM Pricing pricing
-            WHERE pricing.Updated > @Since OR pricing.Created > @Since
-       )
-       OR EXISTS (
-            SELECT 1
-            FROM Client retailClient
-            INNER JOIN ClientAgreement ca ON ca.ClientID = retailClient.ID
-            INNER JOIN Agreement a ON a.ID = ca.AgreementID
-            LEFT JOIN Organization o ON o.ID = a.OrganizationID
-            WHERE retailClient.IsForRetail = 1
-              AND (retailClient.Updated > @Since OR retailClient.Created > @Since
-                OR ca.Updated > @Since OR ca.Created > @Since
-                OR a.Updated > @Since OR a.Created > @Since
-                OR o.Updated > @Since OR o.Created > @Since)
-       )
-       OR EXISTS (
-            SELECT 1
-            FROM Storage storage
-            LEFT JOIN Organization o ON o.ID = storage.OrganizationID
-            WHERE (storage.ForEcommerce = 1 OR o.PriceSourceIsAmg = 0)
-              AND (storage.Updated > @Since OR storage.Created > @Since
-                OR o.Updated > @Since OR o.Created > @Since)
-       )
-       OR EXISTS (
-            SELECT 1
-            FROM Currency currency
-            WHERE (currency.Updated > @Since OR currency.Created > @Since)
-              AND EXISTS (
-                  SELECT 1
-                  FROM Agreement agreement
-                  INNER JOIN ClientAgreement clientAgreement
-                      ON clientAgreement.AgreementID = agreement.ID
-                  INNER JOIN Client retailClient
-                      ON retailClient.ID = clientAgreement.ClientID
-                  WHERE retailClient.IsForRetail = 1
-                    AND agreement.CurrencyID = currency.ID
-              )
-       )
-       OR EXISTS (
-            SELECT 1
-            FROM ExchangeRate exchangeRate
-            WHERE exchangeRate.Updated > @Since OR exchangeRate.Created > @Since
-       )
-       OR EXISTS (
-            SELECT 1
-            FROM GovExchangeRate govExchangeRate
-            WHERE govExchangeRate.Updated > @Since OR govExchangeRate.Created > @Since
-       )
-),
-DirectChangedProductIds AS (
-    SELECT p.ID
-    FROM Product p
-    WHERE p.Deleted = 0 AND (p.Updated > @Since OR p.Created > @Since)
+UNION
 
-    UNION
+SELECT pon.ProductID
+FROM ProductOriginalNumber pon
+INNER JOIN Product p ON p.ID = pon.ProductID AND p.Deleted = 0
+WHERE pon.Updated > @Since OR pon.Created > @Since
 
-    SELECT pon.ProductID
-    FROM ProductOriginalNumber pon
-    INNER JOIN Product p ON p.ID = pon.ProductID AND p.Deleted = 0
-    WHERE pon.Updated > @Since OR pon.Created > @Since
+UNION
 
-    UNION
+SELECT pon.ProductID
+FROM OriginalNumber originalNumber
+INNER JOIN ProductOriginalNumber pon ON pon.OriginalNumberID = originalNumber.ID
+INNER JOIN Product p ON p.ID = pon.ProductID AND p.Deleted = 0
+WHERE originalNumber.Updated > @Since OR originalNumber.Created > @Since
 
-    SELECT pon.ProductID
-    FROM OriginalNumber originalNumber
-    INNER JOIN ProductOriginalNumber pon ON pon.OriginalNumberID = originalNumber.ID
-    INNER JOIN Product p ON p.ID = pon.ProductID AND p.Deleted = 0
-    WHERE originalNumber.Updated > @Since OR originalNumber.Created > @Since
+UNION
 
-    UNION
-
-    SELECT availability.ProductID
-    FROM ProductAvailability availability
-    INNER JOIN Product p ON p.ID = availability.ProductID AND p.Deleted = 0
-    WHERE availability.Updated > @Since OR availability.Created > @Since
-
-    UNION
-
-    SELECT slug.ProductID
-    FROM ProductSlug slug
-    INNER JOIN Product p ON p.ID = slug.ProductID AND p.Deleted = 0
-    WHERE slug.Updated > @Since OR slug.Created > @Since
-
-    UNION
-
-    SELECT productPricing.ProductID
-    FROM ProductPricing productPricing
-    INNER JOIN Product p ON p.ID = productPricing.ProductID AND p.Deleted = 0
-    WHERE productPricing.Updated > @Since OR productPricing.Created > @Since
-
-    UNION
-
-    SELECT productGroup.ProductID
-    FROM ProductProductGroup productGroup
-    INNER JOIN Product p ON p.ID = productGroup.ProductID AND p.Deleted = 0
-    WHERE productGroup.Updated > @Since OR productGroup.Created > @Since
-
-    UNION
-
-    SELECT productGroup.ProductID
-    FROM PricingProductGroupDiscount pricingDiscount
-    INNER JOIN ProductProductGroup productGroup
-        ON productGroup.ProductGroupID = pricingDiscount.ProductGroupID
-       AND productGroup.Deleted = 0
-    INNER JOIN Product p ON p.ID = productGroup.ProductID AND p.Deleted = 0
-    WHERE pricingDiscount.Updated > @Since OR pricingDiscount.Created > @Since
-
-    UNION
-
-    SELECT productGroup.ProductID
-    FROM ProductGroupDiscount agreementDiscount
-    INNER JOIN ProductProductGroup productGroup
-        ON productGroup.ProductGroupID = agreementDiscount.ProductGroupID
-       AND productGroup.Deleted = 0
-    INNER JOIN Product p ON p.ID = productGroup.ProductID AND p.Deleted = 0
-    WHERE agreementDiscount.Updated > @Since OR agreementDiscount.Created > @Since
-
-    UNION
-
-    SELECT productGroup.ProductID
-    FROM ProductGroup changedGroup
-    INNER JOIN ProductProductGroup productGroup
-        ON productGroup.ProductGroupID = changedGroup.ID
-       AND productGroup.Deleted = 0
-    INNER JOIN Product p ON p.ID = productGroup.ProductID AND p.Deleted = 0
-    WHERE changedGroup.Updated > @Since OR changedGroup.Created > @Since
-
-    UNION
-
-    SELECT p.ID
-    FROM Product p
-    CROSS JOIN GlobalRetailDependencyChanges dependencyChange
-) ,
-SourceChangedProducts AS (
-    SELECT product.*
-    FROM Product product
-    WHERE product.ID IN (SELECT ID FROM DirectChangedProductIds)
-       OR product.Updated > @Since
-       OR product.Created > @Since
-),
-ChangedProductIds AS (
-    SELECT ID
-    FROM DirectChangedProductIds
-
-    UNION
-
-    SELECT candidate.ID
-    FROM Product candidate
-    INNER JOIN SourceChangedProducts changed
-        ON " + ProductSourceIdentitySql.SameSourceEntityPredicate("changed", "candidate", "fenix") + @"
-        OR " + ProductSourceIdentitySql.SameSourceEntityPredicate("changed", "candidate", "amg") + @"
-    WHERE candidate.Deleted = 0
-)";
+SELECT slug.ProductID
+FROM ProductSlug slug
+INNER JOIN Product p ON p.ID = slug.ProductID AND p.Deleted = 0
+WHERE slug.Updated > @Since OR slug.Created > @Since";
 
     private const string RetailConfigurationSignatureSql = @"
-;WITH
-" + FenixRetailPricingCtes + @"
-SELECT CONVERT(varchar(64), HASHBYTES('SHA2_256', CONCAT(
-    'storages=',
-    (
-        SELECT CONCAT(
-            'S:', storage.ID,
-            ':', ISNULL(CONVERT(varchar(20), storage.OrganizationID), ''),
-            ':', CONVERT(int, storage.Deleted),
-            ':', CONVERT(int, storage.ForEcommerce),
-            ':', CONVERT(int, storage.ForDefective),
-            ':', CONVERT(int, storage.ForVatProducts),
-            ':', ISNULL(storage.Locale, ''),
-            ':', storage.RetailPriority,
-            ':', ISNULL(CONVERT(int, organization.Deleted), -1),
-            ':', ISNULL(CONVERT(int, organization.PriceSourceIsAmg), -1),
-            ';') AS [text()]
-        FROM Storage storage
-        LEFT JOIN Organization organization ON organization.ID = storage.OrganizationID
-        ORDER BY storage.ID
-        FOR XML PATH(''), TYPE
-    ).value('.', 'nvarchar(max)'),
-    '|agreements=',
-    (
-        SELECT CONCAT(
-            'A:', retailClient.ID,
-            ':', CONVERT(int, retailClient.Deleted),
-            ':', CONVERT(int, retailClient.IsActive),
-            ':', clientAgreement.ID,
-            ':', CONVERT(varchar(36), clientAgreement.NetUID),
-            ':', CONVERT(int, clientAgreement.Deleted),
-            ':', agreement.ID,
-            ':', CONVERT(int, agreement.Deleted),
-            ':', CONVERT(int, agreement.IsActive),
-            ':', CONVERT(int, agreement.IsDefault),
-            ':', CONVERT(int, agreement.IsSelected),
-            ':', CONVERT(int, agreement.WithVATAccounting),
-            ':', ISNULL(CONVERT(varchar(20), agreement.OrganizationID), ''),
-            ':', ISNULL(CONVERT(varchar(20), agreement.PricingID), ''),
-            ':', ISNULL(CONVERT(varchar(20), agreement.CurrencyID), ''),
-            ':', ISNULL(CONVERT(varchar(128), agreement.SourceFenixID, 2), ''),
-            ':', ISNULL(CONVERT(varchar(20), agreement.SourceFenixCode), ''),
-            ':', ISNULL(CONVERT(varchar(128), agreement.SourceAmgID, 2), ''),
-            ':', ISNULL(CONVERT(varchar(20), agreement.SourceAmgCode), ''),
-            ':', ISNULL(CONVERT(varchar(36), pricing.NetUID), ''),
-            ':', ISNULL(CONVERT(int, pricing.Deleted), -1),
-            ':', ISNULL(CONVERT(varchar(20), pricing.BasePricingID), ''),
-            ':', ISNULL(CONVERT(varchar(50), pricing.CalculatedExtraCharge), ''),
-            ':', CONVERT(varchar(33), agreement.Updated, 126),
-            ':', CONVERT(varchar(33), clientAgreement.Updated, 126),
-            ';') AS [text()]
-        FROM Client retailClient
-        INNER JOIN ClientAgreement clientAgreement ON clientAgreement.ClientID = retailClient.ID
-        INNER JOIN Agreement agreement ON agreement.ID = clientAgreement.AgreementID
-        LEFT JOIN Pricing pricing ON pricing.ID = agreement.PricingID
-        WHERE retailClient.IsForRetail = 1
-        ORDER BY retailClient.ID, clientAgreement.ID, agreement.ID
-        FOR XML PATH(''), TYPE
-    ).value('.', 'nvarchar(max)'),
-    '|currency=',
-    (
-        SELECT CONCAT(
-            'C:', currency.ID,
-            ':', ISNULL(currency.Code, ''),
-            ':', CONVERT(int, currency.Deleted),
-            ';') AS [text()]
-        FROM Currency currency
-        WHERE EXISTS (
-            SELECT 1
-            FROM Agreement agreement
-            INNER JOIN ClientAgreement clientAgreement ON clientAgreement.AgreementID = agreement.ID
-            INNER JOIN Client retailClient ON retailClient.ID = clientAgreement.ClientID
-            WHERE retailClient.IsForRetail = 1
-              AND agreement.CurrencyID = currency.ID
-        )
-        ORDER BY currency.ID
-        FOR XML PATH(''), TYPE
-    ).value('.', 'nvarchar(max)')
-)), 2) AS Signature,
-CAST(CASE
-    WHEN (SELECT COUNT(*) FROM FenixRetailStorage) = 2
-     AND EXISTS (SELECT 1 FROM RetailPricingConfig)
-    THEN 1
-    ELSE 0
-END AS bit) AS IsValid";
+SELECT '" + CatalogConfigurationSignature + @"' AS Signature, CAST(1 AS bit) AS IsValid";
 
     public async Task<List<ProductSyncData>> GetAllProductsAsync() {
         ProductSyncSnapshot snapshot = await GetProductSnapshotAsync();
@@ -481,6 +202,7 @@ END AS bit) AS IsValid";
 SELECT TOP (@Take) p.ID
 FROM Product p
 WHERE p.Deleted = 0
+  AND p.IsForWeb = 1
   AND p.ID > @AfterProductId
 ORDER BY p.ID";
         List<long> candidateIds = (await connection.QueryAsync<long>(
@@ -564,24 +286,37 @@ RequestedProductIds AS (
     }
 
     public async Task<List<ProductSyncData>> GetChangedProductsAsync(DateTime since) {
-        string sql = BuildProductProjectionSql(
-            ChangedProductIdsCte,
-            "INNER JOIN ChangedProductIds c ON c.ID = p.ID",
-            requireCatalogEligibility: false);
-
         using IDbConnection connection = connectionFactory();
         connection.Open();
 
         RetailConfigurationSnapshot configuration = await GetRetailConfigurationAsync(connection);
         if (!HasValidRetailConfiguration(configuration)) return [];
 
-        const bool forceFullRefresh = true;
+        List<long> ids = (await connection.QueryAsync<long>(
+                BuildChangedProductIdsSql(),
+                new { Since = since },
+                commandTimeout: 120))
+            .AsList();
+        if (ids.Count == 0) return [];
 
-        return await QueryUniqueProductsAsync(
-            connection,
-            sql,
-            new { Since = since, ForceFullRefresh = forceFullRefresh },
-            commandTimeout: 300);
+        const string changedProductIdsCte = @"
+ChangedProductIds AS (
+    SELECT p.ID FROM Product p WHERE p.ID IN @Ids
+)";
+        string projectionSql = BuildProductProjectionSql(
+            changedProductIdsCte,
+            "INNER JOIN ChangedProductIds changed ON changed.ID = p.ID",
+            requireCatalogEligibility: false);
+        List<ProductSyncData> products = [];
+        foreach (long[] batch in ids.Chunk(ProductIdsBatchSize)) {
+            products.AddRange(await QueryUniqueProductsAsync(
+                connection,
+                projectionSql,
+                new { Ids = batch },
+                commandTimeout: 120));
+        }
+
+        return products.DistinctBy(product => product.Id).ToList();
     }
 
     public async Task<List<long>> GetChangedProductIdsAsync(DateTime since) {
@@ -620,7 +355,7 @@ RequestedProductIds AS (
 
         IEnumerable<long> ids = await connection.QueryAsync<long>(
             BuildChangedProductIdsSql(),
-            new { Since = since, ForceFullRefresh = forceFullRefresh },
+            new { Since = since },
             commandTimeout: 120);
 
         return new ProductIdSyncPlan(
@@ -656,16 +391,11 @@ RequestedProductIds AS (
                 HasMore: false);
         }
 
-        string sql = ";WITH\n" + ChangedProductIdsCte + @"
-SELECT TOP (@Take) ID
-FROM ChangedProductIds
-WHERE ID > @AfterProductId
-ORDER BY ID";
+        string sql = BuildChangedProductIdBatchSql();
         List<long> ids = (await connection.QueryAsync<long>(
                 sql,
                 new {
                     Since = since,
-                    ForceFullRefresh = false,
                     Take = boundedTake,
                     AfterProductId = afterProductId
                 },
@@ -772,19 +502,99 @@ ChangedProductIds AS (
         string? firstCte = null,
         string? productJoin = null,
         bool requireCatalogEligibility = true) {
-        string ctes = firstCte == null
-            ? FenixRetailPricingCtes + SourceNeutralCatalogAvailabilityCte
-            : firstCte + ",\n" + FenixRetailPricingCtes + SourceNeutralCatalogAvailabilityCte;
-
-        string projectionTail = ProductProjectionTailSql.Replace(
-            "/*CATALOG_ELIGIBILITY*/",
-            requireCatalogEligibility ? ProductCatalogEligibilitySql : string.Empty,
-            StringComparison.Ordinal);
-        return ";WITH\n" + ctes + ProductProjectionSql + "\n" + productJoin + projectionTail;
+        _ = requireCatalogEligibility;
+        string projection = ProductProjectionSql
+                            + "\n"
+                            + (productJoin ?? string.Empty)
+                            + ProductProjectionTailSql;
+        return firstCte == null
+            ? projection
+            : ";WITH\n" + firstCte + projection;
     }
 
     private static string BuildChangedProductIdsSql() {
-        return ";WITH\n" + ChangedProductIdsCte + "\nSELECT ID FROM ChangedProductIds";
+        return BuildChangedProductIdsPreparationSql() + @"
+SELECT ID
+FROM #ChangedProductIds
+ORDER BY ID;";
+    }
+
+    private static string BuildChangedProductIdBatchSql() {
+        return BuildChangedProductIdsPreparationSql() + @"
+SELECT TOP (@Take) ID
+FROM #ChangedProductIds
+WHERE ID > @AfterProductId
+ORDER BY ID;";
+    }
+
+    private static string BuildChangedProductIdsPreparationSql() {
+        return @"
+CREATE TABLE #DirectChangedProductIds (
+    ID bigint NOT NULL PRIMARY KEY
+);
+
+INSERT INTO #DirectChangedProductIds (ID)
+" + DirectChangedProductIdsSql + @";
+
+CREATE TABLE #ChangedProductIds (
+    ID bigint NOT NULL PRIMARY KEY
+);
+
+INSERT INTO #ChangedProductIds (ID)
+SELECT ID FROM #DirectChangedProductIds;
+
+IF EXISTS (SELECT 1 FROM #DirectChangedProductIds)
+BEGIN
+" + BuildSourceSiblingInsertSql("Fenix") + @"
+" + BuildSourceSiblingInsertSql("Amg") + @"
+END;
+";
+    }
+
+    private static string BuildSourceSiblingInsertSql(string sourceName) {
+        string sourceId = $"Source{sourceName}ID";
+        string sourceCode = $"Source{sourceName}Code";
+        return $@"
+    INSERT INTO #ChangedProductIds (ID)
+    SELECT DISTINCT candidate.ID
+    FROM #DirectChangedProductIds direct
+    INNER JOIN Product changed ON changed.ID = direct.ID
+    INNER JOIN Product candidate
+        ON candidate.Deleted = 0
+       AND candidate.{sourceCode} = changed.{sourceCode}
+    WHERE changed.{sourceCode} IS NOT NULL
+      AND (
+            (ISNULL(DATALENGTH(changed.{sourceId}), 0) > 0
+             AND candidate.{sourceId} = changed.{sourceId})
+         OR (ISNULL(DATALENGTH(changed.{sourceId}), 0) = 0
+             AND ISNULL(DATALENGTH(candidate.{sourceId}), 0) = 0)
+      )
+      AND NOT EXISTS (
+          SELECT 1 FROM #ChangedProductIds existing WHERE existing.ID = candidate.ID
+      );
+
+    IF EXISTS (
+        SELECT 1
+        FROM #DirectChangedProductIds direct
+        INNER JOIN Product changed ON changed.ID = direct.ID
+        WHERE changed.{sourceCode} IS NULL
+          AND ISNULL(DATALENGTH(changed.{sourceId}), 0) > 0
+    )
+    BEGIN
+        INSERT INTO #ChangedProductIds (ID)
+        SELECT DISTINCT candidate.ID
+        FROM #DirectChangedProductIds direct
+        INNER JOIN Product changed ON changed.ID = direct.ID
+        INNER JOIN Product candidate
+            ON candidate.Deleted = 0
+           AND candidate.{sourceCode} IS NULL
+           AND candidate.{sourceId} = changed.{sourceId}
+        WHERE changed.{sourceCode} IS NULL
+          AND ISNULL(DATALENGTH(changed.{sourceId}), 0) > 0
+          AND NOT EXISTS (
+              SELECT 1 FROM #ChangedProductIds existing WHERE existing.ID = candidate.ID
+          );
+    END;";
     }
 
     private static async Task<List<ProductSyncData>> QueryUniqueProductsAsync(
@@ -861,6 +671,24 @@ ChangedProductIds AS (
 
     private static bool HasValidRetailConfiguration(RetailConfigurationSnapshot configuration) {
         return configuration.IsValid && !string.IsNullOrWhiteSpace(configuration.Signature);
+    }
+
+    /// <summary>
+    /// How many of the given indexed product ids still exist in the catalog. A 1C re-mint
+    /// replaces every product id, so a near-zero result means the whole generation is orphaned.
+    /// </summary>
+    public async Task<int> CountLiveProductIdsAsync(IReadOnlyCollection<long> productIds) {
+        if (productIds.Count == 0) return 0;
+
+        using IDbConnection connection = connectionFactory();
+        connection.Open();
+
+        const string sql = @"
+SELECT COUNT(*) FROM Product p WHERE p.Deleted = 0 AND p.ID IN @Ids";
+        return await connection.ExecuteScalarAsync<int>(
+            sql,
+            new { Ids = productIds.Distinct().ToArray() },
+            commandTimeout: 30);
     }
 
     public async Task<List<long>> GetDeletedProductIdsAsync(DateTime since) {

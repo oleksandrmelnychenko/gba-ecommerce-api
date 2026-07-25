@@ -1221,6 +1221,21 @@ public sealed class ProductService : IProductService {
             culture);
     }
 
+    public Dictionary<long, ProductCatalogAvailabilityInfo> GetCatalogAvailabilityOnly(
+        List<long> productIds,
+        ProductPricingContext pricingContext) {
+        if (productIds == null || productIds.Count == 0 || pricingContext == null)
+            return new Dictionary<long, ProductCatalogAvailabilityInfo>();
+
+        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+        OptimizedProductRepository optimizedRepo = new(connection);
+        return optimizedRepo.GetCatalogAvailabilityOnly(
+            productIds,
+            pricingContext.OrganizationId,
+            pricingContext.WithVat,
+            pricingContext.Source);
+    }
+
     public ProductPricingContext GetPricingContext(Guid currentClientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
         return ResolvePricingContext(connection, currentClientNetId, withVat)?.Context;
@@ -1488,7 +1503,7 @@ internal static class ProductPricingContextResolver {
             selection.ToClientAgreement(),
             selection.OrganizationId,
             withVat,
-            ProductSourceIdentitySql.Fenix,
+            selection.SourceWorld,
             selection.StorageUpdated.Ticks,
             pricingDependencyRevisionProvider);
     }

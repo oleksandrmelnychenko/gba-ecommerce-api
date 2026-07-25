@@ -47,32 +47,18 @@ public sealed class ProductSyncRepositorySqlServerTests {
         Assert.Equal("amg:id-CC|code-22", pureAmg.ProductSourceAmg);
         Assert.False(pureAmg.IsCanonicalFenix);
         Assert.True(pureAmg.IsCanonicalAmg);
-        ProductCatalogScopeData pureAmgScope = Assert.Single(pureAmg.CatalogScopes);
-        Assert.Equal(2, pureAmgScope.OrganizationId);
-        Assert.Equal("amg", pureAmgScope.SourceSystem);
-        Assert.False(pureAmgScope.WithVat);
-        Assert.Equal(7, pureAmgScope.AvailableQty);
+        Assert.Empty(pureAmg.CatalogScopes);
+        Assert.Equal(0, pureAmg.AvailableQty);
+        Assert.Equal(0, pureAmg.RetailPrice);
+        Assert.Equal(0, pureAmg.RetailPriceVat);
 
         ProductSyncData dualSource = Assert.Single(batch.Products, product => product.Id == 3);
         Assert.Equal("fenix:id-BA|code-31", dualSource.ProductSourceFenix);
         Assert.Equal("amg:id-DA|code-32", dualSource.ProductSourceAmg);
         Assert.True(dualSource.IsCanonicalFenix);
         Assert.True(dualSource.IsCanonicalAmg);
-        Assert.Contains(dualSource.CatalogScopes, scope =>
-            scope.OrganizationId == 1
-            && scope.SourceSystem == "fenix"
-            && !scope.WithVat
-            && scope.AvailableQty == 3);
-        Assert.Contains(dualSource.CatalogScopes, scope =>
-            scope.OrganizationId == 2
-            && scope.SourceSystem == "amg"
-            && !scope.WithVat
-            && scope.AvailableQty == 4);
-        Assert.Contains(dualSource.CatalogScopes, scope =>
-            scope.OrganizationId == 2
-            && scope.SourceSystem == "amg"
-            && scope.WithVat
-            && scope.AvailableQty == 2);
+        Assert.Empty(dualSource.CatalogScopes);
+        Assert.Equal(0, dualSource.AvailableQty);
 
         ProductSyncData crossWorldDuplicate = Assert.Single(
             batch.Products,
@@ -81,6 +67,59 @@ public sealed class ProductSyncRepositorySqlServerTests {
         Assert.True(crossWorldDuplicate.IsCanonicalAmg);
         Assert.Equal("fenix:id-AA|code-11", crossWorldDuplicate.ProductSourceFenix);
         Assert.Equal("amg:id-EE|code-33", crossWorldDuplicate.ProductSourceAmg);
+    }
+
+    [Fact]
+    public async Task IncrementalBatch_ReindexesOnlyExactSourceSiblingsIncludingDeletedCanonical() {
+        string? connectionString = Environment.GetEnvironmentVariable(
+            ConnectionStringEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(connectionString)) return;
+
+        using (SqlConnection setupConnection = new(connectionString)) {
+            setupConnection.Open();
+            EnsureDisposableDatabase(setupConnection);
+            ResetProjectionSchema(setupConnection);
+            SeedProjectionData(setupConnection);
+            setupConnection.Execute(@"
+UPDATE dbo.Product
+SET Updated = '2026-07-16T08:00:00'
+WHERE ID = 4;");
+        }
+
+        ProductSyncRepository repository = new(
+            () => new SqlConnection(connectionString));
+        RetailConfigurationSnapshot configuration =
+            await repository.GetRetailConfigurationSnapshotAsync();
+
+        ProductIdSyncBatch changedDuplicate = await repository.GetChangedProductIdBatchAsync(
+            new DateTime(2026, 7, 16, 7, 59, 0, DateTimeKind.Utc),
+            configuration.Signature,
+            afterProductId: 0,
+            take: 100);
+
+        Assert.True(changedDuplicate.HasValidRetailConfiguration);
+        Assert.False(changedDuplicate.RequiresFullReconciliation);
+        Assert.Equal(new long[] { 1, 4, 6 }, changedDuplicate.ProductIds);
+
+        using (SqlConnection setupConnection = new(connectionString)) {
+            setupConnection.Open();
+            setupConnection.Execute(@"
+UPDATE dbo.Product
+SET Deleted = 1,
+    Updated = '2026-07-17T08:00:00'
+WHERE ID = 1;");
+        }
+
+        ProductIdSyncBatch deletedCanonical = await repository.GetChangedProductIdBatchAsync(
+            new DateTime(2026, 7, 17, 7, 59, 0, DateTimeKind.Utc),
+            configuration.Signature,
+            afterProductId: 0,
+            take: 100);
+
+        Assert.Equal(new long[] { 1, 4, 6 }, deletedCanonical.ProductIds);
+        Assert.DoesNotContain(7, deletedCanonical.ProductIds);
+        Assert.DoesNotContain(8, deletedCanonical.ProductIds);
+        Assert.DoesNotContain(9, deletedCanonical.ProductIds);
     }
 
     private static void EnsureDisposableDatabase(SqlConnection connection) {
@@ -96,6 +135,8 @@ public sealed class ProductSyncRepositorySqlServerTests {
     private static void ResetProjectionSchema(IDbConnection connection) {
         connection.Execute(@"
 DROP FUNCTION IF EXISTS dbo.GetCalculatedProductPriceForPricingSource;
+DROP TABLE IF EXISTS dbo.ProductOriginalNumber;
+DROP TABLE IF EXISTS dbo.OriginalNumber;
 DROP TABLE IF EXISTS dbo.ProductSlug;
 DROP TABLE IF EXISTS dbo.ProductAvailability;
 DROP TABLE IF EXISTS dbo.ClientAgreement;
@@ -201,6 +242,21 @@ CREATE TABLE dbo.Product (
     SourceFenixCode bigint NULL,
     SourceAmgID varbinary(64) NULL,
     SourceAmgCode bigint NULL,
+    Created datetime2 NOT NULL DEFAULT ('2026-07-15T08:00:00'),
+    Updated datetime2 NOT NULL,
+    Deleted bit NOT NULL
+);
+CREATE TABLE dbo.OriginalNumber (
+    ID bigint NOT NULL PRIMARY KEY,
+    Created datetime2 NOT NULL,
+    Updated datetime2 NOT NULL,
+    Deleted bit NOT NULL
+);
+CREATE TABLE dbo.ProductOriginalNumber (
+    ID bigint NOT NULL PRIMARY KEY,
+    ProductID bigint NOT NULL,
+    OriginalNumberID bigint NOT NULL,
+    Created datetime2 NOT NULL,
     Updated datetime2 NOT NULL,
     Deleted bit NOT NULL
 );
@@ -217,6 +273,8 @@ CREATE TABLE dbo.ProductSlug (
     NetUID uniqueidentifier NOT NULL,
     Url nvarchar(256) NULL,
     Locale nvarchar(8) NULL,
+    Created datetime2 NOT NULL DEFAULT ('2026-07-15T08:00:00'),
+    Updated datetime2 NOT NULL DEFAULT ('2026-07-15T08:00:00'),
     Deleted bit NOT NULL
 );
 

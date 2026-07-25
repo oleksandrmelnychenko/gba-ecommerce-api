@@ -244,7 +244,7 @@ public sealed class ElasticsearchIndexServiceTests {
                 : throw new InvalidOperationException($"Unexpected request: {request.Method} {request.RequestUri}"));
         SearchSyncState activeState = new(
             DateTime.UtcNow,
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             DateTime.UtcNow,
             "config-v1",
             RetailConfigurationEpoch: 3);
@@ -269,11 +269,8 @@ public sealed class ElasticsearchIndexServiceTests {
     }
 
     [Fact]
-    public async Task Health_RotatedPricingRevisionWithoutPromotionIsDegraded() {
+    public async Task Health_RotatedDatabasePricingRevisionDoesNotDegradeLiveHydratedCatalog() {
         const string activeIndex = "products_20260714010000000";
-        PricingDependencyRevisions rotatedRevisions = PricingRevisions with {
-            ProductPricing = "product-pricing:revision-v2"
-        };
         StubHttpMessageHandler handler = new(request => request.Method == HttpMethod.Get
                                                         && request.RequestUri!.AbsolutePath == "/_cluster/health"
             ? JsonResponse("{\"status\":\"green\"}")
@@ -287,18 +284,17 @@ public sealed class ElasticsearchIndexServiceTests {
         Mock<IProductSyncRepository> repository = new(MockBehavior.Strict);
         repository.Setup(repo => repo.GetRetailConfigurationSnapshotAsync())
             .ReturnsAsync(new RetailConfigurationSnapshot { IsValid = true, Signature = "config-v1" });
-        repository.Setup(repo => repo.GetPricingDependencyRevisionsAsync())
-            .ReturnsAsync(rotatedRevisions);
         ElasticsearchIndexService service = CreateService(handler, state.Object, repository.Object);
 
         ElasticsearchHealthReport report = await service.GetHealthAsync();
 
-        Assert.Equal(ElasticsearchHealthStatus.Degraded, report.Status);
+        Assert.Equal(ElasticsearchHealthStatus.Healthy, report.Status);
         Assert.True(report.ConfigurationConsistent);
-        Assert.False(report.PricingRevisionsCurrent);
-        Assert.Contains(
+        Assert.True(report.PricingRevisionsCurrent);
+        Assert.DoesNotContain(
             report.Reasons,
             reason => reason.Contains("pricing revision", StringComparison.OrdinalIgnoreCase));
+        repository.Verify(repo => repo.GetPricingDependencyRevisionsAsync(), Times.Never);
     }
 
     [Fact]
@@ -706,7 +702,7 @@ public sealed class ElasticsearchIndexServiceTests {
         long epoch) {
         SearchSyncState syncState = new(
             DateTime.UtcNow,
-            EcommercePricingSchema.Version,
+            SearchIndexSchema.CurrentVersion,
             DateTime.UtcNow,
             configurationSignature,
             epoch,

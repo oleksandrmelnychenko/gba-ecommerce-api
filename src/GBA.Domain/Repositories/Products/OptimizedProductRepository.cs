@@ -14,6 +14,7 @@ namespace GBA.Domain.Repositories.Products;
 /// source-aware database pricing functions.
 /// </summary>
 public sealed class OptimizedProductRepository {
+    private const int MaxLiveHydrationProductIds = 1000;
     private static readonly string ProductBatchSql = @"
 ;WITH AgreementData AS (
     SELECT TOP (1)
@@ -167,35 +168,29 @@ DROP TABLE #ProductIds;";
         bool withVat,
         string catalogSource,
         string culture = "uk") {
-        if (productIds == null || productIds.Count == 0)
+        if (productIds == null
+            || organizationId is null or <= 0
+            || !ProductSourceIdentitySql.TryNormalizeSourceWorld(
+                catalogSource,
+                out string normalizedSource))
             return new Dictionary<long, ProductPriceInfo>();
 
-        StringBuilder tempTableSql = BuildProductIdsTable(productIds, withRowNumbers: false);
+        List<long> validProductIds = productIds.Where(id => id > 0).Distinct().ToList();
+        if (validProductIds.Count is 0 or > MaxLiveHydrationProductIds)
+            return new Dictionary<long, ProductPriceInfo>();
 
-        string sql = @"
-SELECT
-    p.ID AS Id,
-    dbo.GetCalculatedProductPriceWithSharesAndVat(
-        p.NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS Price,
-    (SELECT TOP (1) c.Code
-     FROM Currency c
-     INNER JOIN Agreement a ON a.CurrencyID = c.ID
-     INNER JOIN ClientAgreement ca ON ca.AgreementID = a.ID
-     WHERE ca.NetUID = @ClientAgreementNetId AND c.Deleted = 0) AS CurrencyCode
-FROM Product p
-INNER JOIN #ProductIds ids ON ids.Id = p.ID
-WHERE p.Deleted = 0
-  AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("p") + @";
+        StringBuilder tempTableSql = BuildProductIdsTable(validProductIds, withRowNumbers: false);
 
-DROP TABLE #ProductIds;";
+        string sql = BuildLivePriceSql();
 
         List<dynamic> results = _connection.Query<dynamic>(
             tempTableSql + sql,
             new {
                 ClientAgreementNetId = clientAgreementNetId,
+                OrganizationId = organizationId,
                 Culture = culture,
                 WithVat = withVat,
-                CatalogSource = catalogSource
+                CatalogSource = normalizedSource
             }).ToList();
 
         return results
@@ -260,6 +255,43 @@ DROP TABLE #ProductIds;";
                         CurrencyCode = result.CurrencyCode ?? "UAH"
                     };
                 });
+    }
+
+    /// <summary>
+    /// Reads current storefront availability for one catalog branch. Availability is not cached
+    /// or used as catalog eligibility: zero-stock products remain searchable.
+    /// </summary>
+    public Dictionary<long, ProductCatalogAvailabilityInfo> GetCatalogAvailabilityOnly(
+        List<long> productIds,
+        long organizationId,
+        bool withVat,
+        string catalogSource) {
+        if (productIds == null
+            || organizationId <= 0
+            || !ProductSourceIdentitySql.TryNormalizeSourceWorld(
+                catalogSource,
+                out string normalizedSource)) {
+            return new Dictionary<long, ProductCatalogAvailabilityInfo>();
+        }
+
+        List<long> validProductIds = productIds.Where(id => id > 0).Distinct().ToList();
+        if (validProductIds.Count is 0 or > MaxLiveHydrationProductIds)
+            return new Dictionary<long, ProductCatalogAvailabilityInfo>();
+
+        StringBuilder tempTableSql = BuildProductIdsTable(validProductIds, withRowNumbers: false);
+        string sql = BuildLiveAvailabilitySql();
+
+        IEnumerable<ProductCatalogAvailabilityInfo> rows =
+            _connection.Query<ProductCatalogAvailabilityInfo>(
+                tempTableSql + sql,
+                new {
+                    OrganizationId = organizationId,
+                    WithVat = withVat,
+                    CatalogSource = normalizedSource
+                },
+                commandTimeout: 30);
+
+        return rows.ToDictionary(row => row.Id);
     }
 
     public List<FromSearchProduct> GetProductsByIdsWithPrices(
@@ -381,6 +413,94 @@ DROP TABLE #ProductIds;";
         return products.Values.OrderBy(product => product.SearchRowNumber).ToList();
     }
 
+    private static string BuildLivePriceSql() {
+        return @"
+;WITH AgreementContext AS (
+    SELECT TOP (1)
+        currency.Code AS CurrencyCode
+    FROM ClientAgreement clientAgreement
+    INNER JOIN Agreement agreement ON agreement.ID = clientAgreement.AgreementID
+    INNER JOIN Organization organization ON organization.ID = agreement.OrganizationID
+    LEFT JOIN Currency currency
+        ON currency.ID = agreement.CurrencyID
+       AND currency.Deleted = 0
+    WHERE clientAgreement.NetUID = @ClientAgreementNetId
+      AND clientAgreement.Deleted = 0
+      AND agreement.Deleted = 0
+      AND agreement.IsActive = 1
+      AND agreement.OrganizationID = @OrganizationId
+      AND agreement.WithVATAccounting = @WithVat
+      AND organization.Deleted = 0
+      AND (
+            (@CatalogSource = 'fenix'
+             AND organization.PriceSourceIsAmg = 0
+             AND (ISNULL(DATALENGTH(agreement.SourceFenixID), 0) > 0
+               OR agreement.SourceFenixCode IS NOT NULL)
+             AND ISNULL(DATALENGTH(agreement.SourceAmgID), 0) = 0
+             AND agreement.SourceAmgCode IS NULL)
+         OR (@CatalogSource = 'amg'
+             AND organization.PriceSourceIsAmg = 1
+             AND (ISNULL(DATALENGTH(agreement.SourceAmgID), 0) > 0
+               OR agreement.SourceAmgCode IS NOT NULL)
+             AND ISNULL(DATALENGTH(agreement.SourceFenixID), 0) = 0
+             AND agreement.SourceFenixCode IS NULL)
+      )
+)
+SELECT
+    p.ID AS Id,
+    dbo.GetCalculatedProductPriceWithSharesAndVat(
+        p.NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS Price,
+    context.CurrencyCode
+FROM Product p
+INNER JOIN #ProductIds ids ON ids.Id = p.ID
+CROSS JOIN AgreementContext context
+WHERE p.Deleted = 0
+  AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("p") + @";
+
+DROP TABLE #ProductIds;";
+    }
+
+    private static string BuildLiveAvailabilitySql() {
+        return @"
+;WITH Availability AS (
+    SELECT
+        pa.ProductID AS Id,
+        SUM(CASE WHEN s.Locale = 'uk' THEN pa.Amount ELSE 0 END) AS AvailableQtyUk,
+        SUM(CASE WHEN s.Locale = 'pl' THEN pa.Amount ELSE 0 END) AS AvailableQtyPl,
+        SUM(pa.Amount) AS AvailableQty
+    FROM #ProductIds ids
+    INNER JOIN Product p ON p.ID = ids.Id
+    INNER JOIN ProductAvailability pa ON pa.ProductID = p.ID
+    INNER JOIN Storage s ON s.ID = pa.StorageID
+    INNER JOIN Organization o ON o.ID = s.OrganizationID
+    WHERE p.Deleted = 0
+      AND p.IsForWeb = 1
+      AND pa.Deleted = 0
+      AND s.Deleted = 0
+      AND s.ForEcommerce = 1
+      AND s.ForDefective = 0
+      AND s.OrganizationID = @OrganizationId
+      AND s.ForVatProducts = @WithVat
+      AND o.Deleted = 0
+      AND ((@CatalogSource = 'amg' AND o.PriceSourceIsAmg = 1)
+        OR (@CatalogSource = 'fenix' AND o.PriceSourceIsAmg = 0))
+      AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("p") + @"
+    GROUP BY pa.ProductID
+)
+SELECT
+    ids.Id,
+    CAST(CASE WHEN ISNULL(availability.AvailableQtyUk, 0) > 0
+        THEN availability.AvailableQtyUk ELSE 0 END AS float) AS AvailableQtyUk,
+    CAST(CASE WHEN ISNULL(availability.AvailableQtyPl, 0) > 0
+        THEN availability.AvailableQtyPl ELSE 0 END AS float) AS AvailableQtyPl,
+    CAST(CASE WHEN ISNULL(availability.AvailableQty, 0) > 0
+        THEN availability.AvailableQty ELSE 0 END AS float) AS AvailableQty
+FROM #ProductIds ids
+LEFT JOIN Availability availability ON availability.Id = ids.Id;
+
+DROP TABLE #ProductIds;";
+    }
+
     private static StringBuilder BuildProductIdsTable(IEnumerable<long> productIds, bool withRowNumbers) {
         List<long> uniqueIds = productIds.Distinct().ToList();
         StringBuilder sql = new();
@@ -407,4 +527,11 @@ DROP TABLE #ProductIds;";
 public sealed class ProductPriceInfo {
     public decimal Price { get; set; }
     public string CurrencyCode { get; set; } = "UAH";
+}
+
+public sealed class ProductCatalogAvailabilityInfo {
+    public long Id { get; set; }
+    public double AvailableQtyUk { get; set; }
+    public double AvailableQtyPl { get; set; }
+    public double AvailableQty { get; set; }
 }

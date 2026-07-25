@@ -33,8 +33,8 @@ public sealed class ProductsController(
     private const int _defaultSearchLimit = 20;
     private const int _maxSearchLimit = 100;
     private const int _maxSearchOffset = 5000;
-    private const int _authenticatedCandidateBatchSize = 1000;
-    private const int _maxAuthenticatedCandidates = 10_000;
+    private const int _liveHydrationCandidateBatchSize = 100;
+    private const int _maxLiveHydrationCandidates = 10_000;
 
     [HttpGet]
     [AssignActionRoute(ProductsSegments.SEARCH)]
@@ -58,25 +58,19 @@ public sealed class ProductsController(
         int withVat,
         SearchActiveGeneration servingGeneration,
         CancellationToken cancellationToken) {
+        _ = servingGeneration;
         if (string.IsNullOrWhiteSpace(value))
             return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
 
         Guid userNetId = GetUserNetId();
         string locale = RouteData.Values["culture"]?.ToString() ?? "uk";
         bool requestedWithVat = withVat.Equals(1);
-        bool isAnonymous = userNetId == Guid.Empty;
 
         ProductPricingContext pricingContext = productService.GetPricingContext(userNetId, requestedWithVat);
         if (pricingContext == null || pricingContext.WithVat != requestedWithVat)
             return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
 
         PricingDependencyRevisions pricingRevisions = pricingContext.DependencyRevisions;
-        bool useIndexedRetailPrices = false;
-        if (isAnonymous && pricingRevisions.IsValid) {
-            useIndexedRetailPrices =
-                servingGeneration.HasExactIndexedPricingRevisions(pricingRevisions);
-        }
-
         ProductSearchCatalogContext catalogContext = new(
             pricingContext.OrganizationId,
             pricingContext.Source,
@@ -84,7 +78,7 @@ public sealed class ProductsController(
             pricingContext.ClientAgreementNetId,
             pricingContext.PricingId.GetValueOrDefault(),
             pricingContext.CurrencyId.GetValueOrDefault(),
-            useIndexedRetailPrices,
+            UseIndexedRetailPrice: false,
             pricingRevisions);
         if (!catalogContext.IsValid)
             return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
@@ -93,89 +87,72 @@ public sealed class ProductsController(
         int esOffset = offset < 0 ? 0 : (int)Math.Min(offset, _maxSearchOffset);
 
         long timestamp = PriceObfuscator.GetTimestamp();
-        List<ProtectedSearchProduct> protectedProducts;
+        int requiredEligibleCount = checked(esOffset + esLimit);
+        int candidateOffset = 0;
+        int candidateTotal = int.MaxValue;
+        HashSet<long> seenProductIds = [];
+        List<(ProductSearchDocument Document, ProductPriceInfo Price)> eligible = [];
 
-        if (useIndexedRetailPrices) {
-            ProductSearchResultWithDocs searchResult = await esSearchService.SearchWithDocsAsync(
+        while (candidateOffset < candidateTotal
+               && candidateOffset < _maxLiveHydrationCandidates
+               && eligible.Count < requiredEligibleCount) {
+            int candidateLimit = Math.Min(
+                _liveHydrationCandidateBatchSize,
+                _maxLiveHydrationCandidates - candidateOffset);
+            ProductSearchResultWithDocs candidatePage = await esSearchService.SearchWithDocsAsync(
                 value,
                 catalogContext,
                 locale,
-                esLimit,
-                esOffset,
+                candidateLimit,
+                candidateOffset,
                 cancellationToken);
+            candidateTotal = candidatePage.TotalCount;
+            if (candidatePage.Documents.Count == 0) break;
 
-            protectedProducts = searchResult.Documents
-                .Where(document => (requestedWithVat
-                    ? document.RetailPriceVat
-                    : document.RetailPrice) > 0)
-                .Select(document => {
-                    decimal retailPrice = requestedWithVat
-                        ? document.RetailPriceVat
-                        : document.RetailPrice;
-                    ProductPriceInfo retailPriceInfo = new() {
-                        Price = retailPrice,
-                        CurrencyCode = requestedWithVat
-                            ? document.RetailCurrencyCodeVat
-                            : document.RetailCurrencyCode
-                    };
-                    return DocToProtectedProduct(document, retailPriceInfo, locale, timestamp);
-                })
+            List<ProductSearchDocument> uniqueDocuments = candidatePage.Documents
+                .Where(document => document.Id > 0 && seenProductIds.Add(document.Id))
                 .ToList();
-        } else {
-            int requiredEligibleCount = checked(esOffset + esLimit);
-            int candidateOffset = 0;
-            int candidateTotal = int.MaxValue;
-            HashSet<long> seenProductIds = [];
-            List<(ProductSearchDocument Document, ProductPriceInfo Price)> eligible = [];
+            List<long> productIds = uniqueDocuments.Select(document => document.Id).ToList();
+            Dictionary<long, ProductPriceInfo> prices = priceCacheService.GetPrices(
+                productIds,
+                userNetId,
+                pricingContext,
+                locale,
+                ids => productService.GetPricesOnly(ids, pricingContext, locale));
 
-            while (candidateOffset < candidateTotal
-                   && candidateOffset < _maxAuthenticatedCandidates
-                   && eligible.Count < requiredEligibleCount) {
-                int candidateLimit = Math.Min(
-                    _authenticatedCandidateBatchSize,
-                    _maxAuthenticatedCandidates - candidateOffset);
-                ProductSearchResultWithDocs candidatePage = await esSearchService.SearchWithDocsAsync(
-                    value,
-                    catalogContext,
-                    locale,
-                    candidateLimit,
-                    candidateOffset,
-                    cancellationToken);
-                candidateTotal = candidatePage.TotalCount;
-                if (candidatePage.Documents.Count == 0) break;
-
-                List<ProductSearchDocument> uniqueDocuments = candidatePage.Documents
-                    .Where(document => document.Id > 0 && seenProductIds.Add(document.Id))
-                    .ToList();
-                List<long> productIds = uniqueDocuments.Select(document => document.Id).ToList();
-                Dictionary<long, ProductPriceInfo> prices = priceCacheService.GetPrices(
-                    productIds,
-                    userNetId,
-                    pricingContext,
-                    locale,
-                    ids => productService.GetPricesOnly(ids, pricingContext, locale));
-
-                foreach (ProductSearchDocument document in uniqueDocuments) {
-                    if (prices.TryGetValue(document.Id, out ProductPriceInfo? price)
-                        && price != null
-                        && price.Price > 0) {
-                        eligible.Add((document, price));
-                    }
+            foreach (ProductSearchDocument document in uniqueDocuments) {
+                if (prices.TryGetValue(document.Id, out ProductPriceInfo? price)
+                    && price != null
+                    && price.Price > 0) {
+                    eligible.Add((document, price));
                 }
-
-                candidateOffset += candidatePage.Documents.Count;
             }
 
-            bool exactRequestedPageIsKnown = eligible.Count >= requiredEligibleCount
-                                             || candidateOffset >= candidateTotal;
-            protectedProducts = exactRequestedPageIsKnown
-                ? eligible
-                    .Skip(esOffset)
-                    .Take(esLimit)
-                    .Select(item => DocToProtectedProduct(item.Document, item.Price, locale, timestamp))
-                    .ToList()
-                : [];
+            candidateOffset += candidatePage.Documents.Count;
         }
+
+        bool exactRequestedPageIsKnown = eligible.Count >= requiredEligibleCount
+                                         || candidateOffset >= candidateTotal;
+        if (!exactRequestedPageIsKnown)
+            return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
+
+        List<(ProductSearchDocument Document, ProductPriceInfo Price)> requestedPage = eligible
+            .Skip(esOffset)
+            .Take(esLimit)
+            .ToList();
+        Dictionary<long, ProductCatalogAvailabilityInfo> availability =
+            productService.GetCatalogAvailabilityOnly(
+                requestedPage.Select(item => item.Document.Id).ToList(),
+                pricingContext);
+        List<ProtectedSearchProduct> protectedProducts = requestedPage
+            .Select(item => DocToProtectedProduct(
+                item.Document,
+                item.Price,
+                availability.GetValueOrDefault(item.Document.Id),
+                requestedWithVat,
+                locale,
+                timestamp))
+            .ToList();
 
         return Ok(SuccessResponseBody(protectedProducts));
     }
@@ -284,6 +261,8 @@ public sealed class ProductsController(
     private static ProtectedSearchProduct DocToProtectedProduct(
         ProductSearchDocument doc,
         ProductPriceInfo priceInfo,
+        ProductCatalogAvailabilityInfo? availability,
+        bool withVat,
         string locale,
         long timestamp) {
         decimal price = priceInfo.Price;
@@ -302,11 +281,11 @@ public sealed class ProductsController(
             UCGFEA = doc.Ucgfea,
             Volume = doc.Volume,
             Top = doc.Top,
-            AvailableQtyUk = doc.AvailableQtyUk,
+            AvailableQtyUk = withVat ? 0 : availability?.AvailableQtyUk ?? 0,
             AvailableQtyRoad = 0,
-            AvailableQtyUkVAT = doc.AvailableQtyUkVat,
-            AvailableQtyPl = doc.AvailableQtyPl,
-            AvailableQtyPlVAT = doc.AvailableQtyPlVat,
+            AvailableQtyUkVAT = withVat ? availability?.AvailableQtyUk ?? 0 : 0,
+            AvailableQtyPl = withVat ? 0 : availability?.AvailableQtyPl ?? 0,
+            AvailableQtyPlVAT = withVat ? availability?.AvailableQtyPl ?? 0 : 0,
             Weight = doc.Weight,
             HasAnalogue = doc.HasAnalogue,
             HasComponent = doc.HasComponent,
@@ -318,8 +297,7 @@ public sealed class ProductsController(
             OriginalNumbers = doc.OriginalNumbers,
             Image = doc.Image,
             MeasureUnitId = doc.MeasureUnitId,
-            // DEBUG: raw prices (encryption disabled for testing)
-            P = string.Join(",", new[] { price, price, 0m, 0m }.Select(p => p.ToString("F2"))),
+            P = PriceObfuscator.EncodeMultiple([price, price, 0m, 0m], timestamp),
             CurrencyCode = currencyCode,
             T = timestamp,
             ProductSlug = doc.SlugId > 0 ? new ProductSlug {

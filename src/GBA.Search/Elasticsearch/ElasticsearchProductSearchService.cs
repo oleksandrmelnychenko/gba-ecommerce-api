@@ -49,22 +49,10 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         "mainOriginalNumberClean", "originalNumbers", "originalNumbersClean",
         "size", "sizeClean", "packingStandard", "orderStandard", "ucgfea",
         "volume", "top", "weight", "hasAnalogue", "hasComponent", "hasImage",
-        "image", "measureUnitId", "available", "availableQtyUk",
-        "availableQtyUkVat", "availableQtyPl", "availableQtyPlVat",
-        "availableQty", "isForWeb", "isForSale", "isForZeroSale", "slugId",
-        "slugNetUid", "slugUrl", "slugLocale", "retailPrice", "retailPriceVat",
-        "retailCurrencyCode", "retailCurrencyCodeVat", "indexedProductPricingRevision",
-        "indexedPricingHierarchyRevision", "indexedDiscountRevision",
-        "indexedExchangeRateRevision", "catalogOrganizationIdNonVat",
-        "catalogOrganizationIdVat", "catalogAgreementSourceNonVat", "catalogAgreementSourceVat",
+        "image", "measureUnitId", "isForWeb", "isForSale", "isForZeroSale", "slugId",
+        "slugNetUid", "slugUrl", "slugLocale",
         "productSourceFenix", "productSourceAmg", "isCanonicalFenix",
-        "isCanonicalAmg", "catalogScopes",
-        "catalogSourceSystemNonVat", "catalogSourceSystemVat",
-        "catalogAgreementNetUidNonVat", "catalogAgreementNetUidVat",
-        "catalogPricingIdNonVat", "catalogPricingIdVat", "catalogCurrencyIdNonVat",
-        "catalogCurrencyIdVat", "hasNonVatCatalogAvailability",
-        "hasVatCatalogAvailability", "hasNonVatCatalogSource",
-        "hasVatCatalogSource", "updatedAt"
+        "isCanonicalAmg"
     };
 
     public ElasticsearchProductSearchService(
@@ -223,13 +211,12 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         // Build scoring functions to match SQL V1 ranking:
         // SQL V1 ORDER BY:
         // 1. MainOriginalNumberExact DESC
-        // 2. Available DESC
-        // 3. HundredPercentMatch DESC (exact on SearchNameUA/VendorCode/MainOriginalNumber)
-        // 4. OriginalNumber_Match DESC
-        // 5. SearchVendorCode_Match DESC
-        // 6. (OriginalNumber OR SearchName OR SearchNameUA) DESC
-        // 7. (SearchDescription OR SearchDescriptionUA) DESC
-        // 8. SearchSize_Match DESC
+        // 2. HundredPercentMatch DESC (exact on SearchNameUA/VendorCode/MainOriginalNumber)
+        // 3. OriginalNumber_Match DESC
+        // 4. SearchVendorCode_Match DESC
+        // 5. (OriginalNumber OR SearchName OR SearchNameUA) DESC
+        // 6. (SearchDescription OR SearchDescriptionUA) DESC
+        // 7. SearchSize_Match DESC
         List<object> functions = new List<object>();
 
         // Analyze terms to determine scoring strategy
@@ -250,13 +237,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             weight = mainOriginalNumberWeight
         });
 
-        // 2. Available (products in stock)
-        functions.Add(new {
-            filter = new { term = new { available = true } },
-            weight = 50000
-        });
-
-        // 3. Exact match on SearchNameUA (for Cyrillic queries)
+        // 2. Exact match on SearchNameUA (for Cyrillic queries)
         if (hasCyrillicTerms) {
             functions.Add(new {
                 filter = new { term = new Dictionary<string, object> { ["searchNameUA"] = normalizedLower.Replace(" ", "") } },
@@ -449,8 +430,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
                 }
             },
             ["sort"] = new object[] {
-                new { available = new { order = "desc" } },
-                new { availableQtyUk = new { order = "desc" } },
+                new Dictionary<string, object> { ["nameUA.keyword"] = new { order = "asc" } },
                 new { id = new { order = "asc" } }
             }
         };
@@ -492,122 +472,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             }
         });
 
-        if (!catalogContext.UseIndexedRetailPrice) {
-            filters.Add(BuildCatalogScopeFilter(catalogContext, sourceSystem));
-            return filters.ToArray();
-        }
-
-        string variant = catalogContext.WithVat ? "Vat" : "NonVat";
-        string sourceSystemField = $"catalogSourceSystem{variant}";
-        string sourceEligibilityField = $"has{variant}CatalogSource";
-        string availabilityField = $"has{variant}CatalogAvailability";
-        string organizationField = $"catalogOrganizationId{variant}";
-
-        filters.Add(new {
-            term = new Dictionary<string, object> {
-                [organizationField] = catalogContext.OrganizationId
-            }
-        });
-        filters.Add(new {
-            term = new Dictionary<string, object> {
-                [sourceSystemField] = sourceSystem
-            }
-        });
-        filters.Add(new {
-            term = new Dictionary<string, object> {
-                [sourceEligibilityField] = true
-            }
-        });
-        filters.Add(new {
-            term = new Dictionary<string, object> {
-                [availabilityField] = true
-            }
-        });
-
-        string agreementField = $"catalogAgreementNetUid{variant}.keyword";
-        string pricingField = $"catalogPricingId{variant}";
-        string currencyField = $"catalogCurrencyId{variant}";
-        string priceField = catalogContext.WithVat ? "retailPriceVat" : "retailPrice";
-
-        filters.Add(new {
-            term = new Dictionary<string, object> {
-                [agreementField] = catalogContext.ClientAgreementNetId.ToString()
-            }
-        });
-        filters.Add(new {
-            term = new Dictionary<string, object> {
-                [pricingField] = catalogContext.PricingId
-            }
-        });
-        filters.Add(new {
-            term = new Dictionary<string, object> {
-                [currencyField] = catalogContext.CurrencyId
-            }
-        });
-        filters.Add(new {
-            range = new Dictionary<string, object> {
-                [priceField] = new { gt = 0 }
-            }
-        });
-        filters.Add(new {
-            term = new Dictionary<string, object> {
-                ["indexedProductPricingRevision"] = catalogContext.PricingRevisions!.ProductPricing
-            }
-        });
-        filters.Add(new {
-            term = new Dictionary<string, object> {
-                ["indexedPricingHierarchyRevision"] = catalogContext.PricingRevisions!.PricingHierarchy
-            }
-        });
-        filters.Add(new {
-            term = new Dictionary<string, object> {
-                ["indexedDiscountRevision"] = catalogContext.PricingRevisions!.Discounts
-            }
-        });
-        filters.Add(new {
-            term = new Dictionary<string, object> {
-                ["indexedExchangeRateRevision"] = catalogContext.PricingRevisions!.ExchangeRates
-            }
-        });
-
         return filters.ToArray();
-    }
-
-    private static object BuildCatalogScopeFilter(
-        ProductSearchCatalogContext catalogContext,
-        string sourceSystem) {
-        return new {
-            nested = new {
-                path = "catalogScopes",
-                score_mode = "none",
-                query = new {
-                    @bool = new {
-                        filter = new object[] {
-                            new {
-                                term = new Dictionary<string, object> {
-                                    ["catalogScopes.organizationId"] = catalogContext.OrganizationId
-                                }
-                            },
-                            new {
-                                term = new Dictionary<string, object> {
-                                    ["catalogScopes.sourceSystem"] = sourceSystem
-                                }
-                            },
-                            new {
-                                term = new Dictionary<string, object> {
-                                    ["catalogScopes.withVat"] = catalogContext.WithVat
-                                }
-                            },
-                            new {
-                                range = new Dictionary<string, object> {
-                                    ["catalogScopes.availableQty"] = new { gt = 0 }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        };
     }
 
     private async Task<SearchResult> ExecuteSearchAsync(
@@ -720,13 +585,6 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         CancellationToken ct) {
         SearchActiveGeneration generation =
             await _servingGenerationResolver.GetRequiredGenerationAsync(ct);
-
-        if (catalogContext?.UseIndexedRetailPrice == true
-            && !generation.HasExactIndexedPricingRevisions(catalogContext.PricingRevisions)) {
-            _log.LogWarning(
-                "Active search generation pricing revision does not match the request; failing indexed-price search closed");
-            return null;
-        }
 
         return generation.IndexName;
     }
@@ -870,67 +728,17 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
                 StringComparison.Ordinal))
             return false;
 
-        if (!catalogContext.UseIndexedRetailPrice) {
-            List<ProductSearchCatalogScope> matchingScopes = document.CatalogScopes
-                .Where(scope => scope.OrganizationId == catalogContext.OrganizationId
-                                && scope.WithVat == catalogContext.WithVat
-                                && string.Equals(
-                                    scope.SourceSystem,
-                                    requestedSourceSystem,
-                                    StringComparison.Ordinal)
-                                && scope.AvailableQty > 0)
-                .Take(2)
-                .ToList();
-            if (matchingScopes.Count != 1) return false;
-
-            ProductSearchCatalogScope scope = matchingScopes[0];
-            document.Available = true;
-            document.AvailableQty = scope.AvailableQty;
-            document.AvailableQtyUk = catalogContext.WithVat ? 0 : scope.AvailableQtyUk;
-            document.AvailableQtyUkVat = catalogContext.WithVat ? scope.AvailableQtyUk : 0;
-            document.AvailableQtyPl = catalogContext.WithVat ? 0 : scope.AvailableQtyPl;
-            document.AvailableQtyPlVat = catalogContext.WithVat ? scope.AvailableQtyPl : 0;
-            return true;
-        }
-
-        if (!document.IndexedPricingRevisions.MatchesExactly(catalogContext.PricingRevisions))
-            return false;
-
-        long organizationId = catalogContext.WithVat
-            ? document.CatalogOrganizationIdVat
-            : document.CatalogOrganizationIdNonVat;
-        if (organizationId != catalogContext.OrganizationId) return false;
-
-        string sourceSystem = catalogContext.WithVat
-            ? document.CatalogSourceSystemVat
-            : document.CatalogSourceSystemNonVat;
-        bool hasAvailability = catalogContext.WithVat
-            ? document.HasVatCatalogAvailability
-            : document.HasNonVatCatalogAvailability;
-        bool hasSource = catalogContext.WithVat
-            ? document.HasVatCatalogSource
-            : document.HasNonVatCatalogSource;
-        if (!hasAvailability
-            || !hasSource
-            || !string.Equals(sourceSystem, requestedSourceSystem, StringComparison.Ordinal))
-            return false;
-
-        string agreementNetUid = catalogContext.WithVat
-            ? document.CatalogAgreementNetUidVat
-            : document.CatalogAgreementNetUidNonVat;
-        long pricingId = catalogContext.WithVat
-            ? document.CatalogPricingIdVat
-            : document.CatalogPricingIdNonVat;
-        long currencyId = catalogContext.WithVat
-            ? document.CatalogCurrencyIdVat
-            : document.CatalogCurrencyIdNonVat;
-        decimal price = catalogContext.WithVat ? document.RetailPriceVat : document.RetailPrice;
-
-        return Guid.TryParse(agreementNetUid, out Guid indexedAgreementNetUid)
-               && indexedAgreementNetUid == catalogContext.ClientAgreementNetId
-               && pricingId == catalogContext.PricingId
-               && currencyId == catalogContext.CurrencyId
-               && price > 0;
+        // Dynamic commercial data is never trusted from Elasticsearch. The controller hydrates
+        // the requested page from SQL, including a legitimate zero-stock result.
+        document.Available = false;
+        document.AvailableQty = 0;
+        document.AvailableQtyUk = 0;
+        document.AvailableQtyUkVat = 0;
+        document.AvailableQtyPl = 0;
+        document.AvailableQtyPlVat = 0;
+        document.RetailPrice = 0;
+        document.RetailPriceVat = 0;
+        return true;
     }
 
     private static List<ProductSearchCatalogScope> ParseCatalogScopes(JsonElement source) {

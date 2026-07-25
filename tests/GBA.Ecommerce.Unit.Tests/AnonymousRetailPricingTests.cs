@@ -407,6 +407,35 @@ public sealed class AnonymousRetailPricingTests {
         singleProducts.VerifyAll();
     }
 
+    [Fact]
+    public void AnonymousPricingContext_UsesSelectedAmgWorld() {
+        RetailDependencies dependencies = new();
+        Guid agreementNetId = Guid.NewGuid();
+        dependencies.RetailCatalogSelection
+            .Setup(provider => provider.Resolve(dependencies.Connection.Object, false))
+            .Returns(new RetailCatalogSelection {
+                StorageId = 31,
+                OrganizationId = dependencies.OrganizationId,
+                WithVat = false,
+                StorageUpdated = DateTime.UtcNow,
+                ClientAgreementNetUid = agreementNetId,
+                PricingId = 853,
+                CurrencyId = 1,
+                SourceAmgId = [0xA1],
+                CatalogAgreementSource = "amg:id-A1",
+                ClientAgreementUpdated = DateTime.UtcNow,
+                AgreementUpdated = DateTime.UtcNow
+            });
+        ProductService service = dependencies.CreateProductService();
+
+        ProductPricingContext context = service.GetPricingContext(Guid.Empty, false);
+
+        Assert.NotNull(context);
+        Assert.Equal("amg", context.Source);
+        Assert.Equal(dependencies.OrganizationId, context.OrganizationId);
+        Assert.Equal(agreementNetId, context.ClientAgreementNetId);
+    }
+
     private static ClientAgreement CreateFenixAgreement(
         Guid netId,
         Organization organization,

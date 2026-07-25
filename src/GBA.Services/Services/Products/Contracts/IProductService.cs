@@ -50,5 +50,9 @@ public interface IProductService {
 
     Dictionary<long, ProductPriceInfo> GetPricesOnly(List<long> productIds, ProductPricingContext pricingContext, string culture = "uk");
 
+    Dictionary<long, ProductCatalogAvailabilityInfo> GetCatalogAvailabilityOnly(
+        List<long> productIds,
+        ProductPricingContext pricingContext);
+
     ProductPricingContext GetPricingContext(Guid currentClientNetId, bool withVat);
 }
