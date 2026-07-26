@@ -22,6 +22,8 @@ RUN dotnet publish src/GBA.Ecommerce/GBA.Ecommerce.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 COPY --from=build --chown=$APP_UID:$APP_UID /app/publish ./
+RUN mkdir -p /app/logs \
+    && chown -R $APP_UID:$APP_UID /app/logs
 
 # app binds Kestrel to 0.0.0.0:62506 (see Program.cs)
 EXPOSE 62506
