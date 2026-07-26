@@ -2,6 +2,7 @@
 
 using System;
 using System.Buffers;
+using System.Globalization;
 using System.Buffers.Text;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
@@ -26,10 +27,10 @@ public static class PriceObfuscator {
         Span<char> dataBuffer = stackalloc char[64];
         int written = 0;
 
-        price.TryFormat(dataBuffer, out int priceLen, "F2");
+        price.TryFormat(dataBuffer, out int priceLen, "F2", CultureInfo.InvariantCulture);
         written += priceLen;
         dataBuffer[written++] = '|';
-        timestamp.TryFormat(dataBuffer[written..], out int tsLen);
+        timestamp.TryFormat(dataBuffer[written..], out int tsLen, provider: CultureInfo.InvariantCulture);
         written += tsLen;
 
         // Convert to UTF8 bytes
@@ -51,12 +52,12 @@ public static class PriceObfuscator {
 
         for (int i = 0; i < prices.Length; i++) {
             if (i > 0) dataBuffer[written++] = ',';
-            prices[i].TryFormat(dataBuffer[written..], out int len, "F2");
+            prices[i].TryFormat(dataBuffer[written..], out int len, "F2", CultureInfo.InvariantCulture);
             written += len;
         }
 
         dataBuffer[written++] = '|';
-        timestamp.TryFormat(dataBuffer[written..], out int tsLen);
+        timestamp.TryFormat(dataBuffer[written..], out int tsLen, provider: CultureInfo.InvariantCulture);
         written += tsLen;
 
         // Convert to UTF8 bytes
@@ -103,7 +104,9 @@ public static class PriceObfuscator {
 
             if (pipeIndex < 0) return null;
 
-            return (decimal.Parse(data[..pipeIndex]), long.Parse(data[(pipeIndex + 1)..]));
+            return (
+                decimal.Parse(data[..pipeIndex], CultureInfo.InvariantCulture),
+                long.Parse(data[(pipeIndex + 1)..], CultureInfo.InvariantCulture));
         } catch {
             return null;
         }

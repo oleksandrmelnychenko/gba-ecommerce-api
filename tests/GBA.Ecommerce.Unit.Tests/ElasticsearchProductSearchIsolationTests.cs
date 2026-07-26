@@ -697,7 +697,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
         Assert.Equal(42, product.Id);
         Assert.Equal("PLN", product.CurrencyCode);
         string protectedPrice = Assert.IsType<string>(product.P);
-        string decodedPrice = DecodeProtectedPrices(protectedPrice);
+        string decodedPrice = TestPricePayload.Decrypt(protectedPrice);
         Assert.StartsWith("210.00,", decodedPrice, StringComparison.Ordinal);
         // Compare the price section only: the payload's trailing timestamp can contain the
         // indexed-price digits by coincidence and would make this assertion lie.
@@ -763,7 +763,7 @@ public sealed class ElasticsearchProductSearchIsolationTests {
 
         ProtectedSearchProduct product = Assert.Single(ReadProducts(action));
         string protectedPrice = Assert.IsType<string>(product.P);
-        string decodedPrice = DecodeProtectedPrices(protectedPrice);
+        string decodedPrice = TestPricePayload.Decrypt(protectedPrice);
         Assert.StartsWith("210.00,", decodedPrice, StringComparison.Ordinal);
         // Compare the price section only: the payload's trailing timestamp can contain the
         // indexed-price digits by coincidence and would make this assertion lie.
@@ -1066,24 +1066,6 @@ public sealed class ElasticsearchProductSearchIsolationTests {
             pricingContext,
             "uk",
             It.IsAny<Func<List<long>, Dictionary<long, ProductPriceInfo>>>()), Times.Exactly(100));
-    }
-
-    /// <summary>
-    /// Mirrors the AES-CBC unwrap the storefront performs on the protected price payload,
-    /// so the tests assert the real wire format instead of plaintext prices.
-    /// </summary>
-    private static string DecodeProtectedPrices(string encoded) {
-        string base64 = encoded.Replace('-', '+').Replace('_', '/');
-        base64 = base64.PadRight(base64.Length + (4 - base64.Length % 4) % 4, '=');
-
-        using System.Security.Cryptography.Aes aes = System.Security.Cryptography.Aes.Create();
-        aes.Key = System.Text.Encoding.UTF8.GetBytes(GBA.Common.Configuration.SecuritySettings.Instance.PriceEncryptionKey);
-        aes.IV = System.Text.Encoding.UTF8.GetBytes(GBA.Common.Configuration.SecuritySettings.Instance.PriceEncryptionIV);
-        using System.Security.Cryptography.ICryptoTransform decryptor = aes.CreateDecryptor();
-
-        byte[] cipher = Convert.FromBase64String(base64);
-        byte[] plain = decryptor.TransformFinalBlock(cipher, 0, cipher.Length);
-        return System.Text.Encoding.UTF8.GetString(plain);
     }
 
     private static ProductSearchCatalogContext CreateCatalogContext(
