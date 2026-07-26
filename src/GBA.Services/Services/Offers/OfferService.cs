@@ -7,6 +7,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
+using GBA.Common.Configuration;
 using GBA.Common.Helpers;
 using GBA.Common.Models;
 using GBA.Common.ResourceNames.ECommerce;
@@ -22,6 +23,7 @@ using GBA.Domain.Repositories.Products.Contracts;
 using GBA.Domain.Repositories.Sales.Contracts;
 using GBA.Domain.Repositories.Users.Contracts;
 using GBA.Services.Infrastructure;
+using GBA.Services.Services.Clients.Contracts;
 using GBA.Services.Services.Offers.Contracts;
 using Microsoft.Extensions.Http;
 
@@ -43,6 +45,7 @@ public sealed class OfferService : IOfferService {
     private readonly IUserRepositoriesFactory _userRepositoriesFactory;
 
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IClientResourceAccessService _clientResourceAccessService;
 
     public OfferService(
         IClientRepositoriesFactory clientRepositoriesFactory,
@@ -50,7 +53,8 @@ public sealed class OfferService : IOfferService {
         IProductRepositoriesFactory productRepositoriesFactory,
         IUserRepositoriesFactory userRepositoriesFactory,
         IDbConnectionFactory connectionFactory,
-        IHttpClientFactory httpClientFactory) {
+        IHttpClientFactory httpClientFactory,
+        IClientResourceAccessService clientResourceAccessService) {
         _clientRepositoriesFactory = clientRepositoriesFactory;
 
         _saleRepositoriesFactory = saleRepositoriesFactory;
@@ -61,13 +65,16 @@ public sealed class OfferService : IOfferService {
 
         _connectionFactory = connectionFactory;
         _httpClientFactory = httpClientFactory;
+        _clientResourceAccessService = clientResourceAccessService;
     }
 
-    public Task<ClientShoppingCart> GetOfferByNetId(Guid netId) {
+    public Task<ClientShoppingCart> GetOfferByNetId(Guid netId, Guid actorNetId) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
         ClientShoppingCart offer = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection).GetByNetId(netId);
 
         if (offer == null) throw new Exception(OfferResourceNames.OFFER_NOT_EXISTS);
+        if (!_clientResourceAccessService.CanAccessClientOrAgreement(actorNetId, offer.ClientAgreement.NetUid))
+            throw new UnauthorizedAccessException();
 
         if (offer.ValidUntil < DateTime.Now.Date) throw new Exception(OfferResourceNames.OFFER_EXPIRED);
 
@@ -123,10 +130,18 @@ public sealed class OfferService : IOfferService {
 
             if (offer == null)
                 throw new Exception(OfferResourceNames.OFFER_NOT_EXISTS);
+            if (!offer.IsOffer || offer.Deleted)
+                throw new Exception(OfferResourceNames.OFFER_NOT_EXISTS);
             if (offer.IsOfferProcessed)
                 throw new Exception(OfferResourceNames.OFFER_PROCESSED);
+            if (offer.ValidUntil < DateTime.Now.Date)
+                throw new Exception(OfferResourceNames.OFFER_EXPIRED);
+            if (!_clientResourceAccessService.CanAccessClientOrAgreement(clientNetId, offer.ClientAgreement.NetUid))
+                throw new UnauthorizedAccessException();
 
-            shoppingCartRepository.SetProcessedByNetId(clientShoppingCart.NetUid);
+            List<OrderItem> selectedOrderItems = BuildCanonicalOfferItems(offer, clientShoppingCart);
+            if (!shoppingCartRepository.TrySetProcessedByNetId(clientShoppingCart.NetUid))
+                throw new Exception(OfferResourceNames.OFFER_PROCESSED);
 
             Order order = new() {
                 OrderSource = OrderSource.Offer,
@@ -146,10 +161,10 @@ public sealed class OfferService : IOfferService {
             IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
 
-            if (clientShoppingCart.OrderItems.Any()) {
+            if (selectedOrderItems.Any()) {
                 List<OrderItem> offeredOrderItems = new();
 
-                foreach (OrderItem orderItem in clientShoppingCart.OrderItems) {
+                foreach (OrderItem orderItem in selectedOrderItems) {
                     orderItem.ClientShoppingCartId = null;
                     orderItem.OrderId = order.Id;
                     orderItem.ProductId = orderItem.Product.Id;
@@ -228,12 +243,12 @@ public sealed class OfferService : IOfferService {
                                 saleSyncCrmUrl =
                                     $"{data?.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
                             } else {
-                                saleSyncCrmUrl =
-                                    $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+                                throw new InvalidOperationException("CRM endpoint is not configured.");
                             }
 
-                            using HttpClient httpClient = _httpClientFactory.CreateClient();
-                            await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                            using HttpClient httpClient = _httpClientFactory.CreateClient(
+                                EcommerceInternalHttpClientDefaults.ClientName);
+                            await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
                         }, "Offer product availability sync");
                     } else {
                         orderItem.OrderedQty = orderItem.Qty;
@@ -325,14 +340,60 @@ public sealed class OfferService : IOfferService {
 
                     saleSyncCrmUrl = $"{data?.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
                 } else {
-                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
+                    throw new InvalidOperationException("CRM endpoint is not configured.");
                 }
 
-                using HttpClient httpClient = _httpClientFactory.CreateClient();
-                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                using HttpClient httpClient = _httpClientFactory.CreateClient(
+                    EcommerceInternalHttpClientDefaults.ClientName);
+                await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
             }, "Offer sale sync");
 
             return Task.FromResult(sale);
+    }
+
+    private static List<OrderItem> BuildCanonicalOfferItems(
+        ClientShoppingCart offer,
+        ClientShoppingCart requestedCart) {
+        if (requestedCart?.OrderItems == null ||
+            requestedCart.OrderItems.Count is < 1 or > 100)
+            throw new ArgumentException("A valid offer selection is required.");
+
+        Dictionary<Guid, OrderItem> offerItems = offer.OrderItems
+            .Where(item => item.NetUid != Guid.Empty)
+            .ToDictionary(item => item.NetUid);
+        HashSet<Guid> selectedNetIds = new();
+        List<OrderItem> selected = new(requestedCart.OrderItems.Count);
+
+        foreach (OrderItem requested in requestedCart.OrderItems) {
+            if (requested == null ||
+                requested.NetUid == Guid.Empty ||
+                !selectedNetIds.Add(requested.NetUid) ||
+                !offerItems.TryGetValue(requested.NetUid, out OrderItem offered) ||
+                double.IsNaN(requested.Qty) ||
+                double.IsInfinity(requested.Qty) ||
+                requested.Qty <= 0 ||
+                requested.Qty > offered.Qty)
+                throw new ArgumentException("A valid offer selection is required.");
+
+            selected.Add(new OrderItem {
+                ProductId = offered.ProductId,
+                Product = offered.Product,
+                Qty = requested.Qty,
+                OverLordQty = requested.Qty,
+                Comment = offered.Comment,
+                IsValidForCurrentSale = offered.IsValidForCurrentSale,
+                PricePerItem = offered.PricePerItem,
+                PricePerItemWithoutVat = offered.PricePerItemWithoutVat,
+                ExchangeRateAmount = offered.ExchangeRateAmount,
+                Vat = offered.Vat,
+                AssignedSpecificationId = offered.AssignedSpecificationId,
+                IsFromReSale = offered.IsFromReSale,
+                MisplacedSaleId = offered.MisplacedSaleId,
+                IsFromShiftedItem = offered.IsFromShiftedItem
+            });
+        }
+
+        return selected;
     }
 
     public Task<Order> DynamicallyCalculateTotalPrices(Order order) {

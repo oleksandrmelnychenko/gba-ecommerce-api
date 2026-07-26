@@ -2792,7 +2792,11 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
         return products;
     }
 
-    public List<Product> GetAllFromIdsInPreDefinedQuery(string preDefinedQuery, Guid nonVatAgreementNetId, Guid? vatAgreementNetId) {
+    public List<Product> GetAllFromIdsInPreDefinedQuery(
+        string preDefinedQuery,
+        Guid nonVatAgreementNetId,
+        Guid? vatAgreementNetId,
+        object queryParameters = null) {
         List<Product> products = new();
 
         Type[] types = {
@@ -2857,11 +2861,10 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             return product;
         };
 
-        var props = new {
-            NonVatAgreementNetId = nonVatAgreementNetId,
-            VatAgreementNetId = vatAgreementNetId ?? Guid.Empty,
-            Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName
-        };
+        DynamicParameters props = new(queryParameters);
+        props.Add("NonVatAgreementNetId", nonVatAgreementNetId);
+        props.Add("VatAgreementNetId", vatAgreementNetId ?? Guid.Empty);
+        props.Add("Culture", CultureInfo.CurrentCulture.TwoLetterISOLanguageName);
 
         string sqlExpression =
             "SELECT " +

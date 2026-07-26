@@ -1,4 +1,4 @@
-using System.Globalization;
+using System;
 using System.Net;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -35,32 +35,38 @@ public class GlobalExceptionHandler : IGlobalExceptionHandler {
     /// </summary>
     /// <param name="httpContext"></param>
     /// <param name="exceptionHandlerFeature"></param>
-    /// <param name="isDevelopmentMode"></param>
     /// <returns></returns>
-    public async Task HandleException(HttpContext httpContext, IExceptionHandlerFeature exceptionHandlerFeature, bool isDevelopmentMode) {
+    public async Task HandleException(HttpContext httpContext, IExceptionHandlerFeature exceptionHandlerFeature) {
         //Unhandler sever exceptions.
-        await HandleServerException(httpContext, exceptionHandlerFeature, isDevelopmentMode);
+        await HandleServerException(httpContext, exceptionHandlerFeature);
     }
 
-    private async Task HandleServerException(HttpContext context, IExceptionHandlerFeature exceptionHandler, bool isDevelopment) {
-        HttpStatusCode statusCode = exceptionHandler.Error is IRouteContraintException
+    private async Task HandleServerException(HttpContext context, IExceptionHandlerFeature exceptionHandler) {
+        bool isRouteConstraint = exceptionHandler.Error is IRouteContraintException;
+        bool isInvalidRequest = exceptionHandler.Error is ArgumentException or JsonException;
+        bool isForbidden = exceptionHandler.Error is UnauthorizedAccessException;
+        HttpStatusCode statusCode = isRouteConstraint || isForbidden
             ? HttpStatusCode.Forbidden
-            : HttpStatusCode.BadRequest;
+            : isInvalidRequest
+                ? HttpStatusCode.BadRequest
+                : HttpStatusCode.InternalServerError;
 
         string correlationId = context.GetCorrelationId();
 
-        string developerMessage = string.Format(CultureInfo.CurrentCulture,
-            $"{exceptionHandler.Error.Message}</br>{exceptionHandler.Error.InnerException}</br>{exceptionHandler.Error.StackTrace}");
-
         context.Response.StatusCode = (int)statusCode;
         context.Response.ContentType = "application/json";
+        context.Response.Headers.CacheControl = "no-store";
         string errorMessage = exceptionHandler.Error is IRouteContraintException routeException
             ? routeException.GetUserMessageException
-            : exceptionHandler.Error.Message;
+            : isForbidden
+                ? "Access is forbidden."
+            : isInvalidRequest
+                ? "The request is invalid."
+                : "An unexpected error occurred.";
 
         ErrorResponse response = new() {
             Body = null,
-            Message = isDevelopment ? developerMessage : errorMessage,
+            Message = errorMessage,
             StatusCode = statusCode,
             CorrelationId = correlationId
         };

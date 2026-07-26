@@ -174,7 +174,10 @@ public class Startup {
         });
 
         services.AddMemoryCache();
-        services.AddHttpClient();
+        services.AddHttpClient(string.Empty, client => {
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
+        services.AddEcommerceInternalHttpClient(Configuration);
         services.AddRequestDecompression();
         services.AddHealthChecks()
             .AddCheck("db-main", () => {
@@ -233,6 +236,17 @@ public class Startup {
                         PermitLimit = 60,
                         Window = TimeSpan.FromMinutes(1),
                         SegmentsPerWindow = 6,
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = 0
+                    }));
+
+            options.AddPolicy("checkout", context =>
+                RateLimitPartition.GetSlidingWindowLimiter(
+                    GetClientPartitionKey(context),
+                    _ => new SlidingWindowRateLimiterOptions {
+                        PermitLimit = 20,
+                        Window = TimeSpan.FromMinutes(1),
+                        SegmentsPerWindow = 4,
                         QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                         QueueLimit = 0
                     }));
@@ -405,6 +419,7 @@ public class Startup {
         services.AddScoped<IRegionService, RegionService>();
         services.AddScoped<IRegionCodeService, RegionCodeService>();
         services.AddScoped<IClientService, ClientService>();
+        services.AddScoped<IClientResourceAccessService, ClientResourceAccessService>();
         services.AddScoped<IExchageRateService, ExchageRateService>();
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<IGeoLocationService, GeoLocationService>();
@@ -491,13 +506,13 @@ public class Startup {
                 }
                 IGlobalExceptionHandler globalExceptionHandler = globalExceptionFactory.New();
 
-                await globalExceptionHandler.HandleException(context, error, _environment.IsDevelopment());
+                await globalExceptionHandler.HandleException(context, error);
             });
         });
 
         app.UseMiddleware<ReflectionTypeLoadExceptionLoggingMiddleware>();
 
-        if (_environment.IsDevelopment()) {
+        if (_environment.IsDevelopment() && Configuration.GetValue<bool>("Security:EnableSwagger")) {
             app.UseSwagger();
             app.UseSwaggerUI(options => {
                 options.SwaggerEndpoint("/swagger/v1/swagger.json", "v1");
@@ -520,7 +535,7 @@ public class Startup {
                     });
                     await context.Response.WriteAsync(result);
                 }
-            }).DisableRateLimiting();
+            });
         });
     }
 
@@ -648,7 +663,6 @@ public class Startup {
                 sqlOptions.MaxBatchSize(50);
             });
             options.EnableDetailedErrors();
-            options.EnableSensitiveDataLogging();
 #else
             options.UseSqlServer(Configuration.GetConnectionString(ConnectionStringNames.RemoteIdentity), sqlOptions => {
                 sqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: null);

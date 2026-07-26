@@ -4,6 +4,7 @@ using GBA.Common.ResponseBuilder.Contracts;
 using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
 using GBA.Services.Services.UserManagement.Contracts;
+using GBA.Services.Services.Clients.Contracts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -13,11 +14,14 @@ namespace GBA.Ecommerce.Controllers.UserManagement;
 [AssignControllerRoute(WebApiEnvironmnet.Current, WebApiVersion.ApiVersion1, ApplicationSegments.UserManagement)]
 public sealed class ClientCashFlowController(
     IResponseFactory responseFactory,
-    IAccountingCashFlowService accountingCashFlowService)
+    IAccountingCashFlowService accountingCashFlowService,
+    IClientResourceAccessService clientResourceAccessService)
     : WebApiControllerBase(responseFactory) {
     [HttpGet]
     [AssignActionRoute(UserManagementSegments.GET_CLIENT_CASH_FLOW)]
     public async Task<IActionResult> GetTokenAsync([FromQuery] Guid netId, [FromQuery] DateTime from, [FromQuery] DateTime to) {
+        if (!clientResourceAccessService.CanAccessClientOrAgreement(GetUserNetId(), netId)) return Forbid();
+
         to = to.AddHours(23).AddMinutes(59).AddSeconds(59);
         return Ok(SuccessResponseBody(await accountingCashFlowService.GetAccountingCashFlow(netId, from, to)));
     }

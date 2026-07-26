@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Linq;
 using Dapper;
@@ -18,6 +19,14 @@ public sealed class EcommerceRegionRepository : IEcommerceRegionRepository {
         return _connection.Query<EcommerceRegion>(
             "SELECT * FROM [EcommerceRegion] " +
             "WHERE [Deleted] = 0 ");
+    }
+
+    public EcommerceRegion GetByNetId(Guid netId) {
+        return _connection.QuerySingleOrDefault<EcommerceRegion>(
+            "SELECT * FROM [EcommerceRegion] " +
+            "WHERE [NetUID] = @NetId " +
+            "AND [Deleted] = 0 ",
+            new { NetId = netId });
     }
 
     public long Add(EcommerceRegion ecommerceRegion) {

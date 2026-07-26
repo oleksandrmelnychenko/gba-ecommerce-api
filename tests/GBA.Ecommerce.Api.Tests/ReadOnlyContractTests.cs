@@ -134,7 +134,7 @@ public sealed class ReadOnlyContractTests(EcommerceApiFixture fixture) : IClassF
     [Fact]
     public async Task Shop_bootstrap_lookups_are_available() {
         await AssertNonEmptyArrayEndpoint("regions/all");
-        await AssertNonEmptyArrayEndpoint("car/brands/all");
+        await AssertArrayEndpoint("car/brands/all");
         await AssertNonEmptyArrayEndpoint("exchangerates/get/current");
         await AssertNonEmptyArrayEndpoint("transporters/types/all");
 
@@ -149,6 +149,15 @@ public sealed class ReadOnlyContractTests(EcommerceApiFixture fixture) : IClassF
     }
 
     private async Task AssertNonEmptyArrayEndpoint(string relativePath) {
+        JsonElement body = await GetArrayEndpoint(relativePath);
+        Assert.NotEmpty(body.EnumerateArray());
+    }
+
+    private async Task AssertArrayEndpoint(string relativePath) {
+        await GetArrayEndpoint(relativePath);
+    }
+
+    private async Task<JsonElement> GetArrayEndpoint(string relativePath) {
         using HttpResponseMessage response = await _client.GetAsync(_config.ApiPath(relativePath));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -156,6 +165,6 @@ public sealed class ReadOnlyContractTests(EcommerceApiFixture fixture) : IClassF
         ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
         ApiAssertions.AssertSuccessEnvelope(envelope);
         Assert.Equal(JsonValueKind.Array, envelope.Body.ValueKind);
-        Assert.NotEmpty(envelope.Body.EnumerateArray());
+        return envelope.Body;
     }
 }

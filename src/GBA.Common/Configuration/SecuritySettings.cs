@@ -10,6 +10,7 @@ public class SecuritySettings {
     public string PriceEncryptionKey { get; set; } = string.Empty;
     public string PriceEncryptionIV { get; set; } = string.Empty;
     public string[] CorsOrigins { get; set; } = Array.Empty<string>();
+    public bool EnableSwagger { get; set; }
 
     private static SecuritySettings _instance = new();
 

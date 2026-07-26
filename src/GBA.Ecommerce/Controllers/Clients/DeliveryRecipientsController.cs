@@ -5,6 +5,7 @@ using GBA.Common.ResponseBuilder.Contracts;
 using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
 using GBA.Services.Services.DeliveryRecipients.Contracts;
+using GBA.Services.Services.Clients.Contracts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -14,6 +15,7 @@ namespace GBA.Ecommerce.Controllers.Clients;
 [AssignControllerRoute(WebApiEnvironmnet.Current, WebApiVersion.ApiVersion1, ApplicationSegments.DeliveryRecipients)]
 public sealed class DeliveryRecipientsController(
     IDeliveryRecipientService deliveryRecipientService,
+    IClientResourceAccessService clientResourceAccessService,
     IResponseFactory responseFactory) : WebApiControllerBase(responseFactory) {
     [HttpGet]
     [AssignActionRoute(DeliveryRecipientsSegments.GET_ALL_DELIVERY_RECIPIENTS_BY_CURRENT_CLIENT)]
@@ -25,6 +27,8 @@ public sealed class DeliveryRecipientsController(
     [HttpGet]
     [AssignActionRoute(DeliveryRecipientAddressesSegments.ECOMMERCE_GET_ALL_BY_RECIPIENT_NET_ID)]
     public async Task<IActionResult> GetAllRecipientAddressesByRecipientNetIdAsync([FromQuery] Guid netId) {
+        if (!clientResourceAccessService.CanAccessDeliveryRecipient(GetUserNetId(), netId)) return Forbid();
+
         return Ok(SuccessResponseBody(await deliveryRecipientService.GetAllAddressesByRecipientNetId(netId)));
     }
 }

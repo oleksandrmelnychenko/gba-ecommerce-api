@@ -5,5 +5,5 @@ using Microsoft.AspNetCore.Http;
 namespace GBA.Common.Exceptions.GlobalHandler.Contracts;
 
 public interface IGlobalExceptionHandler {
-    Task HandleException(HttpContext httpContext, IExceptionHandlerFeature exceptionHandlerFeature, bool isDevelopmentMode);
+    Task HandleException(HttpContext httpContext, IExceptionHandlerFeature exceptionHandlerFeature);
 }

@@ -8,6 +8,7 @@ using GBA.Domain.Entities.Clients;
 using GBA.Domain.EntityHelpers;
 using GBA.Domain.IdentityEntities;
 using GBA.Domain.Repositories.Clients.Contracts;
+using GBA.Domain.Repositories.Ecommerce.Contracts;
 using GBA.Domain.Repositories.Identities.Contracts;
 using GBA.Domain.Repositories.Regions.Contracts;
 using GBA.Services.Services.Clients.Contracts;
@@ -20,6 +21,7 @@ public sealed class SignUpService : ISignUpService {
 
     private readonly IClientRepositoriesFactory _clientRepositoriesFactory;
     private readonly IDbConnectionFactory _connectionFactory;
+    private readonly IEcommerceAdminPanelRepositoriesFactory _ecommerceRepositoriesFactory;
 
     private readonly IIdentityRepositoriesFactory _identityRepositoriesFactory;
 
@@ -30,6 +32,7 @@ public sealed class SignUpService : ISignUpService {
         IIdentityRepositoriesFactory identityRepositoriesFactory,
         IClientRepositoriesFactory clientRepositoriesFactory,
         IRegionRepositoriesFactory regionRepositoriesFactory,
+        IEcommerceAdminPanelRepositoriesFactory ecommerceRepositoriesFactory,
         IClientAgreementService clientAgreementService
     ) {
         _connectionFactory = connectionFactory;
@@ -39,15 +42,24 @@ public sealed class SignUpService : ISignUpService {
         _clientRepositoriesFactory = clientRepositoriesFactory;
 
         _regionRepositoriesFactory = regionRepositoriesFactory;
+        _ecommerceRepositoriesFactory = ecommerceRepositoriesFactory;
         _clientAgreementService = clientAgreementService;
     }
 
-    public async Task<Tuple<IdentityResponse, Client>> SignUp(Client client, string password, string login, bool isLocalPayment) {
+    public async Task<Tuple<IdentityResponse, Client>> SignUp(
+        Client client,
+        string password,
+        Guid ecommerceRegionNetId) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
             IIdentityRepository identityRepository = _identityRepositoriesFactory.NewIdentityRepository();
             IClientRepository clientRepository = _clientRepositoriesFactory.NewClientRepository(connection);
             IRegionCodeRepository regionCodeRepository = _regionRepositoriesFactory.NewRegionCodeRepository(connection);
             IRegionRepository regionRepository = _regionRepositoriesFactory.NewRegionRepository(connection);
+            var ecommerceRegion = _ecommerceRepositoriesFactory
+                .NewEcommerceRegionRepository(connection)
+                .GetByNetId(ecommerceRegionNetId);
+            if (ecommerceRegion == null)
+                throw new ArgumentException("A valid ecommerce region is required.");
 
             //client.RegionCode.RegionId = regionRepository.GetLastRecord().Id;
             //client.RegionCodeId = regionCodeRepository.Add(client.RegionCode);
@@ -85,11 +97,9 @@ public sealed class SignUpService : ISignUpService {
 
             UserIdentity user = new() {
                 Email = client.EmailAddress,
-                UserName = !string.IsNullOrEmpty(login)
-                    ? login
-                    : !string.IsNullOrEmpty(client.MobileNumber)
-                        ? client.MobileNumber
-                        : client.EmailAddress,
+                UserName = !string.IsNullOrEmpty(client.MobileNumber)
+                    ? client.MobileNumber
+                    : client.EmailAddress,
                 PhoneNumber = client.MobileNumber,
                 NetId = client.NetUid,
                 Region = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
@@ -100,7 +110,7 @@ public sealed class SignUpService : ISignUpService {
 
             if (response.Succeeded) {
                 await identityRepository.AddUserRoleAndClaims(user, IdentityRoles.ClientUa);
-                await _clientAgreementService.AddDefaultAgreementForClient(client, isLocalPayment);
+                await _clientAgreementService.AddDefaultAgreementForClient(client, ecommerceRegion.IsLocalPayment);
             } else {
                 clientRepository.Remove(client.Id);
             }

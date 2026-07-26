@@ -206,8 +206,7 @@ public sealed class RequestTokenService : IRequestTokenService {
         if (string.IsNullOrEmpty(storedToken) || string.IsNullOrEmpty(presentedToken))
             return false;
 
-        // Backward compatibility: older rows may still contain raw encrypted token.
-        return SecureEquals(storedToken, HashRefreshToken(presentedToken)) || SecureEquals(storedToken, presentedToken);
+        return SecureEquals(storedToken, HashRefreshToken(presentedToken));
     }
 
     private static string HashRefreshToken(string token) {

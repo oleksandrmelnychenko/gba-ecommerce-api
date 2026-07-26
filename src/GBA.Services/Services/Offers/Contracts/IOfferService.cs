@@ -7,7 +7,7 @@ using GBA.Domain.Entities.Sales;
 namespace GBA.Services.Services.Offers.Contracts;
 
 public interface IOfferService {
-    Task<ClientShoppingCart> GetOfferByNetId(Guid netId);
+    Task<ClientShoppingCart> GetOfferByNetId(Guid netId, Guid actorNetId);
 
     Task<List<ClientShoppingCart>> GetAllAvailableOffersByClientNetId(Guid netId);
 

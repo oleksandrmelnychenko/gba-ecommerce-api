@@ -33,6 +33,7 @@ public sealed class GbaIntegrationContractTests(EcommerceApiFixture fixture) : I
     [InlineData("orders/items/delete?orderItemNetId=00000000-0000-0000-0000-000000000000", "DELETE")]
     [InlineData("orders/items/shift/current", "POST")]
     [InlineData("orders/items/shift/specific?saleFromNetId=00000000-0000-0000-0000-000000000000&saleToNetId=00000000-0000-0000-0000-000000000000", "POST")]
+    [InlineData("consignments/info/income?productNetId=00000000-0000-0000-0000-000000000000", "GET")]
     public async Task Gba_sales_and_order_item_routes_require_bearer_token(string relativePath, string method) {
         using HttpRequestMessage request = new(new HttpMethod(method), _config.GbaApiPath(relativePath));
 
@@ -49,28 +50,33 @@ public sealed class GbaIntegrationContractTests(EcommerceApiFixture fixture) : I
     [Theory]
     [InlineData("sales/update/ecommerce")]
     [InlineData("sales/payment/save?saleNetId=00000000-0000-0000-0000-000000000000&clientNetId=00000000-0000-0000-0000-000000000000")]
-    public async Task Gba_anonymous_ecommerce_bridge_rejects_empty_json_payload(string relativePath) {
+    public async Task Gba_ecommerce_bridge_requires_internal_service_auth(string relativePath) {
         using HttpResponseMessage response = await _client.PostAsJsonAsync(
             _config.GbaApiPath(relativePath),
             new { });
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Contains("EcommerceInternal", response.Headers.WwwAuthenticate.ToString());
+    }
 
-        ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
-        Assert.Equal(400, envelope.StatusCode);
-        Assert.False(string.IsNullOrWhiteSpace(envelope.Message));
+    [Theory]
+    [InlineData("sales/sync/new?netId=00000000-0000-0000-0000-000000000000")]
+    [InlineData("products/sync/availability?netId=00000000-0000-0000-0000-000000000000")]
+    public async Task Gba_ecommerce_sync_routes_require_internal_service_auth(string relativePath) {
+        using HttpRequestMessage request = new(HttpMethod.Post, _config.GbaApiPath(relativePath));
+        using HttpResponseMessage response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Contains("EcommerceInternal", response.Headers.WwwAuthenticate.ToString());
     }
 
     [Fact]
-    public async Task Gba_anonymous_ttn_upload_rejects_missing_file_payload() {
+    public async Task Gba_ttn_upload_requires_internal_service_auth() {
         using HttpRequestMessage request = new(HttpMethod.Post, _config.GbaApiPath("sales/save/ttn"));
         using HttpResponseMessage response = await _client.SendAsync(request);
 
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-
-        ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
-        Assert.Equal(400, envelope.StatusCode);
-        Assert.False(string.IsNullOrWhiteSpace(envelope.Message));
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Contains("EcommerceInternal", response.Headers.WwwAuthenticate.ToString());
     }
 
     [Fact]

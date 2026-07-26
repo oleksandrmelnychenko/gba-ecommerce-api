@@ -107,7 +107,7 @@ public sealed class IdentityRepository : IIdentityRepository {
     public async Task<Tuple<ClaimsIdentity, UserIdentity>> AuthAndGetClaimsIdentityByUserId(string userId) {
         UserIdentity user = await _userManager.FindByIdAsync(userId);
 
-        if (user == null) return null;
+        if (user == null || !IsUserEnabled(user)) return null;
 
         IList<string> roles = await _userManager.GetRolesAsync(user);
         IList<Claim> claims = await _userManager.GetClaimsAsync(user);

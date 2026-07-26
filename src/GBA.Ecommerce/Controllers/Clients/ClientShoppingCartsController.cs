@@ -11,11 +11,14 @@ using GBA.Domain.EntityHelpers.ClientShoppingCartModels;
 using GBA.Services.Services.Clients.Contracts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Localization;
 
 namespace GBA.Ecommerce.Controllers.Clients;
 
 [Authorize(Roles = IdentityRoles.ClientUa + "," + IdentityRoles.Workplace)]
+[EnableRateLimiting("api")]
+[RequestSizeLimit(524288)]
 [AssignControllerRoute(WebApiEnvironmnet.Current, WebApiVersion.ApiVersion1, ApplicationSegments.ClientShoppingCartItems)]
 public sealed class ClientShoppingCartsController(
     IResponseFactory responseFactory,

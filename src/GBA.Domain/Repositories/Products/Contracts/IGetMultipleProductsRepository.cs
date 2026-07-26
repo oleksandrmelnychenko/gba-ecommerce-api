@@ -109,7 +109,11 @@ public interface IGetMultipleProductsRepository {
 
     List<FromSearchProduct> GetProductsByOldECommerceIds(IEnumerable<long> oldECommerceIds, Guid nonVatAgreementNetId, Guid? vatAgreementNetId);
 
-    List<Product> GetAllFromIdsInPreDefinedQuery(string preDefinedQuery, Guid nonVatAgreementNetId, Guid? vatAgreementNetId);
+    List<Product> GetAllFromIdsInPreDefinedQuery(
+        string preDefinedQuery,
+        Guid nonVatAgreementNetId,
+        Guid? vatAgreementNetId,
+        object queryParameters = null);
 
     List<Product> GetAllByOldECommerceIds(IEnumerable<long> oldECommerceIds, Guid nonVatAgreementNetId, Guid? vatAgreementNetId);
 

@@ -10,6 +10,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using GBA.Common.Configuration;
 using GBA.Common.Helpers;
 using GBA.Common.Models;
 using GBA.Common.ResourceNames;
@@ -17,6 +18,7 @@ using GBA.Common.Search;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.Clients;
+using GBA.Domain.Entities.Delivery;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.Entities.Sales.LifeCycleStatuses;
@@ -27,12 +29,14 @@ using GBA.Domain.Repositories.Agreements.Contracts;
 using GBA.Domain.Repositories.Clients.Contracts;
 using GBA.Domain.Repositories.Clients.RetailClients.Contracts;
 using GBA.Domain.Repositories.Currencies.Contracts;
+using GBA.Domain.Repositories.Delivery.Contracts;
 using GBA.Domain.Repositories.ExchangeRates.Contracts;
 using GBA.Domain.Repositories.Products.Contracts;
 using GBA.Domain.Repositories.Sales.Contracts;
 using GBA.Domain.Repositories.Storages.Contracts;
 using GBA.Domain.Repositories.Users.Contracts;
 using GBA.Services.Infrastructure;
+using GBA.Services.Services.Clients.Contracts;
 using GBA.Services.Services.Messengers.Contracts;
 using GBA.Services.Services.Orders.Contracts;
 using Microsoft.Extensions.Http;
@@ -48,6 +52,7 @@ public sealed class OrderService : IOrderService {
     private readonly IClientRepositoriesFactory _clientRepositoriesFactory;
     private readonly IDbConnectionFactory _connectionFactory;
     private readonly ICurrencyRepositoriesFactory _currencyRepositoriesFactory;
+    private readonly IDeliveryRepositoriesFactory _deliveryRepositoriesFactory;
     private readonly IExchangeRateRepositoriesFactory _exchangeRateRepositoriesFactory;
     private readonly IPaymentLinkService _paymentLinkService;
     private readonly IProductRepositoriesFactory _productRepositoriesFactory;
@@ -57,6 +62,7 @@ public sealed class OrderService : IOrderService {
     private readonly IUserRepositoriesFactory _userRepositoriesFactory;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ISearchReindexSignal _reindexSignal;
+    private readonly IClientResourceAccessService _clientResourceAccessService;
 
     public OrderService(
         ISaleRepositoriesFactory saleRepositoriesFactory,
@@ -67,10 +73,12 @@ public sealed class OrderService : IOrderService {
         IStorageRepositoryFactory storageRepositoryFactory,
         IExchangeRateRepositoriesFactory exchangeRateRepositoriesFactory,
         ICurrencyRepositoriesFactory currencyRepositoriesFactory,
+        IDeliveryRepositoriesFactory deliveryRepositoriesFactory,
         IRetailClientRepositoriesFactory retailClientRepositoriesFactory,
         IDbConnectionFactory connectionFactory,
         IPaymentLinkService paymentLinkService,
         IHttpClientFactory httpClientFactory,
+        IClientResourceAccessService clientResourceAccessService,
         ISearchReindexSignal reindexSignal) {
         _saleRepositoriesFactory = saleRepositoriesFactory;
         _reindexSignal = reindexSignal;
@@ -81,10 +89,103 @@ public sealed class OrderService : IOrderService {
         _storageRepositoryFactory = storageRepositoryFactory;
         _exchangeRateRepositoriesFactory = exchangeRateRepositoriesFactory;
         _currencyRepositoriesFactory = currencyRepositoriesFactory;
+        _deliveryRepositoriesFactory = deliveryRepositoriesFactory;
         _retailClientRepositoriesFactory = retailClientRepositoriesFactory;
         _connectionFactory = connectionFactory;
         _paymentLinkService = paymentLinkService;
         _httpClientFactory = httpClientFactory;
+        _clientResourceAccessService = clientResourceAccessService;
+    }
+
+    private OrderItem ApplyAuthoritativeRetailProduct(
+        IDbConnection connection,
+        Storage storage,
+        bool withVat,
+        OrderItem orderItem) {
+        if (orderItem?.Product == null || orderItem.Product.NetUid == Guid.Empty)
+            throw new ArgumentException("Every order item must reference a valid product.");
+
+        if (!double.IsFinite(orderItem.Qty) || orderItem.Qty <= 0 || orderItem.Qty > 100000)
+            throw new ArgumentException("Order item quantity is invalid.");
+
+        Product product = _productRepositoriesFactory
+            .NewGetSingleProductRepository(connection)
+            .GetByNetIdForRetail(orderItem.Product.NetUid, storage.OrganizationId.Value, withVat);
+        if (product == null || !product.IsForWeb || !product.IsForSale)
+            throw new ArgumentException("The requested product is not available for ecommerce.");
+
+        // All commercial fields are server-authoritative. The browser only selects
+        // the product capability and quantity.
+        orderItem.Product = product;
+        orderItem.ProductId = product.Id;
+        orderItem.PricePerItem = product.CurrentPrice;
+        orderItem.ExchangeRateAmount = product.CurrentPrice == 0
+            ? 1
+            : decimal.Round(product.CurrentLocalPrice / product.CurrentPrice, 14, MidpointRounding.AwayFromZero);
+        orderItem.TotalAmount = decimal.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+        orderItem.TotalAmountLocal = decimal.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+        orderItem.OverLordQty = orderItem.Qty;
+        orderItem.OrderedQty = orderItem.Qty;
+        orderItem.OneTimeDiscount = 0;
+        orderItem.Discount = 0;
+        orderItem.DiscountAmount = 0;
+        orderItem.PricePerItemWithoutVat = 0;
+        orderItem.FromOfferQty = 0;
+        orderItem.IsFromOffer = false;
+        orderItem.IsFromReSale = false;
+        orderItem.AssignedSpecificationId = null;
+        orderItem.MisplacedSaleId = null;
+        orderItem.IsMisplacedItem = false;
+        orderItem.IsValidForCurrentSale = true;
+        orderItem.Vat = withVat
+            ? Convert.ToDecimal(storage.Organization?.VatRate?.Value ?? 0)
+            : 0;
+
+        return orderItem;
+    }
+
+    private OrderItem ApplyAuthoritativeClientProduct(
+        IDbConnection connection,
+        ClientAgreement clientAgreement,
+        OrderItem orderItem) {
+        if (orderItem?.Product == null || orderItem.Product.NetUid == Guid.Empty ||
+            !double.IsFinite(orderItem.Qty) || orderItem.Qty <= 0 || orderItem.Qty > 100000)
+            throw new ArgumentException("Order item is invalid.");
+
+        Product product = _productRepositoriesFactory
+            .NewGetSingleProductRepository(connection)
+            .GetProductByNetId(
+                orderItem.Product.NetUid,
+                clientAgreement.NetUid,
+                clientAgreement.Agreement.WithVATAccounting,
+                clientAgreement.Agreement.CurrencyId,
+                clientAgreement.Agreement.OrganizationId);
+        if (product == null || !product.IsForWeb || !product.IsForSale)
+            throw new ArgumentException("The requested product is not available for ecommerce.");
+
+        orderItem.Product = product;
+        orderItem.ProductId = product.Id;
+        orderItem.PricePerItem = product.CurrentPrice;
+        orderItem.ExchangeRateAmount = product.CurrentPrice == 0
+            ? 1
+            : decimal.Round(product.CurrentLocalPrice / product.CurrentPrice, 14, MidpointRounding.AwayFromZero);
+        orderItem.TotalAmount = decimal.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+        orderItem.TotalAmountLocal = decimal.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+        orderItem.OneTimeDiscount = 0;
+        orderItem.Discount = 0;
+        orderItem.DiscountAmount = 0;
+        orderItem.PricePerItemWithoutVat = 0;
+        orderItem.FromOfferQty = 0;
+        orderItem.IsFromOffer = false;
+        orderItem.IsFromReSale = false;
+        orderItem.AssignedSpecificationId = null;
+        orderItem.MisplacedSaleId = null;
+        orderItem.IsValidForCurrentSale = true;
+        orderItem.Vat = clientAgreement.Agreement.WithVATAccounting
+            ? Convert.ToDecimal(clientAgreement.Agreement.Organization?.VatRate?.Value ?? 0)
+            : 0;
+
+        return orderItem;
     }
 
     private static Sale BuildCreatedSaleResponse(Sale sale) {
@@ -139,7 +240,8 @@ public sealed class OrderService : IOrderService {
 
     private void QueueEcommerceSaleUpdate(string crmApiUrl, string payload, string operationName) {
         BackgroundSyncRunner.Run(async cancellationToken => {
-            using HttpClient httpClient = _httpClientFactory.CreateClient();
+            using HttpClient httpClient = _httpClientFactory.CreateClient(
+                EcommerceInternalHttpClientDefaults.ClientName);
             using HttpRequestMessage requestMessage = new(HttpMethod.Post, crmApiUrl) {
                 Content = new StringContent(payload, Encoding.UTF8, "application/json")
             };
@@ -267,11 +369,12 @@ public sealed class OrderService : IOrderService {
                             saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
 #endif
                 } else {
-                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
+                    throw new InvalidOperationException("CRM endpoint is not configured.");
                 }
 
-                using HttpClient httpClient = _httpClientFactory.CreateClient();
-                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                using HttpClient httpClient = _httpClientFactory.CreateClient(
+                    EcommerceInternalHttpClientDefaults.ClientName);
+                await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
             }, "Order sale sync");
 
             return Task.FromResult(sale);
@@ -303,13 +406,49 @@ public sealed class OrderService : IOrderService {
             IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
             IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
-            IClientShoppingCartRepository clientShoppingCartRepository = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection);
 
             ClientAgreement selectedClientAgreement = isWorkplace
                 ? _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetSelectedByWorkplaceNetId(clientNetId)
                 : _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetSelectedByClientNetId(clientNetId);
+            if (selectedClientAgreement == null)
+                throw new ArgumentException("A valid client agreement is required.");
 
             bool withVat = selectedClientAgreement.Agreement.WithVATAccounting;
+
+            if (sale?.Order?.OrderItems == null ||
+                sale.Order.OrderItems.Count == 0 ||
+                sale.Order.OrderItems.Count > 100)
+                throw new ArgumentException("Order must contain between 1 and 100 items.");
+
+            if (sale.DeliveryRecipient != null && sale.DeliveryRecipient.NetUid != Guid.Empty) {
+                if (!_clientResourceAccessService.CanAccessDeliveryRecipient(clientNetId, sale.DeliveryRecipient.NetUid))
+                    throw new ArgumentException("Delivery recipient is invalid.");
+
+                DeliveryRecipient recipient = _deliveryRepositoriesFactory
+                    .NewDeliveryRecipientRepository(connection)
+                    .GetByNetId(sale.DeliveryRecipient.NetUid);
+                sale.DeliveryRecipient = recipient;
+                sale.DeliveryRecipientId = recipient.Id;
+            } else if (sale.DeliveryRecipientId.HasValue) {
+                throw new ArgumentException("Delivery recipient is invalid.");
+            }
+
+            if (sale.DeliveryRecipientAddress != null && sale.DeliveryRecipientAddress.NetUid != Guid.Empty) {
+                if (!_clientResourceAccessService.CanAccessDeliveryRecipientAddress(clientNetId, sale.DeliveryRecipientAddress.NetUid))
+                    throw new ArgumentException("Delivery recipient address is invalid.");
+
+                DeliveryRecipientAddress address = _deliveryRepositoriesFactory
+                    .NewDeliveryRecipientAddressRepository(connection)
+                    .GetByNetId(sale.DeliveryRecipientAddress.NetUid);
+                if (sale.DeliveryRecipient == null ||
+                    address.DeliveryRecipientId != sale.DeliveryRecipient.Id)
+                    throw new ArgumentException("Delivery recipient address is invalid.");
+
+                sale.DeliveryRecipientAddress = address;
+                sale.DeliveryRecipientAddressId = address.Id;
+            } else if (sale.DeliveryRecipientAddressId.HasValue) {
+                throw new ArgumentException("Delivery recipient address is invalid.");
+            }
 
             Order order = new() {
                 OrderSource = OrderSource.Shop,
@@ -318,10 +457,6 @@ public sealed class OrderService : IOrderService {
             };
 
             order.ClientAgreementId = order.ClientAgreement.Id;
-
-            order.Id = _saleRepositoriesFactory
-                .NewOrderRepository(connection)
-                .Add(order);
 
             Workplace workplace = null;
 
@@ -341,17 +476,30 @@ public sealed class OrderService : IOrderService {
                         workplace?.Id
                     );
 
-            if (currentCart == null) {
-                currentCart = new ClientShoppingCart {
-                    ValidUntil = DateTime.Now.Date.AddDays(client.ClearCartAfterDays),
-                    ClientAgreementId = order.ClientAgreement.Id,
-                    IsVatCart = order.ClientAgreement.Agreement.WithVATAccounting
-                };
+            if (currentCart == null || currentCart.OrderItems.Count == 0)
+                throw new ArgumentException("The current shopping cart is empty.");
 
-                currentCart.Id = clientShoppingCartRepository.Add(currentCart);
+            HashSet<Guid> requestedItemNetIds = new();
+            List<OrderItem> authorizedOrderItems = new();
+            foreach (OrderItem requestedItem in sale.Order.OrderItems) {
+                if (requestedItem.NetUid == Guid.Empty ||
+                    !requestedItemNetIds.Add(requestedItem.NetUid))
+                    throw new ArgumentException("Order item is invalid.");
 
-                currentCart.OrderItems = sale.Order.OrderItems;
+                OrderItem cartItem = currentCart.OrderItems
+                    .SingleOrDefault(item => item.NetUid == requestedItem.NetUid);
+                if (cartItem == null)
+                    throw new ArgumentException("Order item is not part of the current shopping cart.");
+
+                ApplyAuthoritativeClientProduct(connection, selectedClientAgreement, cartItem);
+                authorizedOrderItems.Add(cartItem);
             }
+
+            sale.Order.OrderItems = authorizedOrderItems.ToHashSet();
+
+            order.Id = _saleRepositoriesFactory
+                .NewOrderRepository(connection)
+                .Add(order);
 
             foreach (OrderItem orderItem in sale.Order.OrderItems)
                 if (currentCart.OrderItems.Any(i => i.ProductId.Equals(orderItem.Product.Id)))
@@ -587,12 +735,12 @@ public sealed class OrderService : IOrderService {
  $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
 #endif
                     } else {
-                        saleSyncCrmUrl =
-                            $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+                        throw new InvalidOperationException("CRM endpoint is not configured.");
                     }
 
-                    using HttpClient httpClient = _httpClientFactory.CreateClient();
-                    await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                    using HttpClient httpClient = _httpClientFactory.CreateClient(
+                        EcommerceInternalHttpClientDefaults.ClientName);
+                    await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
                 }, "Order invoice product availability sync");
             }
 
@@ -677,11 +825,12 @@ public sealed class OrderService : IOrderService {
                             saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
 #endif
                 } else {
-                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
+                    throw new InvalidOperationException("CRM endpoint is not configured.");
                 }
 
-                using HttpClient httpClient = _httpClientFactory.CreateClient();
-                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                using HttpClient httpClient = _httpClientFactory.CreateClient(
+                    EcommerceInternalHttpClientDefaults.ClientName);
+                await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
             }, "Order invoice sale sync");
 
             createdSale.DeliveryRecipient = sale.DeliveryRecipient;
@@ -698,7 +847,7 @@ public sealed class OrderService : IOrderService {
                         crmApiUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
 #endif
             } else {
-                crmApiUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
+                throw new InvalidOperationException("CRM endpoint is not configured.");
             }
 
             string payload = JsonSerializer.Serialize(createdSale);
@@ -709,6 +858,11 @@ public sealed class OrderService : IOrderService {
     }
 
     public async Task<string> GenerateNewRetailSale(Sale sale, Guid retailClientNetId, bool fullPayment) {
+        if (retailClientNetId == Guid.Empty)
+            throw new ArgumentException("A valid retail client is required.");
+        if (sale?.Order?.OrderItems == null || sale.Order.OrderItems.Count == 0 || sale.Order.OrderItems.Count > 100)
+            throw new ArgumentException("Order must contain between 1 and 100 items.");
+
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
             IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
@@ -721,8 +875,12 @@ public sealed class OrderService : IOrderService {
 
             Client clientForRetail = clientRepository.GetRetailClient();
             RetailClient retailClient = retailClientRepository.GetByNetId(retailClientNetId);
+            if (retailClient == null)
+                throw new ArgumentException("A valid retail client is required.");
 
             Storage storage = storageRepository.GetWithHighestPriority();
+            if (storage == null || !storage.OrganizationId.HasValue)
+                throw new InvalidOperationException("Retail storage is not configured.");
 
             List<OrderItem> misplacedOrderItems = new();
 
@@ -742,9 +900,11 @@ public sealed class OrderService : IOrderService {
                 .NewOrderRepository(connection)
                 .Add(order);
 
-            foreach (OrderItem orderItem in sale.Order.OrderItems.Where(i => i.IsNew() && i.Qty > 0)) {
+            foreach (OrderItem orderItem in sale.Order.OrderItems.Where(i => i.Qty > 0)) {
+                ApplyAuthoritativeRetailProduct(connection, storage, withVat, orderItem);
+
                 ProductAvailability productAvailability =
-                    productAvailabilityRepository.GetByProductAndStorageIds(orderItem.Product.Id, storage.Id);
+                    productAvailabilityRepository.GetByProductAndStorageIds(orderItem.ProductId, storage.Id);
 
                 if (productAvailability == null || productAvailability.Amount.Equals(0)) {
                     orderItem.IsMisplacedItem = true;
@@ -759,6 +919,12 @@ public sealed class OrderService : IOrderService {
                         ProductId = orderItem.ProductId,
                         IsMisplacedItem = true,
                         Qty = orderItem.Qty - productAvailability.Amount,
+                        OverLordQty = orderItem.Qty - productAvailability.Amount,
+                        OrderedQty = orderItem.Qty - productAvailability.Amount,
+                        PricePerItem = orderItem.PricePerItem,
+                        ExchangeRateAmount = orderItem.ExchangeRateAmount,
+                        TotalAmount = orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty - productAvailability.Amount),
+                        TotalAmountLocal = orderItem.Product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty - productAvailability.Amount),
                         Vat = orderItem.Vat
                     });
 
@@ -813,12 +979,12 @@ public sealed class OrderService : IOrderService {
  $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
 #endif
                     } else {
-                        saleSyncCrmUrl =
-                            $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+                        throw new InvalidOperationException("CRM endpoint is not configured.");
                     }
 
-                    using HttpClient httpClient = _httpClientFactory.CreateClient();
-                    await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                    using HttpClient httpClient = _httpClientFactory.CreateClient(
+                        EcommerceInternalHttpClientDefaults.ClientName);
+                    await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
                 }, "Retail sale product availability sync");
             }
 
@@ -920,11 +1086,12 @@ public sealed class OrderService : IOrderService {
                             saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
 #endif
                 } else {
-                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
+                    throw new InvalidOperationException("CRM endpoint is not configured.");
                 }
 
-                using HttpClient httpClient = _httpClientFactory.CreateClient();
-                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                using HttpClient httpClient = _httpClientFactory.CreateClient(
+                    EcommerceInternalHttpClientDefaults.ClientName);
+                await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
             }, "Retail sale sync");
 
             createdSale.DeliveryRecipient = sale.DeliveryRecipient;
@@ -943,7 +1110,7 @@ public sealed class OrderService : IOrderService {
                         crmApiUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
 #endif
             } else {
-                crmApiUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
+                throw new InvalidOperationException("CRM endpoint is not configured.");
             }
 
             string payload = JsonSerializer.Serialize(createdSale);
@@ -1091,12 +1258,12 @@ public sealed class OrderService : IOrderService {
  $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
 #endif
                     } else {
-                        saleSyncCrmUrl =
-                            $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+                        throw new InvalidOperationException("CRM endpoint is not configured.");
                     }
 
-                    using HttpClient httpClient = _httpClientFactory.CreateClient();
-                    await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                    using HttpClient httpClient = _httpClientFactory.CreateClient(
+                        EcommerceInternalHttpClientDefaults.ClientName);
+                    await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
                 }, "Quick sale product availability sync");
             }
 
@@ -1198,11 +1365,12 @@ public sealed class OrderService : IOrderService {
                             saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
 #endif
                 } else {
-                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
+                    throw new InvalidOperationException("CRM endpoint is not configured.");
                 }
 
-                using HttpClient httpClient = _httpClientFactory.CreateClient();
-                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                using HttpClient httpClient = _httpClientFactory.CreateClient(
+                    EcommerceInternalHttpClientDefaults.ClientName);
+                await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
             }, "Quick sale sync");
 
             createdSale.DeliveryRecipient = sale.DeliveryRecipient;
@@ -1221,7 +1389,7 @@ public sealed class OrderService : IOrderService {
                         crmApiUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
 #endif
             } else {
-                crmApiUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/update/ecommerce";
+                throw new InvalidOperationException("CRM endpoint is not configured.");
             }
 
             string payload = JsonSerializer.Serialize(createdSale);
@@ -1251,35 +1419,33 @@ public sealed class OrderService : IOrderService {
             IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
 
             Storage storage = storageRepository.GetWithHighestPriority();
+            if (storage == null || !storage.OrganizationId.HasValue)
+                throw new InvalidOperationException("Retail storage is not configured.");
+
+            _ = retailClientId;
 
             foreach (OrderItem orderItem in orderItems) {
-                ProductAvailability productAvailability = productAvailabilityRepository.GetByProductAndStorageIds(orderItem.Product.Id, storage.Id);
+                ApplyAuthoritativeRetailProduct(connection, storage, storage.ForVatProducts, orderItem);
+
+                ProductAvailability productAvailability = productAvailabilityRepository.GetByProductAndStorageIds(orderItem.ProductId, storage.Id);
 
                 if (productAvailability == null || productAvailability.Amount.Equals(0))
                     orderItem.IsMisplacedItem = true;
             }
 
-            if (!orderItems.All(i => i.IsMisplacedItem)) {
-                orderItems.ForEach(i => i.IsMisplacedItem = false);
-
-                return Task.FromResult(orderItems);
-            }
-
-            MisplacedSale misplacedSale = new() { RetailClientId = retailClientId };
-
-            long misplacedSaleId = _saleRepositoriesFactory.NewMisplacedSaleRepository(connection).Add(misplacedSale);
-
-            orderItems.ForEach(i => {
-                i.MisplacedSaleId = misplacedSaleId;
-                i.ProductId = i.Product.Id;
-            });
-
-            _saleRepositoriesFactory.NewOrderItemRepository(connection).Add(orderItems);
-
             return Task.FromResult(orderItems);
     }
 
     public async Task SendPaymentImageToCrm(Guid saleNetId, Guid clientNetId, PaymentConfirmationImageModel paymentImage) {
+        if (saleNetId == Guid.Empty || clientNetId == Guid.Empty)
+            throw new ArgumentException("A valid checkout is required.");
+
+        using (IDbConnection authorizationConnection = _connectionFactory.NewSqlConnection()) {
+            Sale sale = _saleRepositoriesFactory.NewSaleRepository(authorizationConnection).GetByNetId(saleNetId);
+            if (sale?.RetailClient?.NetUid != clientNetId)
+                throw new ArgumentException("A valid checkout is required.");
+        }
+
         UriBuilder crmApiUrl;
 
             // URI
@@ -1293,14 +1459,15 @@ public sealed class OrderService : IOrderService {
                         crmApiUrl = new UriBuilder($"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/payment/save");
 #endif
             } else {
-                crmApiUrl = new UriBuilder($"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/payment/save");
+                throw new InvalidOperationException("CRM endpoint is not configured.");
             }
 
             crmApiUrl.Query = $"saleNetId={saleNetId}&clientNetId={clientNetId}";
 
             string payload = JsonSerializer.Serialize(paymentImage);
 
-        using HttpClient httpClient = _httpClientFactory.CreateClient();
+        using HttpClient httpClient = _httpClientFactory.CreateClient(
+            EcommerceInternalHttpClientDefaults.ClientName);
         using HttpRequestMessage requestMessage = new(HttpMethod.Post, crmApiUrl.Uri) {
             Content = new StringContent(payload, Encoding.UTF8, "application/json")
         };

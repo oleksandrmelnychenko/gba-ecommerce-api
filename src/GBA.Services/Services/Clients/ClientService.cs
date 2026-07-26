@@ -7,11 +7,13 @@ using System.Threading.Tasks;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.Clients;
+using GBA.Domain.Entities.Ecommerce;
 using GBA.Domain.Entities.ExchangeRates;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.Repositories.Clients.Contracts;
 using GBA.Domain.Repositories.Clients.RetailClients.Contracts;
+using GBA.Domain.Repositories.Ecommerce.Contracts;
 using GBA.Domain.Repositories.ExchangeRates.Contracts;
 using GBA.Domain.Repositories.Products.Contracts;
 using GBA.Domain.Repositories.Storages.Contracts;
@@ -29,6 +31,7 @@ public sealed class ClientService : IClientService {
 
     private readonly IClientRepositoriesFactory _clientRepositoriesFactory;
     private readonly IDbConnectionFactory _connectionFactory;
+    private readonly IEcommerceAdminPanelRepositoriesFactory _ecommerceRepositoriesFactory;
     private readonly IExchangeRateRepositoriesFactory _exchangeRateRepositoriesFactory;
     private readonly IOrderService _orderService;
     private readonly IProductRepositoriesFactory _productRepositoriesFactory;
@@ -39,6 +42,7 @@ public sealed class ClientService : IClientService {
         IClientRepositoriesFactory clientRepositoriesFactory,
         IExchangeRateRepositoriesFactory exchangeRateRepositoriesFactory,
         IRetailClientRepositoriesFactory retailClientRepositoriesFactory,
+        IEcommerceAdminPanelRepositoriesFactory ecommerceRepositoriesFactory,
         IDbConnectionFactory connectionFactory,
         IOrderService orderService,
         IProductRepositoriesFactory productRepositoriesFactory,
@@ -47,6 +51,7 @@ public sealed class ClientService : IClientService {
         _clientRepositoriesFactory = clientRepositoriesFactory;
         _exchangeRateRepositoriesFactory = exchangeRateRepositoriesFactory;
         _retailClientRepositoriesFactory = retailClientRepositoriesFactory;
+        _ecommerceRepositoriesFactory = ecommerceRepositoriesFactory;
         _connectionFactory = connectionFactory;
         _orderService = orderService;
         _productRepositoriesFactory = productRepositoriesFactory;
@@ -173,44 +178,41 @@ public sealed class ClientService : IClientService {
         try {
             IRetailClientRepository retailClientRepository = _retailClientRepositoriesFactory.NewRetailClientRepository(connection);
 
-            RetailClient exists = retailClientRepository.GetByPhoneNumber(client.PhoneNumber);
-
             List<OrderItem> orderItems = JsonSerializer.Deserialize<List<OrderItem>>(client.ShoppingCartJson, _jsonSerializerOptions) ?? new List<OrderItem>();
+            if (orderItems.Count == 0 || orderItems.Count > 100)
+                throw new ArgumentException("Shopping cart must contain between 1 and 100 items.");
 
-            if (exists != null) {
-                orderItems = await _orderService.RemoveUnavailableProducts(orderItems, exists.Id);
+            if (client.EcommerceRegion == null || client.EcommerceRegion.NetUid == Guid.Empty)
+                throw new ArgumentException("A valid ecommerce region is required.");
 
-                client.Id = exists.Id;
-                client.NetUid = exists.NetUid;
-                client.Name = exists.Name;
-                client.EcommerceRegionId = client.EcommerceRegion.Id;
+            EcommerceRegion ecommerceRegion = _ecommerceRepositoriesFactory
+                .NewEcommerceRegionRepository(connection)
+                .GetByNetId(client.EcommerceRegion.NetUid);
+            if (ecommerceRegion == null)
+                throw new ArgumentException("A valid ecommerce region is required.");
 
-                if (!orderItems.All(o => o.IsMisplacedItem))
-                    orderItems.First().TotalAmount = orderItems
-                        .Where(o => !o.IsMisplacedItem)
-                        .Sum(o => o.Product.CurrentLocalPrice * Convert.ToInt32(o.Qty));
+            client.Name = client.Name?.Trim();
+            client.PhoneNumber = client.PhoneNumber?.Trim();
+            client.EcommerceRegion = ecommerceRegion;
+            client.EcommerceRegionId = ecommerceRegion.Id;
 
-                client.ShoppingCartJson = JsonSerializer.Serialize(orderItems);
+            orderItems = await _orderService.RemoveUnavailableProducts(orderItems, 0);
 
-                retailClientRepository.Update(client);
-            } else {
-                client.EcommerceRegionId = client.EcommerceRegion.Id;
+            if (!orderItems.All(o => o.IsMisplacedItem))
+                orderItems.First().TotalAmount = orderItems
+                    .Where(o => !o.IsMisplacedItem)
+                    .Sum(o => o.Product.CurrentLocalPrice * Convert.ToDecimal(o.Qty));
 
-                client.Id = retailClientRepository.Add(client);
+            client.ShoppingCartJson = JsonSerializer.Serialize(orderItems);
 
-                orderItems = await _orderService.RemoveUnavailableProducts(orderItems, client.Id);
-
-                if (!orderItems.All(o => o.IsMisplacedItem))
-                    orderItems.First().TotalAmount = orderItems
-                        .Where(o => !o.IsMisplacedItem)
-                        .Sum(o => o.Product.CurrentLocalPrice * Convert.ToInt32(o.Qty));
-
-                client.ShoppingCartJson = JsonSerializer.Serialize(orderItems);
-
-                retailClientRepository.Update(client);
-            }
+            // A phone number is contact data, not authentication. Reusing an existing
+            // record here allowed anyone knowing a number to overwrite that guest's cart
+            // and receive its bearer NetUid. Every checkout gets a separate capability.
+            client.Id = retailClientRepository.Add(client);
 
             return retailClientRepository.GetRetailClientById(client.Id);
+        } catch (ArgumentException) {
+            throw;
         } catch (Exception exc) {
             _logger.Error(exc, "Failed to add retail client");
             return null;

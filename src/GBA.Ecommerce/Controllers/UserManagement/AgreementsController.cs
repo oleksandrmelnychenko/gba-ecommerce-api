@@ -5,6 +5,7 @@ using GBA.Common.ResponseBuilder.Contracts;
 using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
 using GBA.Services.Services.UserManagement.Contracts;
+using GBA.Services.Services.Clients.Contracts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -14,16 +15,21 @@ namespace GBA.Ecommerce.Controllers.UserManagement;
 [AssignControllerRoute(WebApiEnvironmnet.Current, WebApiVersion.ApiVersion1, ApplicationSegments.Agreements)]
 public sealed class AgreementsController(
     IResponseFactory responseFactory,
-    IAgreementService agreementService) : WebApiControllerBase(responseFactory) {
+    IAgreementService agreementService,
+    IClientResourceAccessService clientResourceAccessService) : WebApiControllerBase(responseFactory) {
     [HttpGet]
     [AssignActionRoute(AgreementsSegments.GET_ALL_TOTAL_BY_CLIENT)]
     public async Task<IActionResult> GetAllAgreementsByClientNetIdAsync([FromQuery] Guid netId) {
+        if (!clientResourceAccessService.CanAccessClient(GetUserNetId(), netId)) return Forbid();
+
         return Ok(SuccessResponseBody(await agreementService.GetAllAgreementsByClientNetId(netId)));
     }
 
     [HttpGet]
     [AssignActionRoute(AgreementsSegments.GET_TOTAL_AGREEMENT_DEBT_AFTER_DAYS)]
     public async Task<IActionResult> GetDebtAfterDaysByClientAgreementNetIdAsync([FromQuery] Guid netId, [FromQuery] int days) {
+        if (!clientResourceAccessService.CanAccessClientOrAgreement(GetUserNetId(), netId)) return Forbid();
+
         return Ok(SuccessResponseBody(await agreementService.GetDebtAfterDaysByClientAgreementNetId(netId, days)));
     }
 }

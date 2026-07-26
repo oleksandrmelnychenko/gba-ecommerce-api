@@ -6,5 +6,8 @@ using GBA.Domain.EntityHelpers;
 namespace GBA.Services.Services.UserManagement.Contracts;
 
 public interface ISignUpService {
-    Task<Tuple<IdentityResponse, Client>> SignUp(Client clientProfile, string password, string login, bool isLocalPayment);
+    Task<Tuple<IdentityResponse, Client>> SignUp(
+        Client clientProfile,
+        string password,
+        Guid ecommerceRegionNetId);
 }

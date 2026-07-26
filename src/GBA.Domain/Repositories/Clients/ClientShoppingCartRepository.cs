@@ -359,13 +359,16 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
         );
     }
 
-    public void SetProcessedByNetId(Guid netId) {
-        _connection.Execute(
+    public bool TrySetProcessedByNetId(Guid netId) {
+        return _connection.Execute(
             "UPDATE [ClientShoppingCart] " +
-            "SET IsOfferProcessed = 1 " +
-            "WHERE [ClientShoppingCart].NetUID = @NetId",
+            "SET IsOfferProcessed = 1, Updated = GETUTCDATE() " +
+            "WHERE [ClientShoppingCart].NetUID = @NetId " +
+            "AND [ClientShoppingCart].IsOffer = 1 " +
+            "AND [ClientShoppingCart].IsOfferProcessed = 0 " +
+            "AND [ClientShoppingCart].Deleted = 0",
             new { NetId = netId }
-        );
+        ) == 1;
     }
 
     public List<ClientShoppingCart> GetAllValidClientShoppingCarts() {

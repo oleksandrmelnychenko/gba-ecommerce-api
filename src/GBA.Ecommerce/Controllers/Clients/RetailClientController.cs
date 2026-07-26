@@ -7,21 +7,28 @@ using GBA.Common.WebApi.RoutingConfiguration.Maps.Clients;
 using GBA.Domain.Entities.Clients;
 using GBA.Services.Services.Clients.Contracts;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace GBA.Ecommerce.Controllers.Clients;
 
 [AssignControllerRoute(WebApiEnvironmnet.Current, WebApiVersion.ApiVersion1, ApplicationSegments.RetailClients)]
+[EnableRateLimiting("checkout")]
 public sealed class RetailClientController(
     IClientService clientService,
     IResponseFactory responseFactory) : WebApiControllerBase(responseFactory) {
     [HttpPost]
     [AssignActionRoute(RetailClientSegments.ADD_NEW)]
+    [Consumes("application/json")]
+    [RequestSizeLimit(262144)]
     public async Task<IActionResult> AddTemporaryClient([FromBody] RetailClient retailClient) {
-        if (retailClient.Name == null || retailClient.Name.Equals(string.Empty)) throw new Exception("Username is required");
-        if (retailClient.PhoneNumber == null || retailClient.PhoneNumber.Equals(string.Empty)) throw new Exception("Phone number is required");
+        if (string.IsNullOrWhiteSpace(retailClient?.Name) || retailClient.Name.Trim().Length > 120)
+            throw new ArgumentException("A valid name is required.");
+        if (string.IsNullOrWhiteSpace(retailClient.PhoneNumber) ||
+            retailClient.PhoneNumber.Trim().Length is < 7 or > 32)
+            throw new ArgumentException("A valid phone number is required.");
 
         RetailClient result = await clientService.AddRetailClient(retailClient);
-        if (result == null) throw new Exception("Unable to add retail client.");
+        if (result == null) throw new InvalidOperationException("Unable to add retail client.");
 
         return Ok(SuccessResponseBody(result));
     }

@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using Dapper;
 using GBA.Domain.Entities;
+using GBA.Domain.Entities.VatRates;
 using GBA.Domain.Repositories.Storages.Contracts;
 
 namespace GBA.Domain.Repositories.Storages;
@@ -153,15 +154,18 @@ public sealed class StorageRepository : IStorageRepository {
     }
 
     public Storage GetWithHighestPriority() {
-        return _connection.Query<Storage, Organization, Storage>(
+        return _connection.Query<Storage, Organization, VatRate, Storage>(
             "SELECT TOP 1 * " +
             "FROM [Storage] " +
             "LEFT JOIN [Organization] " +
             "ON [Organization].ID = [Storage].OrganizationID " +
+            "LEFT JOIN [VatRate] " +
+            "ON [VatRate].ID = [Organization].VatRateID " +
             "WHERE [Storage].Deleted = 0 " +
             "AND [Storage].ForEcommerce = 1 " +
             "ORDER BY [Storage].RetailPriority ASC ",
-            (storage, organization) => {
+            (storage, organization, vatRate) => {
+                if (organization != null) organization.VatRate = vatRate;
                 storage.Organization = organization;
                 return storage;
             }).FirstOrDefault();

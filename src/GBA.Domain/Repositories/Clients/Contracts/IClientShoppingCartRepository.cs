@@ -35,5 +35,5 @@ public interface IClientShoppingCartRepository {
 
     void Remove(Guid netId);
 
-    void SetProcessedByNetId(Guid netId);
+    bool TrySetProcessedByNetId(Guid netId);
 }

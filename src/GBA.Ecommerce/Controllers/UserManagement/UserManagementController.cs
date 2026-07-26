@@ -1,8 +1,7 @@
 using System;
-using System.IO;
 using System.Linq;
 using System.Net;
-using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using GBA.Common.IdentityConfiguration.Entities;
 using GBA.Common.ResponseBuilder.Contracts;
@@ -26,39 +25,35 @@ public sealed class UserManagementController(
     IEmailValidationService emailValidationService,
     IClientRegistrationTaskService clientRegistrationTaskService)
     : WebApiControllerBase(responseFactory) {
-    private static readonly JsonSerializerOptions JsonOptions = new() {
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly Regex _phoneNumberPattern = new(@"^\d{9,15}$", RegexOptions.Compiled);
 
     [HttpPost]
     [AssignActionRoute(UserManagementSegments.SIGN_UP)]
     [EnableRateLimiting("auth")]
-    public async Task<IActionResult> SignUp(
-        [FromQuery] string password = "",
-        [FromQuery] string login = "",
-        [FromQuery] int? isLocalPayment = null) {
-        SignUpRequest? request = await ReadSignUpRequestAsync(password, login, isLocalPayment);
-
+    [Consumes("application/json")]
+    [RequestSizeLimit(131072)]
+    public async Task<IActionResult> SignUp([FromBody] SignUpRequest request) {
         if (request?.Client == null) {
             return BadRequest(ErrorResponseBody("Client payload is required", HttpStatusCode.BadRequest));
         }
 
         if (string.IsNullOrWhiteSpace(request.Password))
             return BadRequest(ErrorResponseBody("Password is required", HttpStatusCode.BadRequest));
+        if (request.EcommerceRegionNetId == Guid.Empty)
+            return BadRequest(ErrorResponseBody("Ecommerce region is required", HttpStatusCode.BadRequest));
 
-        password = request.Password;
-
+        Client client = BuildSignUpClient(request.Client);
         Tuple<IdentityResponse, Client> identityResponse = await signUpService.SignUp(
-            request.Client,
-            password,
-            request.Login,
-            request.IsLocalPayment.Equals(1)
+            client,
+            request.Password,
+            request.EcommerceRegionNetId
         );
 
         if (identityResponse.Item1.Succeeded) {
             await clientRegistrationTaskService.Add(identityResponse.Item2);
 
-            Tuple<bool, string, CompleteAccessToken> result = await requestTokenService.RequestToken(request.Client.EmailAddress, password);
+            Tuple<bool, string, CompleteAccessToken> result =
+                await requestTokenService.RequestToken(client.MobileNumber, request.Password);
 
             return Ok(SuccessResponseBody(result.Item3));
         }
@@ -66,19 +61,11 @@ public sealed class UserManagementController(
         return BadRequest(ErrorResponseBody(identityResponse.Item1.Errors.FirstOrDefault()?.Description, HttpStatusCode.BadRequest));
     }
 
-    [HttpGet]
-    [AssignActionRoute(UserManagementSegments.GET_TOKEN)]
-    [EnableRateLimiting("auth")]
-    public async Task<IActionResult> GetTokenAsync([FromQuery] string username, [FromQuery] string password) {
-        if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
-            return BadRequest(ErrorResponseBody("Username and password are required", HttpStatusCode.BadRequest));
-
-        return await RequestTokenAsync(username, password);
-    }
-
     [HttpPost]
     [AssignActionRoute(UserManagementSegments.GET_TOKEN)]
     [EnableRateLimiting("auth")]
+    [Consumes("application/json")]
+    [RequestSizeLimit(16384)]
     public async Task<IActionResult> GetTokenPostAsync([FromBody] LoginRequest request) {
         if (string.IsNullOrEmpty(request?.Username) || string.IsNullOrEmpty(request?.Password))
             return BadRequest(ErrorResponseBody("Username and password are required", HttpStatusCode.BadRequest));
@@ -92,25 +79,27 @@ public sealed class UserManagementController(
     }
 
     public sealed class SignUpRequest {
-        public Client? Client { get; set; } = new();
+        public SignUpClientRequest? Client { get; set; }
         public string Password { get; set; } = string.Empty;
-        public string Login { get; set; } = string.Empty;
-        public int IsLocalPayment { get; set; }
+        public Guid EcommerceRegionNetId { get; set; }
     }
 
-    [HttpGet]
-    [AssignActionRoute(UserManagementSegments.REFRESH_TOKEN)]
-    [EnableRateLimiting("auth")]
-    public async Task<IActionResult> RefreshTokenAsync([FromQuery] string token) {
-        if (string.IsNullOrEmpty(token))
-            return BadRequest(ErrorResponseBody("Refresh token is required", HttpStatusCode.BadRequest));
-
-        return await RefreshTokenCoreAsync(token);
+    public sealed class SignUpClientRequest {
+        public bool IsIndividual { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string FullName { get; set; } = string.Empty;
+        public string FirstName { get; set; } = string.Empty;
+        public string MiddleName { get; set; } = string.Empty;
+        public string LastName { get; set; } = string.Empty;
+        public string EmailAddress { get; set; } = string.Empty;
+        public string MobileNumber { get; set; } = string.Empty;
     }
 
     [HttpPost]
     [AssignActionRoute(UserManagementSegments.REFRESH_TOKEN)]
     [EnableRateLimiting("auth")]
+    [Consumes("application/json")]
+    [RequestSizeLimit(8192)]
     public async Task<IActionResult> RefreshTokenAsync([FromBody] RefreshTokenRequest request) {
         if (string.IsNullOrEmpty(request?.Token))
             return BadRequest(ErrorResponseBody("Refresh token is required", HttpStatusCode.BadRequest));
@@ -124,6 +113,7 @@ public sealed class UserManagementController(
 
     [HttpGet]
     [AssignActionRoute(UserManagementSegments.IS_EMAIL_AVAILABLE)]
+    [EnableRateLimiting("auth")]
     public async Task<IActionResult> CheckIsEmailAvaliable([FromQuery] string email) {
         bool isEmailValid = emailValidationService.IsEmailValid(email);
 
@@ -132,36 +122,42 @@ public sealed class UserManagementController(
         return Ok(SuccessResponseBody(await emailAvailabilityService.IsEmailAvailableAsync(email)));
     }
 
-    private async Task<SignUpRequest?> ReadSignUpRequestAsync(string queryPassword, string queryLogin, int? queryIsLocalPayment) {
-        string json;
-        using (StreamReader reader = new(Request.Body)) {
-            json = await reader.ReadToEndAsync();
-        }
+    private Client BuildSignUpClient(SignUpClientRequest request) {
+        string name = request.Name?.Trim() ?? string.Empty;
+        string fullName = request.FullName?.Trim() ?? string.Empty;
+        string firstName = request.FirstName?.Trim() ?? string.Empty;
+        string middleName = request.MiddleName?.Trim() ?? string.Empty;
+        string lastName = request.LastName?.Trim() ?? string.Empty;
+        string email = request.EmailAddress?.Trim() ?? string.Empty;
+        string mobileNumber = request.MobileNumber?.Trim() ?? string.Empty;
 
-        if (string.IsNullOrWhiteSpace(json)) return null;
+        if (name.Length is < 1 or > 200 ||
+            fullName.Length > 250 ||
+            firstName.Length > 100 ||
+            middleName.Length > 100 ||
+            lastName.Length > 100)
+            throw new ArgumentException("Client name is invalid.");
+        if (email.Length > 254 || !emailValidationService.IsEmailValid(email))
+            throw new ArgumentException("Email is invalid.");
+        if (!_phoneNumberPattern.IsMatch(mobileNumber))
+            throw new ArgumentException("Mobile number is invalid.");
 
-        try {
-            using JsonDocument document = JsonDocument.Parse(json);
-            JsonElement root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object) return null;
-
-            bool isWrappedRequest = root.TryGetProperty("Client", out _)
-                || root.TryGetProperty("client", out _);
-
-            if (isWrappedRequest) {
-                return root.Deserialize<SignUpRequest>(JsonOptions);
-            }
-
-            Client? legacyClient = root.Deserialize<Client>(JsonOptions);
-            return new SignUpRequest {
-                Client = legacyClient,
-                Password = queryPassword ?? string.Empty,
-                Login = queryLogin ?? string.Empty,
-                IsLocalPayment = queryIsLocalPayment ?? 0
-            };
-        } catch (JsonException) {
-            return null;
-        }
+        return new Client {
+            IsIndividual = request.IsIndividual,
+            IsTemporaryClient = true,
+            IsActive = false,
+            IsBlocked = false,
+            IsSubClient = false,
+            IsTradePoint = false,
+            IsForRetail = false,
+            Name = name,
+            FullName = fullName,
+            FirstName = firstName,
+            MiddleName = middleName,
+            LastName = lastName,
+            EmailAddress = email,
+            MobileNumber = mobileNumber
+        };
     }
 
     private async Task<IActionResult> RequestTokenAsync(string username, string password) {

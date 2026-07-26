@@ -17,6 +17,7 @@ using GBA.Search.Models;
 using GBA.Search.Services;
 using GBA.Services.Services.Products;
 using GBA.Services.Services.Products.Contracts;
+using GBA.Services.Services.Clients.Contracts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.OutputCaching;
@@ -29,6 +30,7 @@ public sealed class ProductsController(
     IProductService productService,
     IElasticsearchProductSearchService esSearchService,
     IPriceCacheService priceCacheService,
+    IClientResourceAccessService clientResourceAccessService,
     IResponseFactory responseFactory) : WebApiControllerBase(responseFactory) {
     private const int _defaultSearchLimit = 20;
     private const int _maxSearchLimit = 100;
@@ -183,6 +185,8 @@ public sealed class ProductsController(
     [AssignActionRoute(ProductsSegments.GET_ORDERED_PRODUCTS_HISTORY)]
     public async Task<IActionResult> GetOrderedProductsHistory([FromQuery] Guid netId) {
         if (netId.Equals(Guid.Empty)) return BadRequest(ErrorResponseBody("empty guid", HttpStatusCode.BadRequest));
+        if (!clientResourceAccessService.CanAccessClient(GetUserNetId(), netId)) return Forbid();
+
         return Ok(SuccessResponseBody(await productService.GetAllOrderedProductsHistoryByClientNetId(netId)));
     }
 

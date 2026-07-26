@@ -1189,24 +1189,39 @@ public sealed class ProductService : IProductService {
 
     public Task<List<Product>> GetAllByVendorCodes(List<string> vendorCodes, Guid currentClientNetId, long limit, long offset, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        if (vendorCodes.Count.Equals(0)) return Task.FromResult(new List<Product>());
-        if (limit.Equals(0)) limit = 20;
-        if (offset < 0) offset = 0;
+        if (vendorCodes == null || vendorCodes.Count.Equals(0))
+            return Task.FromResult(new List<Product>());
+        if (vendorCodes.Count > 50 ||
+            vendorCodes.Any(code => string.IsNullOrWhiteSpace(code) || code.Length > 100))
+            throw new ArgumentException("Vendor codes are invalid.");
+
+        List<string> normalizedVendorCodes = vendorCodes
+            .Select(code => code.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        int safeLimit = (int)Math.Clamp(limit <= 0 ? 20 : limit, 1, 100);
+        int safeOffset = (int)Math.Clamp(offset, 0, 5000);
 
             IGetMultipleProductsRepository getMultipleProductsRepository = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection);
 
-            StringBuilder idsSqlBuilder = new();
-
-            idsSqlBuilder.Append("SELECT [SearchProduct].ID ");
-            idsSqlBuilder.Append("FROM [Product] AS [SearchProduct] ");
-            idsSqlBuilder.Append("WHERE [SearchProduct].VendorCode IN (");
-
-            for (int i = 0; i < vendorCodes.Count; i++) idsSqlBuilder.Append(i.Equals(0) ? $"N'{vendorCodes[i]}'" : $", N'{vendorCodes[i]}'");
-
-            idsSqlBuilder.Append(")");
+            const string productIdsQuery =
+                "SELECT [SearchProduct].ID " +
+                "FROM [Product] AS [SearchProduct] " +
+                "WHERE [SearchProduct].VendorCode IN @VendorCodes " +
+                "ORDER BY [SearchProduct].ID " +
+                "OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY";
+            var queryParameters = new {
+                VendorCodes = normalizedVendorCodes,
+                Offset = safeOffset,
+                Limit = safeLimit
+            };
 
             if (currentClientNetId.Equals(Guid.Empty))
-                return Task.FromResult(getMultipleProductsRepository.GetAllFromIdsInPreDefinedQuery(idsSqlBuilder.ToString(), Guid.Empty, Guid.Empty));
+                return Task.FromResult(getMultipleProductsRepository.GetAllFromIdsInPreDefinedQuery(
+                    productIdsQuery,
+                    Guid.Empty,
+                    Guid.Empty,
+                    queryParameters));
 
             IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
@@ -1215,9 +1230,10 @@ public sealed class ProductService : IProductService {
 
             return Task.FromResult(getMultipleProductsRepository
                 .GetAllFromIdsInPreDefinedQuery(
-                    idsSqlBuilder.ToString(),
+                    productIdsQuery,
                     nonVatAgreement?.NetUid ?? Guid.Empty,
-                    vatAgreement?.NetUid
+                    vatAgreement?.NetUid,
+                    queryParameters
                 ));
     }
 
