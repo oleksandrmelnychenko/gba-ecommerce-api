@@ -44,6 +44,82 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
+    internal static IEnumerable<T[]> PartitionBulkItems<T>(
+        IReadOnlyCollection<T> items,
+        int batchSize) {
+        ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
+        return items.Chunk(batchSize);
+    }
+
+    internal static void EnsureSuccessfulHttpResponse(
+        HttpResponseMessage response,
+        string operation,
+        string responseBody) {
+        if (response.IsSuccessStatusCode) return;
+
+        string details = string.IsNullOrWhiteSpace(responseBody)
+            ? response.ReasonPhrase ?? "empty response"
+            : responseBody;
+        throw new HttpRequestException(
+            $"Elasticsearch {operation} failed with HTTP {(int)response.StatusCode} "
+            + $"({response.StatusCode}): {details}",
+            null,
+            response.StatusCode);
+    }
+
+    internal static int ValidateBulkResponse(
+        string responseBody,
+        string actionName,
+        int expectedCount,
+        bool allowNotFound = false) {
+        using JsonDocument jsonDoc = JsonDocument.Parse(responseBody);
+        JsonElement root = jsonDoc.RootElement;
+
+        if (!root.TryGetProperty("errors", out JsonElement errorsElement)
+            || errorsElement.ValueKind is not JsonValueKind.True and not JsonValueKind.False) {
+            throw new InvalidOperationException(
+                $"Elasticsearch bulk {actionName} returned an invalid response without an errors flag.");
+        }
+
+        if (!errorsElement.GetBoolean()) return expectedCount;
+
+        if (!root.TryGetProperty("items", out JsonElement items)
+            || items.ValueKind != JsonValueKind.Array) {
+            throw new InvalidOperationException(
+                $"Elasticsearch bulk {actionName} reported errors without item details.");
+        }
+
+        int errorCount = 0;
+        string? firstError = null;
+        foreach (JsonElement item in items.EnumerateArray()) {
+            if (!item.TryGetProperty(actionName, out JsonElement result)) {
+                errorCount++;
+                firstError ??= "missing action result";
+                continue;
+            }
+
+            int status = result.TryGetProperty("status", out JsonElement statusElement)
+                ? statusElement.GetInt32()
+                : 0;
+            if (status is >= 200 and < 300 || allowNotFound && status == 404) continue;
+
+            errorCount++;
+            if (firstError == null) {
+                firstError = result.TryGetProperty("error", out JsonElement error)
+                    ? error.ToString()
+                    : $"HTTP {status}";
+            }
+        }
+
+        if (errorCount > 0) {
+            throw new InvalidOperationException(
+                $"Elasticsearch bulk {actionName} failed for {errorCount}/{expectedCount} items. "
+                + $"First error: {firstError}");
+        }
+
+        return expectedCount;
+    }
+
     public ElasticsearchSyncService(
         HttpClient httpClient,
         IOptions<ElasticsearchSettings> settings,
@@ -113,13 +189,16 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
                 "application/json");
             HttpResponseMessage refreshSettingsResponse =
                 await _http.PutAsync($"{newIndex}/_settings", refreshSettings, ct);
-            if (!refreshSettingsResponse.IsSuccessStatusCode) {
-                string error = await refreshSettingsResponse.Content.ReadAsStringAsync(ct);
-                return SyncResult.Failed($"Failed to restore refresh interval: {error}");
-            }
+            string refreshSettingsBody = await refreshSettingsResponse.Content.ReadAsStringAsync(ct);
+            EnsureSuccessfulHttpResponse(
+                refreshSettingsResponse,
+                "refresh interval restore",
+                refreshSettingsBody);
 
             // Make the new index searchable, then atomically swap the alias and prune old indices.
-            await _http.PostAsync($"{newIndex}/_refresh", null, ct);
+            HttpResponseMessage refreshResponse = await _http.PostAsync($"{newIndex}/_refresh", null, ct);
+            string refreshBody = await refreshResponse.Content.ReadAsStringAsync(ct);
+            EnsureSuccessfulHttpResponse(refreshResponse, "index refresh", refreshBody);
 
             if (!await _indexService.SwapAliasAsync(newIndex, ct)) {
                 return SyncResult.Failed("Failed to swap alias to new index");
@@ -243,18 +322,30 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             .Select(p => CreateDocument(p, originalNumbers.GetValueOrDefault(p.Id)))
             .ToList();
 
-        int indexed = await BulkIndexAsync(documents, ct);
+        int indexed = 0;
+        foreach (ProductDocument[] batch in PartitionBulkItems(documents, _syncSettings.BatchSize)) {
+            indexed += await BulkIndexAsync(batch, ct);
+        }
 
         // Ids no longer present as live products are removed from the index.
         HashSet<long> found = foundIds.ToHashSet();
         List<long> missing = productIds.Where(id => !found.Contains(id)).ToList();
-        int deleted = await BulkDeleteAsync(missing, ct);
+        int deleted = 0;
+        foreach (long[] batch in PartitionBulkItems(missing, _syncSettings.BatchSize)) {
+            deleted += await BulkDeleteAsync(batch, ct);
+        }
 
-        await _http.PostAsync($"{_settings.IndexName}/_refresh", null, ct);
+        HttpResponseMessage refreshResponse =
+            await _http.PostAsync($"{_settings.IndexName}/_refresh", null, ct);
+        string refreshBody = await refreshResponse.Content.ReadAsStringAsync(ct);
+        EnsureSuccessfulHttpResponse(refreshResponse, "index refresh", refreshBody);
         return (indexed, deleted);
     }
 
-    private async Task<int> BulkIndexAsync(List<ProductDocument> documents, CancellationToken ct, string? targetIndex = null) {
+    private async Task<int> BulkIndexAsync(
+        IReadOnlyCollection<ProductDocument> documents,
+        CancellationToken ct,
+        string? targetIndex = null) {
         if (documents.Count == 0) return 0;
 
         string index = targetIndex ?? _settings.IndexName;
@@ -266,44 +357,12 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
 
         StringContent content = new StringContent(sb.ToString(), Encoding.UTF8, "application/x-ndjson");
         HttpResponseMessage response = await _http.PostAsync("_bulk", content, ct);
-
-        if (!response.IsSuccessStatusCode) {
-            string error = await response.Content.ReadAsStringAsync(ct);
-            _log.LogError("Bulk index failed with HTTP error: {Error}", error);
-            return 0;
-        }
-
         string responseBody = await response.Content.ReadAsStringAsync(ct);
-        using JsonDocument jsonDoc = JsonDocument.Parse(responseBody);
-        JsonElement root = jsonDoc.RootElement;
-
-        if (root.TryGetProperty("errors", out JsonElement errorsElement) && errorsElement.GetBoolean()) {
-            int successCount = 0;
-            int errorCount = 0;
-            if (root.TryGetProperty("items", out JsonElement items)) {
-                foreach (JsonElement item in items.EnumerateArray()) {
-                    if (item.TryGetProperty("index", out JsonElement indexResult)) {
-                        if (indexResult.TryGetProperty("status", out JsonElement status) && status.GetInt32() < 300) {
-                            successCount++;
-                        } else {
-                            errorCount++;
-                            if (errorCount <= 3 && indexResult.TryGetProperty("error", out JsonElement errorInfo)) {
-                                _log.LogWarning("Bulk index document error: {Error}", errorInfo.ToString());
-                            }
-                        }
-                    }
-                }
-            }
-            if (errorCount > 3) {
-                _log.LogWarning("Bulk index had {ErrorCount} additional errors (not logged)", errorCount - 3);
-            }
-            return successCount;
-        }
-
-        return documents.Count;
+        EnsureSuccessfulHttpResponse(response, "bulk index", responseBody);
+        return ValidateBulkResponse(responseBody, "index", documents.Count);
     }
 
-    private async Task<int> BulkDeleteAsync(List<long> ids, CancellationToken ct) {
+    private async Task<int> BulkDeleteAsync(IReadOnlyCollection<long> ids, CancellationToken ct) {
         if (ids.Count == 0) return 0;
 
         StringBuilder sb = new StringBuilder();
@@ -313,14 +372,9 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
 
         StringContent content = new StringContent(sb.ToString(), Encoding.UTF8, "application/x-ndjson");
         HttpResponseMessage response = await _http.PostAsync("_bulk", content, ct);
-
-        if (!response.IsSuccessStatusCode) {
-            string error = await response.Content.ReadAsStringAsync(ct);
-            _log.LogError("Bulk delete failed: {Error}", error);
-            return 0;
-        }
-
-        return ids.Count;
+        string responseBody = await response.Content.ReadAsStringAsync(ct);
+        EnsureSuccessfulHttpResponse(response, "bulk delete", responseBody);
+        return ValidateBulkResponse(responseBody, "delete", ids.Count, allowNotFound: true);
     }
 
     private static ProductDocument CreateDocument(ProductSyncData data, List<string>? origNumbers) {

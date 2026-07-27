@@ -38,31 +38,33 @@ public sealed class SearchSyncStateStore : ISearchSyncStateStore {
     }
 
     public async Task<DateTime> GetWatermarkAsync(CancellationToken ct = default) {
-        try {
-            HttpResponseMessage response = await _http.GetAsync($"{_stateIndex}/_doc/{DocId}", ct);
-            if (response.StatusCode == HttpStatusCode.NotFound) return DateTime.MinValue;
-            if (!response.IsSuccessStatusCode) return DateTime.MinValue;
+        HttpResponseMessage response = await _http.GetAsync($"{_stateIndex}/_doc/{DocId}", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return DateTime.MinValue;
 
-            using JsonDocument doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
-            if (doc.RootElement.TryGetProperty("_source", out JsonElement source)
-                && source.TryGetProperty("lastSyncTime", out JsonElement ts)
-                && ts.TryGetDateTime(out DateTime watermark)) {
-                return DateTime.SpecifyKind(watermark, DateTimeKind.Utc);
-            }
-            return DateTime.MinValue;
-        } catch (Exception ex) {
-            // Treat an unreadable watermark as "unknown" -> caller falls back to full rebuild.
-            _log.LogWarning(ex, "Failed to read sync watermark; treating as unset");
-            return DateTime.MinValue;
+        string responseBody = await response.Content.ReadAsStringAsync(ct);
+        ElasticsearchSyncService.EnsureSuccessfulHttpResponse(
+            response,
+            "sync watermark read",
+            responseBody);
+
+        using JsonDocument doc = JsonDocument.Parse(responseBody);
+        if (doc.RootElement.TryGetProperty("_source", out JsonElement source)
+            && source.TryGetProperty("lastSyncTime", out JsonElement ts)
+            && ts.TryGetDateTime(out DateTime watermark)) {
+            return DateTime.SpecifyKind(watermark, DateTimeKind.Utc);
         }
+
+        throw new InvalidOperationException(
+            "Elasticsearch sync watermark response does not contain a valid lastSyncTime.");
     }
 
     public async Task SetWatermarkAsync(DateTime watermarkUtc, CancellationToken ct = default) {
         var body = new { lastSyncTime = watermarkUtc.ToUniversalTime() };
         HttpResponseMessage response = await _http.PutAsJsonAsync($"{_stateIndex}/_doc/{DocId}", body, ct);
-        if (!response.IsSuccessStatusCode) {
-            string error = await response.Content.ReadAsStringAsync(ct);
-            _log.LogWarning("Failed to persist sync watermark: {Error}", error);
-        }
+        string responseBody = await response.Content.ReadAsStringAsync(ct);
+        ElasticsearchSyncService.EnsureSuccessfulHttpResponse(
+            response,
+            "sync watermark write",
+            responseBody);
     }
 }
