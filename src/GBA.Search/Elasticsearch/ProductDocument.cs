@@ -138,7 +138,7 @@ public sealed class ProductDocument {
     public decimal RetailPriceVat { get; set; }
 
     [JsonPropertyName("retailCurrencyCode")]
-    public string RetailCurrencyCode { get; set; } = "UAH";
+    public string RetailCurrencyCode { get; set; } = "EUR";
 
     [JsonPropertyName("updatedAt")]
     public DateTime UpdatedAt { get; set; }

@@ -437,6 +437,7 @@ public class Startup {
 
         // Price caching for logged-in users
         services.AddSingleton<IPriceCacheService, PriceCacheService>();
+        services.AddSingleton<GBA.Common.Search.ISearchCacheInvalidator, GBA.Ecommerce.Background.OutputCacheSearchInvalidator>();
 
         services.AddScoped<ISqlContextFactory, SqlContextFactory>();
         services.AddScoped<ISqlDbContext>(t => new SqlDbContext(t.GetRequiredService<ConcordContext>()));

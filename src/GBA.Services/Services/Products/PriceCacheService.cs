@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using GBA.Domain.Repositories.Products;
@@ -21,6 +22,7 @@ public interface IPriceCacheService {
 public sealed class PriceCacheService : IPriceCacheService {
     private readonly IMemoryCache _cache;
     private readonly ILogger<PriceCacheService> _logger;
+    private readonly ConcurrentDictionary<Guid, long> _clientVersions = new();
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(30);
 
     public PriceCacheService(IMemoryCache cache, ILogger<PriceCacheService> logger) {
@@ -40,10 +42,11 @@ public sealed class PriceCacheService : IPriceCacheService {
 
         Dictionary<long, ProductPriceInfo> result = new Dictionary<long, ProductPriceInfo>();
         List<long> missingIds = new List<long>();
+        long clientVersion = _clientVersions.GetOrAdd(clientNetId, 0);
 
         // Check cache for each product
         foreach (long productId in productIds) {
-            string cacheKey = BuildCacheKey(clientNetId, productId, withVat, locale);
+            string cacheKey = BuildCacheKey(clientNetId, clientVersion, productId, withVat, locale);
             if (_cache.TryGetValue(cacheKey, out ProductPriceInfo? cachedPrice) && cachedPrice != null) {
                 result[productId] = cachedPrice;
             } else {
@@ -59,7 +62,7 @@ public sealed class PriceCacheService : IPriceCacheService {
                 result[kvp.Key] = kvp.Value;
 
                 // Cache the fetched price
-                string cacheKey = BuildCacheKey(clientNetId, kvp.Key, withVat, locale);
+                string cacheKey = BuildCacheKey(clientNetId, clientVersion, kvp.Key, withVat, locale);
                 _cache.Set(cacheKey, kvp.Value, CacheDuration);
             }
 
@@ -72,13 +75,16 @@ public sealed class PriceCacheService : IPriceCacheService {
     }
 
     public void InvalidateForClient(Guid clientNetId) {
-        // Note: IMemoryCache doesn't support prefix-based invalidation
-        // For production with Redis, use SCAN + DEL pattern
-        // For now, we rely on TTL-based expiration
-        _logger.LogDebug("Cache invalidation requested for client {ClientNetId}", clientNetId);
+        _clientVersions.AddOrUpdate(clientNetId, 1, (_, current) => current + 1);
+        _logger.LogDebug("Price cache invalidated for client {ClientNetId}", clientNetId);
     }
 
-    private static string BuildCacheKey(Guid clientNetId, long productId, bool withVat, string locale) {
-        return $"price:{clientNetId}:{productId}:{(withVat ? 1 : 0)}:{locale}";
+    private static string BuildCacheKey(
+        Guid clientNetId,
+        long clientVersion,
+        long productId,
+        bool withVat,
+        string locale) {
+        return $"price:{clientNetId}:{clientVersion}:{productId}:{(withVat ? 1 : 0)}:{locale}";
     }
 }

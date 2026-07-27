@@ -33,6 +33,9 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
     };
 
     private static readonly Regex SpecialCharsRegex = new(@"[+\-=&|><!(){}\[\]^""~*?:\\/]", RegexOptions.Compiled);
+    private static readonly Regex DimensionSeparatorRegex = new(
+        @"\d\s*[xх×]\s*\d",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static readonly string[] SourceFields = {
         "id", "netUid", "vendorCode", "vendorCodeClean", "name", "nameUA",
@@ -171,9 +174,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             c == 'і' || c == 'ї' || c == 'є' || c == 'ґ'));
 
         // Detect dimension-like queries (d=45, 15x5, M14x1.5)
-        bool isDimensionQuery = originalTerms.Any(t =>
-            t.Contains('=') || t.Contains('x') || t.Contains('X') ||
-            (t.Length <= 6 && t.Any(char.IsDigit) && !t.All(char.IsDigit)));
+        bool isDimensionQuery = originalTerms.Any(IsDimensionSearchTerm);
 
         // 1. Exact match on MainOriginalNumber
         // Lower weight for dimension queries - we don't want "d=45" to boost products with "D45" as their main number
@@ -219,8 +220,6 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
                 (c >= 'а' && c <= 'я') || (c >= 'А' && c <= 'Я') ||
                 c == 'і' || c == 'ї' || c == 'є' || c == 'ґ' ||
                 c == 'І' || c == 'Ї' || c == 'Є' || c == 'Ґ');
-            bool hasDigits = term.Any(char.IsDigit);
-
             if (isCyrillic) {
                 functions.Add(new {
                     filter = new { match = new Dictionary<string, object> { [$"{primarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
@@ -274,24 +273,27 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
 
             // 8. Size match (for all terms)
             // Higher weight for dimension-like terms (e.g., "d=45", "15x5", "M14x1.5")
-            bool isDimensionTerm = term.Contains('=') || term.Contains('x') ||
-                (hasDigits && term.Length <= 10 && !isCyrillic);
+            bool isDimensionTerm = IsDimensionSearchTerm(originalTerm);
             // Very high weight for size when it looks like a dimension query - must beat originalNumbers (3000)
             int sizeWeight = isDimensionTerm ? 8000 : 100;
 
-            // Search original size field using originalTerm (preserves "=", "x" etc.)
-            string originalTermLowerForSize = originalTerm.ToLowerInvariant();
-            functions.Add(new {
-                filter = new { wildcard = new Dictionary<string, object> { ["size"] = new { value = $"*{originalTermLowerForSize}*", case_insensitive = true } } },
-                weight = sizeWeight
-            });
-            // Also search sizeClean with cleaned term
-            string termCleanForSize = Regex.Replace(termLower, @"[^a-z0-9а-яіїєґ]", "");
-            if (!string.IsNullOrEmpty(termCleanForSize)) {
+            if (isDimensionTerm) {
+                // Size substring matching is intentionally limited to dimension-shaped terms.
+                // Leading wildcards across every ordinary name/vendor query force Elasticsearch
+                // to scan the size terms dictionary and make every new search substantially slower.
+                string originalTermLowerForSize = originalTerm.ToLowerInvariant();
                 functions.Add(new {
-                    filter = new { wildcard = new Dictionary<string, object> { ["sizeClean"] = new { value = $"*{termCleanForSize}*" } } },
+                    filter = new { wildcard = new Dictionary<string, object> { ["size"] = new { value = $"*{originalTermLowerForSize}*", case_insensitive = true } } },
                     weight = sizeWeight
                 });
+
+                string termCleanForSize = Regex.Replace(termLower, @"[^a-z0-9а-яіїєґ]", "");
+                if (!string.IsNullOrEmpty(termCleanForSize)) {
+                    functions.Add(new {
+                        filter = new { wildcard = new Dictionary<string, object> { ["sizeClean"] = new { value = $"*{termCleanForSize}*" } } },
+                        weight = sizeWeight
+                    });
+                }
             }
         }
 
@@ -348,14 +350,15 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{primaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
         shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{secondaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
 
-        // Size - search both original (with special chars like "=") and clean version
-        // For dimension queries like "d=45", the original size field "D=45 h=104" is more relevant
-        // Use originalTermLower to preserve "=" and other special chars in size search
-        shouldClauses.Add(new { wildcard = new Dictionary<string, object> { ["size"] = new { value = $"*{originalTermLower}*", case_insensitive = true } } });
-        // Also search sizeClean for normalized matches (without special chars)
-        string termClean = Regex.Replace(termLower, @"[^a-z0-9а-яіїєґ]", "");
-        if (!string.IsNullOrEmpty(termClean)) {
-            shouldClauses.Add(new { wildcard = new Dictionary<string, object> { ["sizeClean"] = new { value = $"*{termClean}*" } } });
+        if (IsDimensionSearchTerm(originalTermLower)) {
+            // Preserve substring semantics for explicit dimensions without penalizing
+            // ordinary product-name, OEM, and vendor-code searches.
+            shouldClauses.Add(new { wildcard = new Dictionary<string, object> { ["size"] = new { value = $"*{originalTermLower}*", case_insensitive = true } } });
+
+            string termClean = Regex.Replace(termLower, @"[^a-z0-9а-яіїєґ]", "");
+            if (!string.IsNullOrEmpty(termClean)) {
+                shouldClauses.Add(new { wildcard = new Dictionary<string, object> { ["sizeClean"] = new { value = $"*{termClean}*" } } });
+            }
         }
 
         return new {
@@ -364,6 +367,14 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
                 minimum_should_match = 1
             }
         };
+    }
+
+    private static bool IsDimensionSearchTerm(string term) {
+        if (string.IsNullOrWhiteSpace(term) || !term.Any(char.IsDigit)) {
+            return false;
+        }
+
+        return term.Contains('=') || DimensionSeparatorRegex.IsMatch(term);
     }
 
     private static object BuildMatchAllQuery(int limit, int offset) {
@@ -495,7 +506,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             SlugLocale = source.TryGetProperty("slugLocale", out JsonElement slugLocale) ? slugLocale.GetString() ?? "" : "",
             RetailPrice = source.TryGetProperty("retailPrice", out JsonElement rp) ? rp.GetDecimal() : 0,
             RetailPriceVat = source.TryGetProperty("retailPriceVat", out JsonElement rpv) ? rpv.GetDecimal() : 0,
-            RetailCurrencyCode = source.TryGetProperty("retailCurrencyCode", out JsonElement rcc) ? rcc.GetString() ?? "UAH" : "UAH",
+            RetailCurrencyCode = source.TryGetProperty("retailCurrencyCode", out JsonElement rcc) ? rcc.GetString() ?? "EUR" : "EUR",
             UpdatedAt = source.TryGetProperty("updatedAt", out JsonElement updatedAt) && updatedAt.TryGetDateTime(out DateTime dt)
                 ? new DateTimeOffset(dt).ToUnixTimeSeconds()
                 : 0

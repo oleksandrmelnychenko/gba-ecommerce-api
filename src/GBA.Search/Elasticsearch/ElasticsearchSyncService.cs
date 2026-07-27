@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using GBA.Common.Search;
 using GBA.Search.Configuration;
 using GBA.Search.Sync;
 using Microsoft.Extensions.Logging;
@@ -29,6 +30,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
     private readonly ProductSyncRepository _repository;
     private readonly IElasticsearchIndexService _indexService;
     private readonly ISearchSyncStateStore _state;
+    private readonly ISearchCacheInvalidator _cacheInvalidator;
     private readonly ILogger<ElasticsearchSyncService> _log;
 
     // Re-scan a small window before the last watermark so rows written during the previous
@@ -49,6 +51,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         ProductSyncRepository repository,
         IElasticsearchIndexService indexService,
         ISearchSyncStateStore state,
+        ISearchCacheInvalidator cacheInvalidator,
         ILogger<ElasticsearchSyncService> logger) {
         _http = httpClient;
         _settings = settings.Value;
@@ -56,6 +59,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         _repository = repository;
         _indexService = indexService;
         _state = state;
+        _cacheInvalidator = cacheInvalidator;
         _log = logger;
     }
 
@@ -101,6 +105,19 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
                 totalIndexed += await BulkIndexAsync(batch, ct, newIndex);
             }
 
+            // Re-enable normal near-real-time refreshes before exposing the new index.
+            // Versioned rebuild indices are created with refresh_interval=-1 for fast bulk loading.
+            StringContent refreshSettings = new(
+                """{"index":{"refresh_interval":"1s"}}""",
+                Encoding.UTF8,
+                "application/json");
+            HttpResponseMessage refreshSettingsResponse =
+                await _http.PutAsync($"{newIndex}/_settings", refreshSettings, ct);
+            if (!refreshSettingsResponse.IsSuccessStatusCode) {
+                string error = await refreshSettingsResponse.Content.ReadAsStringAsync(ct);
+                return SyncResult.Failed($"Failed to restore refresh interval: {error}");
+            }
+
             // Make the new index searchable, then atomically swap the alias and prune old indices.
             await _http.PostAsync($"{newIndex}/_refresh", null, ct);
 
@@ -115,6 +132,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             sw.Stop();
 
             await _state.SetWatermarkAsync(runStart, ct);
+            await _cacheInvalidator.InvalidateProductsAsync(ct);
 
             _log.LogInformation(
                 "Elasticsearch full rebuild completed: {Total} documents indexed in {ElapsedMs}ms",
@@ -165,6 +183,9 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
 
             sw.Stop();
             await _state.SetWatermarkAsync(runStart, ct);
+            if (indexed > 0 || deleted > 0) {
+                await _cacheInvalidator.InvalidateProductsAsync(ct);
+            }
 
             _log.LogInformation(
                 "Elasticsearch incremental sync: {Indexed} indexed, {Deleted} deleted in {ElapsedMs}ms",
@@ -191,6 +212,9 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         try {
             (int indexed, int deleted) = await IndexByIdsAsync(productIds, ct);
             sw.Stop();
+            if (indexed > 0 || deleted > 0) {
+                await _cacheInvalidator.InvalidateProductsAsync(ct);
+            }
 
             _log.LogInformation(
                 "Targeted reindex: {Indexed} indexed, {Deleted} deleted in {ElapsedMs}ms",
@@ -347,7 +371,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             SlugLocale = data.SlugLocale ?? "",
             RetailPrice = data.RetailPrice,
             RetailPriceVat = data.RetailPriceVat,
-            RetailCurrencyCode = data.RetailCurrencyCode ?? "UAH",
+            RetailCurrencyCode = data.RetailCurrencyCode ?? "EUR",
             UpdatedAt = data.Updated
         };
     }

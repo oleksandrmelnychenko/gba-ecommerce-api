@@ -155,6 +155,9 @@ public sealed class ElasticsearchIndexService : IElasticsearchIndexService {
             settings = new {
                 number_of_shards = 1,
                 number_of_replicas = 0,
+                // Full rebuilds bulk-load into a hidden versioned index. Refresh once,
+                // immediately before the alias swap, instead of after every second.
+                refresh_interval = "-1",
                 max_ngram_diff = 15,
                 analysis = new {
                     analyzer = new {

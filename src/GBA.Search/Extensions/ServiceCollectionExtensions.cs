@@ -2,6 +2,7 @@ using System;
 using System.Data;
 using System.Net.Http.Headers;
 using System.Text;
+using GBA.Common.Search;
 using GBA.Search.Configuration;
 using GBA.Search.Elasticsearch;
 using GBA.Search.Services;
@@ -9,6 +10,7 @@ using GBA.Search.Sync;
 using GBA.Search.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace GBA.Search.Extensions;
 
@@ -23,6 +25,7 @@ public static class ServiceCollectionExtensions {
         services.Configure<SyncSettings>(
             configuration.GetSection(SyncSettings.SectionName));
 
+        services.TryAddSingleton<ISearchCacheInvalidator, NoOpSearchCacheInvalidator>();
         services.AddSingleton<SearchTextProcessor>();
 
         services.AddSingleton(connectionFactory);

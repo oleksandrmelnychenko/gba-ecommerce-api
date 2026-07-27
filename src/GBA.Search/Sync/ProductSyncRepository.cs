@@ -14,45 +14,45 @@ public sealed class ProductSyncRepository(Func<IDbConnection> connectionFactory)
         connection.Open();
 
         const string sql = @"
-;WITH
--- Retail pricing config (hardcoded from Internet shop client agreements)
--- Non-VAT: PricingId=853, VAT: PricingId=848
-RetailPricingConfig AS (
-    SELECT 853 AS PricingIdNonVat, 848 AS PricingIdVat
+;WITH RetailConfiguration AS (
+    SELECT TOP (1)
+        ca.NetUID AS AgreementNetUid,
+        a.PricingID AS PricingId,
+        a.WithVATAccounting AS WithVat,
+        c.Code AS CurrencyCode
+    FROM Storage s
+    INNER JOIN Agreement a
+        ON a.OrganizationID = s.OrganizationID
+        AND a.WithVATAccounting = s.ForVatProducts
+        AND a.Deleted = 0
+    INNER JOIN ClientAgreement ca
+        ON ca.AgreementID = a.ID
+        AND ca.Deleted = 0
+    INNER JOIN Client client
+        ON client.ID = ca.ClientID
+        AND client.IsForRetail = 1
+        AND client.Deleted = 0
+    INNER JOIN Currency c
+        ON c.ID = a.CurrencyID
+        AND c.Deleted = 0
+    WHERE s.Deleted = 0
+      AND s.ForEcommerce = 1
+    ORDER BY s.RetailPriority, ca.ID
 ),
--- Recursive CTE to find ROOT pricing ID (like GetBasePricingId UDF)
 BasePricingHierarchy AS (
-    SELECT pr.ID AS OriginalPricingId, pr.ID AS CurrentPricingId, pr.BasePricingID
-    FROM Pricing pr WHERE pr.Deleted = 0 AND pr.ID IN (853, 848)
+    SELECT rc.PricingId AS OriginalPricingId, pr.ID AS CurrentPricingId, pr.BasePricingID
+    FROM RetailConfiguration rc
+    INNER JOIN Pricing pr ON pr.ID = rc.PricingId AND pr.Deleted = 0
     UNION ALL
-    SELECT bph.OriginalPricingId, pr.ID AS CurrentPricingId, pr.BasePricingID
+    SELECT bph.OriginalPricingId, pr.ID, pr.BasePricingID
     FROM Pricing pr
     INNER JOIN BasePricingHierarchy bph ON pr.ID = bph.BasePricingID
     WHERE pr.Deleted = 0
 ),
 BasePricingIds AS (
     SELECT OriginalPricingId, CurrentPricingId AS BasePricingId
-    FROM BasePricingHierarchy WHERE BasePricingID IS NULL
-),
--- Get extra charge from ORIGINAL pricing (not base) - this is key!
-OriginalPricingCharge AS (
-    SELECT
-        pr.ID AS PricingId,
-        pr.CalculatedExtraCharge
-    FROM Pricing pr
-    WHERE pr.Deleted = 0 AND pr.ID IN (853, 848)
-),
--- Product groups for extra charge lookup
-ProductGroups AS (
-    SELECT ppg.ProductID, ppg.ProductGroupID
-    FROM ProductProductGroup ppg
-    WHERE ppg.Deleted = 0
-),
--- Get retail currency
-RetailCurrency AS (
-    SELECT TOP 1 c.Code
-    FROM Currency c
-    WHERE c.Deleted = 0 AND c.Code = 'UAH'
+    FROM BasePricingHierarchy
+    WHERE BasePricingID IS NULL
 )
 SELECT
     p.ID AS Id,
@@ -94,35 +94,49 @@ SELECT
     ISNULL(ps.NetUID, '00000000-0000-0000-0000-000000000000') AS SlugNetUid,
     ISNULL(ps.Url, '') AS SlugUrl,
     ISNULL(ps.Locale, '') AS SlugLocale,
-    -- Retail price: BasePrice (from BASE pricing) + BasePrice * ExtraCharge (from ORIGINAL pricing) / 100
     ISNULL(ROUND(
         pp.Price + (pp.Price * COALESCE(
-            (SELECT TOP 1 ppgd.CalculatedExtraCharge FROM PricingProductGroupDiscount ppgd WHERE ppgd.PricingID = 853 AND ppgd.ProductGroupID = pg.ProductGroupID AND ppgd.Deleted = 0),
-            opc.CalculatedExtraCharge,
-            0
-        ) / 100.0)
+            charge.CalculatedExtraCharge, pricing.CalculatedExtraCharge, 0) / 100.0)
     , 2), 0) AS RetailPrice,
     ISNULL(ROUND(
-        ppv.Price + (ppv.Price * COALESCE(
-            (SELECT TOP 1 ppgd.CalculatedExtraCharge FROM PricingProductGroupDiscount ppgd WHERE ppgd.PricingID = 848 AND ppgd.ProductGroupID = pg.ProductGroupID AND ppgd.Deleted = 0),
-            opcv.CalculatedExtraCharge,
-            0
-        ) / 100.0)
+        pp.Price + (pp.Price * COALESCE(
+            charge.CalculatedExtraCharge, pricing.CalculatedExtraCharge, 0) / 100.0)
     , 2), 0) AS RetailPriceVat,
-    ISNULL((SELECT Code FROM RetailCurrency), 'UAH') AS RetailCurrencyCode,
+    ISNULL(rc.CurrencyCode, 'EUR') AS RetailCurrencyCode,
     p.Updated
 FROM Product p
-LEFT JOIN ProductSlug ps ON ps.ProductID = p.ID AND ps.Locale = 'uk' AND ps.Deleted = 0
-LEFT JOIN ProductGroups pg ON pg.ProductID = p.ID
--- Join to get base pricing IDs
-LEFT JOIN BasePricingIds bpi ON bpi.OriginalPricingId = 853
-LEFT JOIN BasePricingIds bpiv ON bpiv.OriginalPricingId = 848
--- Get product price from BASE pricing
-LEFT JOIN ProductPricing pp ON pp.ProductID = p.ID AND pp.PricingID = bpi.BasePricingId AND pp.Deleted = 0
-LEFT JOIN ProductPricing ppv ON ppv.ProductID = p.ID AND ppv.PricingID = bpiv.BasePricingId AND ppv.Deleted = 0
--- Get extra charge from ORIGINAL pricing
-LEFT JOIN OriginalPricingCharge opc ON opc.PricingId = 853
-LEFT JOIN OriginalPricingCharge opcv ON opcv.PricingId = 848
+OUTER APPLY (
+    SELECT TOP (1) ps.ID, ps.NetUID, ps.Url, ps.Locale
+    FROM ProductSlug ps
+    WHERE ps.ProductID = p.ID
+      AND ps.Locale = 'uk'
+      AND ps.Deleted = 0
+    ORDER BY ps.Updated DESC, ps.ID DESC
+) ps
+LEFT JOIN RetailConfiguration rc ON 1 = 1
+OUTER APPLY (
+    SELECT TOP (1) ppg.ProductGroupID
+    FROM ProductProductGroup ppg
+    WHERE ppg.ProductID = p.ID
+      AND ppg.Deleted = 0
+) pg
+OUTER APPLY (
+    SELECT TOP (1) ppgd.CalculatedExtraCharge
+    FROM PricingProductGroupDiscount ppgd
+    WHERE ppgd.PricingID = rc.PricingId
+      AND ppgd.ProductGroupID = pg.ProductGroupID
+      AND ppgd.Deleted = 0
+) charge
+LEFT JOIN BasePricingIds bpi ON bpi.OriginalPricingId = rc.PricingId
+OUTER APPLY (
+    SELECT TOP (1) pp.Price
+    FROM ProductPricing pp
+    WHERE pp.ProductID = p.ID
+      AND pp.PricingID = bpi.BasePricingId
+      AND pp.Deleted = 0
+    ORDER BY pp.Updated DESC, pp.ID DESC
+) pp
+LEFT JOIN Pricing pricing ON pricing.ID = rc.PricingId AND pricing.Deleted = 0
 WHERE p.Deleted = 0
 ORDER BY p.ID";
 
@@ -143,16 +157,67 @@ ORDER BY p.ID";
     SELECT pon.ProductID AS ID FROM OriginalNumber on_ INNER JOIN ProductOriginalNumber pon ON pon.OriginalNumberID = on_.ID AND pon.Deleted = 0 INNER JOIN Product p ON p.ID = pon.ProductID AND p.Deleted = 0 WHERE on_.Updated > @Since
     UNION
     SELECT pa.ProductID AS ID FROM ProductAvailability pa INNER JOIN Product p ON p.ID = pa.ProductID AND p.Deleted = 0 WHERE pa.Updated > @Since
+    UNION
+    SELECT pp.ProductID AS ID FROM ProductPricing pp INNER JOIN Product p ON p.ID = pp.ProductID AND p.Deleted = 0 WHERE pp.Updated > @Since OR pp.Created > @Since
+    UNION
+    SELECT ppg.ProductID AS ID FROM ProductProductGroup ppg INNER JOIN Product p ON p.ID = ppg.ProductID AND p.Deleted = 0 WHERE ppg.Updated > @Since OR ppg.Created > @Since
+    UNION
+    SELECT ps.ProductID AS ID FROM ProductSlug ps INNER JOIN Product p ON p.ID = ps.ProductID AND p.Deleted = 0 WHERE ps.Updated > @Since OR ps.Created > @Since
+    UNION
+    SELECT ppg.ProductID AS ID
+    FROM PricingProductGroupDiscount ppgd
+    INNER JOIN ProductProductGroup ppg ON ppg.ProductGroupID = ppgd.ProductGroupID AND ppg.Deleted = 0
+    INNER JOIN Product p ON p.ID = ppg.ProductID AND p.Deleted = 0
+    WHERE ppgd.Updated > @Since OR ppgd.Created > @Since
+    UNION
+    SELECT ppg.ProductID AS ID
+    FROM ProductGroupDiscount pgd
+    INNER JOIN ClientAgreement ca ON ca.ID = pgd.ClientAgreementID AND ca.Deleted = 0
+    INNER JOIN Client client ON client.ID = ca.ClientID AND client.IsForRetail = 1 AND client.Deleted = 0
+    INNER JOIN ProductProductGroup ppg ON ppg.ProductGroupID = pgd.ProductGroupID AND ppg.Deleted = 0
+    INNER JOIN Product p ON p.ID = ppg.ProductID AND p.Deleted = 0
+    WHERE pgd.Updated > @Since OR pgd.Created > @Since
+),
+RetailConfiguration AS (
+    SELECT TOP (1)
+        ca.NetUID AS AgreementNetUid,
+        a.PricingID AS PricingId,
+        a.WithVATAccounting AS WithVat,
+        c.Code AS CurrencyCode
+    FROM Storage s
+    INNER JOIN Agreement a
+        ON a.OrganizationID = s.OrganizationID
+        AND a.WithVATAccounting = s.ForVatProducts
+        AND a.Deleted = 0
+    INNER JOIN ClientAgreement ca
+        ON ca.AgreementID = a.ID
+        AND ca.Deleted = 0
+    INNER JOIN Client client
+        ON client.ID = ca.ClientID
+        AND client.IsForRetail = 1
+        AND client.Deleted = 0
+    INNER JOIN Currency c
+        ON c.ID = a.CurrencyID
+        AND c.Deleted = 0
+    WHERE s.Deleted = 0
+      AND s.ForEcommerce = 1
+    ORDER BY s.RetailPriority, ca.ID
 ),
 BasePricingHierarchy AS (
-    SELECT pr.ID AS OriginalPricingId, pr.ID AS CurrentPricingId, pr.BasePricingID FROM Pricing pr WHERE pr.Deleted = 0 AND pr.ID IN (853, 848)
+    SELECT rc.PricingId AS OriginalPricingId, pr.ID AS CurrentPricingId, pr.BasePricingID
+    FROM RetailConfiguration rc
+    INNER JOIN Pricing pr ON pr.ID = rc.PricingId AND pr.Deleted = 0
     UNION ALL
-    SELECT bph.OriginalPricingId, pr.ID, pr.BasePricingID FROM Pricing pr INNER JOIN BasePricingHierarchy bph ON pr.ID = bph.BasePricingID WHERE pr.Deleted = 0
+    SELECT bph.OriginalPricingId, pr.ID, pr.BasePricingID
+    FROM Pricing pr
+    INNER JOIN BasePricingHierarchy bph ON pr.ID = bph.BasePricingID
+    WHERE pr.Deleted = 0
 ),
-BasePricingIds AS (SELECT OriginalPricingId, CurrentPricingId AS BasePricingId FROM BasePricingHierarchy WHERE BasePricingID IS NULL),
-OriginalPricingCharge AS (SELECT pr.ID AS PricingId, pr.CalculatedExtraCharge FROM Pricing pr WHERE pr.Deleted = 0 AND pr.ID IN (853, 848)),
-ProductGroups AS (SELECT ppg.ProductID, ppg.ProductGroupID FROM ProductProductGroup ppg WHERE ppg.Deleted = 0),
-RetailCurrency AS (SELECT TOP 1 c.Code FROM Currency c WHERE c.Deleted = 0 AND c.Code = 'UAH')
+BasePricingIds AS (
+    SELECT OriginalPricingId, CurrentPricingId AS BasePricingId
+    FROM BasePricingHierarchy
+    WHERE BasePricingID IS NULL
+)
 SELECT
     p.ID AS Id, p.NetUID AS NetUid, p.VendorCode,
     ISNULL(p.SearchVendorCode, '') AS SearchVendorCode,
@@ -175,19 +240,49 @@ SELECT
     p.IsForWeb, p.IsForSale, p.IsForZeroSale,
     ISNULL(ps.ID, 0) AS SlugId, ISNULL(ps.NetUID, '00000000-0000-0000-0000-000000000000') AS SlugNetUid,
     ISNULL(ps.Url, '') AS SlugUrl, ISNULL(ps.Locale, '') AS SlugLocale,
-    ISNULL(ROUND(pp.Price + (pp.Price * COALESCE((SELECT TOP 1 ppgd.CalculatedExtraCharge FROM PricingProductGroupDiscount ppgd WHERE ppgd.PricingID = 853 AND ppgd.ProductGroupID = pg.ProductGroupID AND ppgd.Deleted = 0), opc.CalculatedExtraCharge, 0) / 100.0), 2), 0) AS RetailPrice,
-    ISNULL(ROUND(ppv.Price + (ppv.Price * COALESCE((SELECT TOP 1 ppgd.CalculatedExtraCharge FROM PricingProductGroupDiscount ppgd WHERE ppgd.PricingID = 848 AND ppgd.ProductGroupID = pg.ProductGroupID AND ppgd.Deleted = 0), opcv.CalculatedExtraCharge, 0) / 100.0), 2), 0) AS RetailPriceVat,
-    ISNULL((SELECT Code FROM RetailCurrency), 'UAH') AS RetailCurrencyCode, p.Updated
+    ISNULL(ROUND(
+        pp.Price + (pp.Price * COALESCE(
+            charge.CalculatedExtraCharge, pricing.CalculatedExtraCharge, 0) / 100.0)
+    , 2), 0) AS RetailPrice,
+    ISNULL(ROUND(
+        pp.Price + (pp.Price * COALESCE(
+            charge.CalculatedExtraCharge, pricing.CalculatedExtraCharge, 0) / 100.0)
+    , 2), 0) AS RetailPriceVat,
+    ISNULL(rc.CurrencyCode, 'EUR') AS RetailCurrencyCode, p.Updated
 FROM Product p
 INNER JOIN ChangedProductIds c ON c.ID = p.ID
-LEFT JOIN ProductSlug ps ON ps.ProductID = p.ID AND ps.Locale = 'uk' AND ps.Deleted = 0
-LEFT JOIN ProductGroups pg ON pg.ProductID = p.ID
-LEFT JOIN BasePricingIds bpi ON bpi.OriginalPricingId = 853
-LEFT JOIN BasePricingIds bpiv ON bpiv.OriginalPricingId = 848
-LEFT JOIN ProductPricing pp ON pp.ProductID = p.ID AND pp.PricingID = bpi.BasePricingId AND pp.Deleted = 0
-LEFT JOIN ProductPricing ppv ON ppv.ProductID = p.ID AND ppv.PricingID = bpiv.BasePricingId AND ppv.Deleted = 0
-LEFT JOIN OriginalPricingCharge opc ON opc.PricingId = 853
-LEFT JOIN OriginalPricingCharge opcv ON opcv.PricingId = 848
+OUTER APPLY (
+    SELECT TOP (1) ps.ID, ps.NetUID, ps.Url, ps.Locale
+    FROM ProductSlug ps
+    WHERE ps.ProductID = p.ID
+      AND ps.Locale = 'uk'
+      AND ps.Deleted = 0
+    ORDER BY ps.Updated DESC, ps.ID DESC
+) ps
+LEFT JOIN RetailConfiguration rc ON 1 = 1
+OUTER APPLY (
+    SELECT TOP (1) ppg.ProductGroupID
+    FROM ProductProductGroup ppg
+    WHERE ppg.ProductID = p.ID
+      AND ppg.Deleted = 0
+) pg
+OUTER APPLY (
+    SELECT TOP (1) ppgd.CalculatedExtraCharge
+    FROM PricingProductGroupDiscount ppgd
+    WHERE ppgd.PricingID = rc.PricingId
+      AND ppgd.ProductGroupID = pg.ProductGroupID
+      AND ppgd.Deleted = 0
+) charge
+LEFT JOIN BasePricingIds bpi ON bpi.OriginalPricingId = rc.PricingId
+OUTER APPLY (
+    SELECT TOP (1) pp.Price
+    FROM ProductPricing pp
+    WHERE pp.ProductID = p.ID
+      AND pp.PricingID = bpi.BasePricingId
+      AND pp.Deleted = 0
+    ORDER BY pp.Updated DESC, pp.ID DESC
+) pp
+LEFT JOIN Pricing pricing ON pricing.ID = rc.PricingId AND pricing.Deleted = 0
 WHERE p.Deleted = 0
 ORDER BY p.ID";
 
@@ -206,7 +301,27 @@ SELECT pon.ProductID FROM ProductOriginalNumber pon INNER JOIN Product p ON p.ID
 UNION
 SELECT pon.ProductID FROM OriginalNumber on_ INNER JOIN ProductOriginalNumber pon ON pon.OriginalNumberID = on_.ID AND pon.Deleted = 0 INNER JOIN Product p ON p.ID = pon.ProductID AND p.Deleted = 0 WHERE on_.Updated > @Since
 UNION
-SELECT pa.ProductID FROM ProductAvailability pa INNER JOIN Product p ON p.ID = pa.ProductID AND p.Deleted = 0 WHERE pa.Updated > @Since";
+SELECT pa.ProductID FROM ProductAvailability pa INNER JOIN Product p ON p.ID = pa.ProductID AND p.Deleted = 0 WHERE pa.Updated > @Since
+UNION
+SELECT pp.ProductID FROM ProductPricing pp INNER JOIN Product p ON p.ID = pp.ProductID AND p.Deleted = 0 WHERE pp.Updated > @Since OR pp.Created > @Since
+UNION
+SELECT ppg.ProductID FROM ProductProductGroup ppg INNER JOIN Product p ON p.ID = ppg.ProductID AND p.Deleted = 0 WHERE ppg.Updated > @Since OR ppg.Created > @Since
+UNION
+SELECT ps.ProductID FROM ProductSlug ps INNER JOIN Product p ON p.ID = ps.ProductID AND p.Deleted = 0 WHERE ps.Updated > @Since OR ps.Created > @Since
+UNION
+SELECT ppg.ProductID
+FROM PricingProductGroupDiscount ppgd
+INNER JOIN ProductProductGroup ppg ON ppg.ProductGroupID = ppgd.ProductGroupID AND ppg.Deleted = 0
+INNER JOIN Product p ON p.ID = ppg.ProductID AND p.Deleted = 0
+WHERE ppgd.Updated > @Since OR ppgd.Created > @Since
+UNION
+SELECT ppg.ProductID
+FROM ProductGroupDiscount pgd
+INNER JOIN ClientAgreement ca ON ca.ID = pgd.ClientAgreementID AND ca.Deleted = 0
+INNER JOIN Client client ON client.ID = ca.ClientID AND client.IsForRetail = 1 AND client.Deleted = 0
+INNER JOIN ProductProductGroup ppg ON ppg.ProductGroupID = pgd.ProductGroupID AND ppg.Deleted = 0
+INNER JOIN Product p ON p.ID = ppg.ProductID AND p.Deleted = 0
+WHERE pgd.Updated > @Since OR pgd.Created > @Since";
 
         IEnumerable<long> ids = await connection.QueryAsync<long>(sql, new { Since = since }, commandTimeout: 120);
         return ids.AsList();
@@ -222,15 +337,46 @@ SELECT pa.ProductID FROM ProductAvailability pa INNER JOIN Product p ON p.ID = p
 ;WITH ChangedProductIds AS (
     SELECT p.ID FROM Product p WHERE p.Deleted = 0 AND p.ID IN @Ids
 ),
-BasePricingHierarchy AS (
-    SELECT pr.ID AS OriginalPricingId, pr.ID AS CurrentPricingId, pr.BasePricingID FROM Pricing pr WHERE pr.Deleted = 0 AND pr.ID IN (853, 848)
-    UNION ALL
-    SELECT bph.OriginalPricingId, pr.ID, pr.BasePricingID FROM Pricing pr INNER JOIN BasePricingHierarchy bph ON pr.ID = bph.BasePricingID WHERE pr.Deleted = 0
+RetailConfiguration AS (
+    SELECT TOP (1)
+        ca.NetUID AS AgreementNetUid,
+        a.PricingID AS PricingId,
+        a.WithVATAccounting AS WithVat,
+        c.Code AS CurrencyCode
+    FROM Storage s
+    INNER JOIN Agreement a
+        ON a.OrganizationID = s.OrganizationID
+        AND a.WithVATAccounting = s.ForVatProducts
+        AND a.Deleted = 0
+    INNER JOIN ClientAgreement ca
+        ON ca.AgreementID = a.ID
+        AND ca.Deleted = 0
+    INNER JOIN Client client
+        ON client.ID = ca.ClientID
+        AND client.IsForRetail = 1
+        AND client.Deleted = 0
+    INNER JOIN Currency c
+        ON c.ID = a.CurrencyID
+        AND c.Deleted = 0
+    WHERE s.Deleted = 0
+      AND s.ForEcommerce = 1
+    ORDER BY s.RetailPriority, ca.ID
 ),
-BasePricingIds AS (SELECT OriginalPricingId, CurrentPricingId AS BasePricingId FROM BasePricingHierarchy WHERE BasePricingID IS NULL),
-OriginalPricingCharge AS (SELECT pr.ID AS PricingId, pr.CalculatedExtraCharge FROM Pricing pr WHERE pr.Deleted = 0 AND pr.ID IN (853, 848)),
-ProductGroups AS (SELECT ppg.ProductID, ppg.ProductGroupID FROM ProductProductGroup ppg WHERE ppg.Deleted = 0),
-RetailCurrency AS (SELECT TOP 1 c.Code FROM Currency c WHERE c.Deleted = 0 AND c.Code = 'UAH')
+BasePricingHierarchy AS (
+    SELECT rc.PricingId AS OriginalPricingId, pr.ID AS CurrentPricingId, pr.BasePricingID
+    FROM RetailConfiguration rc
+    INNER JOIN Pricing pr ON pr.ID = rc.PricingId AND pr.Deleted = 0
+    UNION ALL
+    SELECT bph.OriginalPricingId, pr.ID, pr.BasePricingID
+    FROM Pricing pr
+    INNER JOIN BasePricingHierarchy bph ON pr.ID = bph.BasePricingID
+    WHERE pr.Deleted = 0
+),
+BasePricingIds AS (
+    SELECT OriginalPricingId, CurrentPricingId AS BasePricingId
+    FROM BasePricingHierarchy
+    WHERE BasePricingID IS NULL
+)
 SELECT
     p.ID AS Id, p.NetUID AS NetUid, p.VendorCode,
     ISNULL(p.SearchVendorCode, '') AS SearchVendorCode,
@@ -253,19 +399,49 @@ SELECT
     p.IsForWeb, p.IsForSale, p.IsForZeroSale,
     ISNULL(ps.ID, 0) AS SlugId, ISNULL(ps.NetUID, '00000000-0000-0000-0000-000000000000') AS SlugNetUid,
     ISNULL(ps.Url, '') AS SlugUrl, ISNULL(ps.Locale, '') AS SlugLocale,
-    ISNULL(ROUND(pp.Price + (pp.Price * COALESCE((SELECT TOP 1 ppgd.CalculatedExtraCharge FROM PricingProductGroupDiscount ppgd WHERE ppgd.PricingID = 853 AND ppgd.ProductGroupID = pg.ProductGroupID AND ppgd.Deleted = 0), opc.CalculatedExtraCharge, 0) / 100.0), 2), 0) AS RetailPrice,
-    ISNULL(ROUND(ppv.Price + (ppv.Price * COALESCE((SELECT TOP 1 ppgd.CalculatedExtraCharge FROM PricingProductGroupDiscount ppgd WHERE ppgd.PricingID = 848 AND ppgd.ProductGroupID = pg.ProductGroupID AND ppgd.Deleted = 0), opcv.CalculatedExtraCharge, 0) / 100.0), 2), 0) AS RetailPriceVat,
-    ISNULL((SELECT Code FROM RetailCurrency), 'UAH') AS RetailCurrencyCode, p.Updated
+    ISNULL(ROUND(
+        pp.Price + (pp.Price * COALESCE(
+            charge.CalculatedExtraCharge, pricing.CalculatedExtraCharge, 0) / 100.0)
+    , 2), 0) AS RetailPrice,
+    ISNULL(ROUND(
+        pp.Price + (pp.Price * COALESCE(
+            charge.CalculatedExtraCharge, pricing.CalculatedExtraCharge, 0) / 100.0)
+    , 2), 0) AS RetailPriceVat,
+    ISNULL(rc.CurrencyCode, 'EUR') AS RetailCurrencyCode, p.Updated
 FROM Product p
 INNER JOIN ChangedProductIds c ON c.ID = p.ID
-LEFT JOIN ProductSlug ps ON ps.ProductID = p.ID AND ps.Locale = 'uk' AND ps.Deleted = 0
-LEFT JOIN ProductGroups pg ON pg.ProductID = p.ID
-LEFT JOIN BasePricingIds bpi ON bpi.OriginalPricingId = 853
-LEFT JOIN BasePricingIds bpiv ON bpiv.OriginalPricingId = 848
-LEFT JOIN ProductPricing pp ON pp.ProductID = p.ID AND pp.PricingID = bpi.BasePricingId AND pp.Deleted = 0
-LEFT JOIN ProductPricing ppv ON ppv.ProductID = p.ID AND ppv.PricingID = bpiv.BasePricingId AND ppv.Deleted = 0
-LEFT JOIN OriginalPricingCharge opc ON opc.PricingId = 853
-LEFT JOIN OriginalPricingCharge opcv ON opcv.PricingId = 848
+OUTER APPLY (
+    SELECT TOP (1) ps.ID, ps.NetUID, ps.Url, ps.Locale
+    FROM ProductSlug ps
+    WHERE ps.ProductID = p.ID
+      AND ps.Locale = 'uk'
+      AND ps.Deleted = 0
+    ORDER BY ps.Updated DESC, ps.ID DESC
+) ps
+LEFT JOIN RetailConfiguration rc ON 1 = 1
+OUTER APPLY (
+    SELECT TOP (1) ppg.ProductGroupID
+    FROM ProductProductGroup ppg
+    WHERE ppg.ProductID = p.ID
+      AND ppg.Deleted = 0
+) pg
+OUTER APPLY (
+    SELECT TOP (1) ppgd.CalculatedExtraCharge
+    FROM PricingProductGroupDiscount ppgd
+    WHERE ppgd.PricingID = rc.PricingId
+      AND ppgd.ProductGroupID = pg.ProductGroupID
+      AND ppgd.Deleted = 0
+) charge
+LEFT JOIN BasePricingIds bpi ON bpi.OriginalPricingId = rc.PricingId
+OUTER APPLY (
+    SELECT TOP (1) pp.Price
+    FROM ProductPricing pp
+    WHERE pp.ProductID = p.ID
+      AND pp.PricingID = bpi.BasePricingId
+      AND pp.Deleted = 0
+    ORDER BY pp.Updated DESC, pp.ID DESC
+) pp
+LEFT JOIN Pricing pricing ON pricing.ID = rc.PricingId AND pricing.Deleted = 0
 WHERE p.Deleted = 0
 ORDER BY p.ID";
 
@@ -378,7 +554,7 @@ public sealed class ProductSyncData {
     // Retail pricing
     public decimal RetailPrice { get; set; }
     public decimal RetailPriceVat { get; set; }
-    public string RetailCurrencyCode { get; set; } = "UAH";
+    public string RetailCurrencyCode { get; set; } = "EUR";
 
     public DateTime Updated { get; set; }
 }

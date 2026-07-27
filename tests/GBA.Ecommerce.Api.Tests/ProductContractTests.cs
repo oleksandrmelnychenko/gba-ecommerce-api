@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Text.Json;
@@ -70,6 +71,32 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
         ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
         ApiAssertions.AssertSuccessEnvelope(envelope);
         AssertProductContract(envelope.Body, netUid);
+    }
+
+    [Fact]
+    public async Task Anonymous_product_search_matches_canonical_retail_eur_price() {
+        JsonElement[] products = await GetSearchProductsAsync("SEM18487", 1, 0);
+        JsonElement searchProduct = Assert.Single(products);
+        Guid netUid = ApiAssertions.RequiredGuid(searchProduct, "NetUid");
+
+        Assert.Equal("EUR", ApiAssertions.RequiredString(searchProduct, "CurrencyCode"));
+
+        using HttpResponseMessage response = await _client.GetAsync(
+            _config.ApiPath($"products/get?netId={netUid}&withVat=0"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
+        ApiAssertions.AssertSuccessEnvelope(envelope);
+        Assert.Equal("EUR", ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
+
+        decimal searchPrice = ParseRawProtectedPrice(
+            ApiAssertions.RequiredString(searchProduct, "P"));
+        decimal canonicalPrice = envelope.Body.GetProperty("CurrentPrice").GetDecimal();
+
+        Assert.Equal(
+            decimal.Round(canonicalPrice, 2, MidpointRounding.AwayFromZero),
+            searchPrice);
     }
 
     [Fact]
@@ -193,5 +220,15 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
     private static void AssertNumberProperty(JsonElement element, string propertyName) {
         Assert.True(element.TryGetProperty(propertyName, out JsonElement property), $"Missing '{propertyName}' property.");
         Assert.Equal(JsonValueKind.Number, property.ValueKind);
+    }
+
+    private static decimal ParseRawProtectedPrice(string protectedPrice) {
+        string[] parts = protectedPrice.Split(',');
+        Assert.True(parts.Length >= 2, "Protected retail price has an invalid format.");
+
+        return decimal.Parse(
+            $"{parts[0]}.{parts[1]}",
+            NumberStyles.Number,
+            CultureInfo.InvariantCulture);
     }
 }

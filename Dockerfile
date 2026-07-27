@@ -21,12 +21,12 @@ RUN dotnet publish src/GBA.Ecommerce/GBA.Ecommerce.csproj \
 # ─── runtime stage ─────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
-COPY --from=build --chown=$APP_UID:$APP_UID /app/publish ./
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /app/logs /app/Data /app/Logs /app/Images \
     && chown -R $APP_UID:$APP_UID /app
+COPY --from=build --chown=$APP_UID:$APP_UID /app/publish ./
 
 # app binds Kestrel to 0.0.0.0:62506 (see Program.cs)
 EXPOSE 62506

@@ -59,30 +59,22 @@ public sealed class ProductsController(
         if (searchResult.Documents.Count == 0)
             return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
 
-        Dictionary<long, ProductPriceInfo>? prices = null;
-        bool useEsPrices = userNetId == Guid.Empty;
-
-        if (!useEsPrices) {
-            List<long> productIds = searchResult.Documents.Select(d => d.Id).ToList();
-            prices = priceCacheService.GetPrices(
-                productIds,
-                userNetId,
-                withVat.Equals(1),
-                locale,
-                ids => productService.GetPricesOnly(ids, userNetId, withVat.Equals(1), locale));
-        }
+        // Elasticsearch is the catalog/search projection, not the pricing authority.
+        // Resolve all prices in one SQL batch so anonymous retail prices use the active
+        // ecommerce storage/agreement (including its currency and VAT mode) exactly like
+        // the product details endpoint. The per-product cache keeps repeated searches fast.
+        List<long> productIds = searchResult.Documents.Select(d => d.Id).ToList();
+        Dictionary<long, ProductPriceInfo> prices = priceCacheService.GetPrices(
+            productIds,
+            userNetId,
+            withVat.Equals(1),
+            locale,
+            ids => productService.GetPricesOnly(ids, userNetId, withVat.Equals(1), locale));
 
         long timestamp = PriceObfuscator.GetTimestamp();
         List<ProtectedSearchProduct> protectedProducts = searchResult.Documents.Select(doc => {
-            long id = doc.Id;
-            if (useEsPrices) {
-                decimal esPrice = withVat == 1 ? doc.RetailPriceVat : doc.RetailPrice;
-                ProductPriceInfo esInfo = new ProductPriceInfo { Price = esPrice, CurrencyCode = doc.RetailCurrencyCode };
-                return DocToProtectedProduct(doc, esInfo, locale, timestamp);
-            } else {
-                prices!.TryGetValue(id, out ProductPriceInfo? priceInfo);
-                return DocToProtectedProduct(doc, priceInfo, locale, timestamp);
-            }
+            prices.TryGetValue(doc.Id, out ProductPriceInfo? priceInfo);
+            return DocToProtectedProduct(doc, priceInfo, locale, timestamp);
         }).ToList();
 
         return Ok(SuccessResponseBody(protectedProducts));

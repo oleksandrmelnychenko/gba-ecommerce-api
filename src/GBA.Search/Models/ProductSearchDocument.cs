@@ -67,7 +67,7 @@ public sealed class ProductSearchDocument {
     // Retail pricing (for anonymous users)
     public decimal RetailPrice { get; set; }
     public decimal RetailPriceVat { get; set; }
-    public string RetailCurrencyCode { get; set; } = "UAH";
+    public string RetailCurrencyCode { get; set; } = "EUR";
 
     public long UpdatedAt { get; set; }
 }
