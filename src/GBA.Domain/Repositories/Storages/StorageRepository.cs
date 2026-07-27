@@ -153,7 +153,7 @@ public sealed class StorageRepository : IStorageRepository {
         ).SingleOrDefault();
     }
 
-    public Storage GetWithHighestPriority() {
+    public Storage GetWithHighestPriority(string retailCurrencyCode = null) {
         return _connection.Query<Storage, Organization, VatRate, Storage>(
             "SELECT TOP 1 * " +
             "FROM [Storage] " +
@@ -163,12 +163,32 @@ public sealed class StorageRepository : IStorageRepository {
             "ON [VatRate].ID = [Organization].VatRateID " +
             "WHERE [Storage].Deleted = 0 " +
             "AND [Storage].ForEcommerce = 1 " +
+            "AND (@RetailCurrencyCode IS NULL OR EXISTS ( " +
+            "SELECT 1 " +
+            "FROM [Agreement] AS [RetailAgreement] " +
+            "INNER JOIN [ClientAgreement] AS [RetailClientAgreement] " +
+            "ON [RetailClientAgreement].AgreementID = [RetailAgreement].ID " +
+            "AND [RetailClientAgreement].Deleted = 0 " +
+            "INNER JOIN [Client] AS [RetailClient] " +
+            "ON [RetailClient].ID = [RetailClientAgreement].ClientID " +
+            "AND [RetailClient].IsForRetail = 1 " +
+            "AND [RetailClient].Deleted = 0 " +
+            "INNER JOIN [Currency] AS [RetailCurrency] " +
+            "ON [RetailCurrency].ID = [RetailAgreement].CurrencyID " +
+            "AND [RetailCurrency].Deleted = 0 " +
+            "WHERE [RetailAgreement].OrganizationID = [Storage].OrganizationID " +
+            "AND [RetailAgreement].WithVATAccounting = [Storage].ForVatProducts " +
+            "AND [RetailAgreement].Deleted = 0 " +
+            "AND [RetailAgreement].IsActive = 1 " +
+            "AND [RetailCurrency].Code = @RetailCurrencyCode " +
+            ")) " +
             "ORDER BY [Storage].RetailPriority ASC ",
             (storage, organization, vatRate) => {
                 if (organization != null) organization.VatRate = vatRate;
                 storage.Organization = organization;
                 return storage;
-            }).FirstOrDefault();
+            },
+            new { RetailCurrencyCode = retailCurrencyCode }).FirstOrDefault();
     }
 
     public long GetTotalProductsCountByStorageNetId(Guid netId) {

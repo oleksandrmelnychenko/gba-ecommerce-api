@@ -123,7 +123,8 @@ public sealed class ClientService : IClientService {
             RetailClient client = _retailClientRepositoriesFactory.NewRetailClientRepository(connection).GetByNetId(netId);
             IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
 
-            Storage storage = storageRepository.GetWithHighestPriority();
+            Storage storage = storageRepository
+                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
             List<OrderItem> orderItems = JsonSerializer.Deserialize<List<OrderItem>>(client.ShoppingCartJson, _jsonSerializerOptions) ?? new List<OrderItem>();
             List<OrderItem> anyOrderItems = new();
 
@@ -148,7 +149,8 @@ public sealed class ClientService : IClientService {
             RetailClient client = _retailClientRepositoriesFactory.NewRetailClientRepository(connection).GetByNetId(netId);
             IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
 
-            Storage storage = storageRepository.GetWithHighestPriority();
+            Storage storage = storageRepository
+                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
             List<OrderItem> orderItems = JsonSerializer.Deserialize<List<OrderItem>>(client.ShoppingCartJson, _jsonSerializerOptions) ?? new List<OrderItem>();
             List<OrderItem> anyOrderItems = new();
             List<OrderItem> notHaveOrderItems = new();

@@ -1465,8 +1465,14 @@ public sealed class ClientAgreementRepository : IClientAgreementRepository {
             "LEFT JOIN Currency " +
             "ON [Currency].ID = [Agreement].CurrencyID " +
             "WHERE [Client].NetUID = @NetId " +
+            "AND [Client].Deleted = 0 " +
+            "AND [ClientAgreement].Deleted = 0 " +
             "AND [Agreement].WithVATAccounting = @WithVat " +
-            "AND [Agreement].OrganizationID = @OrganizationId ",
+            "AND [Agreement].OrganizationID = @OrganizationId " +
+            "AND [Agreement].Deleted = 0 " +
+            "AND [Agreement].IsActive = 1 " +
+            "AND [Currency].Deleted = 0 " +
+            "ORDER BY [Agreement].IsSelected DESC, [ClientAgreement].ID ",
             (clientAgreement, agreement, organization) => {
                 if (clientAgreement != null) {
                     if (agreement != null) agreement.Organization = organization;

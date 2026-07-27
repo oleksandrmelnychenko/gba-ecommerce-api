@@ -68,7 +68,8 @@ public sealed class ProductService : IProductService {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
         if (productNetId.Equals(Guid.Empty)) throw new Exception("There's no such product in database");
 
-        Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+        Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
+            .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
 
         return Task.FromResult(_productRepositoriesFactory.NewGetSingleProductRepository(connection).GetByNetIdForRetail(productNetId, storage.OrganizationId.Value, storage.ForVatProducts));
     }
@@ -99,7 +100,7 @@ public sealed class ProductService : IProductService {
         if (clientNetId.Equals(Guid.Empty)) {
             Storage storage = _storageRepositoryFactory
                 .NewStorageRepository(connection)
-                .GetWithHighestPriority()
+                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode)
                 ?? throw new InvalidOperationException("No active ecommerce storage is configured.");
             if (!storage.OrganizationId.HasValue) {
                 throw new InvalidOperationException(
@@ -913,7 +914,8 @@ public sealed class ProductService : IProductService {
             if (!ids.Any() && !idsSearchAnalogues.Any()) return Task.FromResult(new List<FromSearchProduct>());
             if (idsSearchAnalogues.Any()) {
                 if (currentClientNetId.Equals(Guid.Empty)) {
-                    Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+                    Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
+                        .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
 
                     ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
                         _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
@@ -986,7 +988,8 @@ public sealed class ProductService : IProductService {
                 }
 
             if (currentClientNetId.Equals(Guid.Empty)) {
-                Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+                Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
+                    .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
 
                 ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
                     _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
@@ -1095,7 +1098,8 @@ public sealed class ProductService : IProductService {
             }
 
             if (currentClientNetId.Equals(Guid.Empty)) {
-                Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+                Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
+                    .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
 
                 ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
                     _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
@@ -1139,7 +1143,8 @@ public sealed class ProductService : IProductService {
 
         IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
-        Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+        Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
+            .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
 
         ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
             _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
@@ -1314,7 +1319,8 @@ public sealed class ProductService : IProductService {
 
         if (currentClientNetId.Equals(Guid.Empty)) {
             // Retail user
-            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
+                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
 
             ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
                 _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
@@ -1385,7 +1391,8 @@ public sealed class ProductService : IProductService {
 
         if (currentClientNetId.Equals(Guid.Empty)) {
             // Retail user - match V1 behavior: use storage.ForVatProducts for agreement selection
-            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
+                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
 
             ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
                 _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
@@ -1461,7 +1468,8 @@ public sealed class ProductService : IProductService {
         List<FromSearchProduct> products;
 
         if (currentClientNetId.Equals(Guid.Empty)) {
-            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
+                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
 
             ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
                 _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,

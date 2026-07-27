@@ -1328,7 +1328,10 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "AND [Client].Deleted = 0 " +
             "AND [ClientAgreement].Deleted = 0 " +
             "AND [Agreement].[WithVatAccounting] = @WithVat " +
-            "AND [Agreement].OrganizationID = @OrganizationId ",
+            "AND [Agreement].OrganizationID = @OrganizationId " +
+            "AND [Agreement].Deleted = 0 " +
+            "AND [Agreement].IsActive = 1 " +
+            "ORDER BY [Agreement].IsSelected DESC, [ClientAgreement].ID ",
             (currentClientAgreement, agreement) => {
                 currentClientAgreement.Agreement = agreement;
 

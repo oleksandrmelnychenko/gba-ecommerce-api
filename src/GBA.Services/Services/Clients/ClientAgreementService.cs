@@ -51,7 +51,8 @@ public sealed class ClientAgreementService : IClientAgreementService {
             IAgreementRepository agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
             //Agreement defaultAgreement = agreementRepository.GetDefaultByCulture();
 
-            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
+                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
 
             ClientAgreement retailClientAgreement =
                 _clientRepositoriesFactory.NewClientAgreementRepository(connection)

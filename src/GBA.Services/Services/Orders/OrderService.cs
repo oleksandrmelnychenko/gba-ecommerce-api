@@ -878,7 +878,8 @@ public sealed class OrderService : IOrderService {
             if (retailClient == null)
                 throw new ArgumentException("A valid retail client is required.");
 
-            Storage storage = storageRepository.GetWithHighestPriority();
+            Storage storage = storageRepository
+                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
             if (storage == null || !storage.OrganizationId.HasValue)
                 throw new InvalidOperationException("Retail storage is not configured.");
 
@@ -1149,7 +1150,8 @@ public sealed class OrderService : IOrderService {
             Client clientForRetail = clientRepository.GetRetailClient();
             RetailClient retailClient = retailClientRepository.GetByNetId(retailClientNetId);
 
-            Storage storage = storageRepository.GetWithHighestPriority();
+            Storage storage = storageRepository
+                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
 
             ClientAgreement clientAgreement =
                 clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(clientForRetail.NetUid, storage.OrganizationId.Value, retailClient.EcommerceRegion.IsLocalPayment);
@@ -1418,7 +1420,8 @@ public sealed class OrderService : IOrderService {
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
             IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
 
-            Storage storage = storageRepository.GetWithHighestPriority();
+            Storage storage = storageRepository
+                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
             if (storage == null || !storage.OrganizationId.HasValue)
                 throw new InvalidOperationException("Retail storage is not configured.");
 

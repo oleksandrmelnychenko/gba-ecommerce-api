@@ -925,7 +925,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
             IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
-            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
+                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
 
             ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
                 _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,

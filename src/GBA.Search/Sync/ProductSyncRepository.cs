@@ -33,6 +33,7 @@ public sealed class ProductSyncRepository(Func<IDbConnection> connectionFactory)
         ON a.OrganizationID = s.OrganizationID
         AND a.WithVATAccounting = s.ForVatProducts
         AND a.Deleted = 0
+        AND a.IsActive = 1
     INNER JOIN ClientAgreement ca
         ON ca.AgreementID = a.ID
         AND ca.Deleted = 0
@@ -43,6 +44,7 @@ public sealed class ProductSyncRepository(Func<IDbConnection> connectionFactory)
     INNER JOIN Currency c
         ON c.ID = a.CurrencyID
         AND c.Deleted = 0
+        AND c.Code = 'EUR'
     WHERE s.Deleted = 0
       AND s.ForEcommerce = 1
     ORDER BY s.RetailPriority, ca.ID
@@ -197,6 +199,7 @@ RetailConfiguration AS (
         ON a.OrganizationID = s.OrganizationID
         AND a.WithVATAccounting = s.ForVatProducts
         AND a.Deleted = 0
+        AND a.IsActive = 1
     INNER JOIN ClientAgreement ca
         ON ca.AgreementID = a.ID
         AND ca.Deleted = 0
@@ -207,6 +210,7 @@ RetailConfiguration AS (
     INNER JOIN Currency c
         ON c.ID = a.CurrencyID
         AND c.Deleted = 0
+        AND c.Code = 'EUR'
     WHERE s.Deleted = 0
       AND s.ForEcommerce = 1
     ORDER BY s.RetailPriority, ca.ID
@@ -356,6 +360,7 @@ RetailConfiguration AS (
         ON a.OrganizationID = s.OrganizationID
         AND a.WithVATAccounting = s.ForVatProducts
         AND a.Deleted = 0
+        AND a.IsActive = 1
     INNER JOIN ClientAgreement ca
         ON ca.AgreementID = a.ID
         AND ca.Deleted = 0
@@ -366,6 +371,7 @@ RetailConfiguration AS (
     INNER JOIN Currency c
         ON c.ID = a.CurrencyID
         AND c.Deleted = 0
+        AND c.Code = 'EUR'
     WHERE s.Deleted = 0
       AND s.ForEcommerce = 1
     ORDER BY s.RetailPriority, ca.ID
