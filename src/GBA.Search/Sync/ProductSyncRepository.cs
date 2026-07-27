@@ -10,6 +10,49 @@ namespace GBA.Search.Sync;
 
 public sealed class ProductSyncRepository(Func<IDbConnection> connectionFactory) {
     internal const int SqlParameterBatchSize = 2000;
+    internal const string DirectChangedProductIdsSql = @"
+SELECT p.ID FROM Product p WHERE p.Deleted = 0 AND p.Updated > @Since
+UNION
+SELECT pon.ProductID FROM ProductOriginalNumber pon INNER JOIN Product p ON p.ID = pon.ProductID AND p.Deleted = 0 WHERE pon.Updated > @Since OR pon.Created > @Since
+UNION
+SELECT pon.ProductID FROM OriginalNumber on_ INNER JOIN ProductOriginalNumber pon ON pon.OriginalNumberID = on_.ID AND pon.Deleted = 0 INNER JOIN Product p ON p.ID = pon.ProductID AND p.Deleted = 0 WHERE on_.Updated > @Since
+UNION
+SELECT pa.ProductID FROM ProductAvailability pa INNER JOIN Product p ON p.ID = pa.ProductID AND p.Deleted = 0 WHERE pa.Updated > @Since
+UNION
+SELECT pp.ProductID FROM ProductPricing pp INNER JOIN Product p ON p.ID = pp.ProductID AND p.Deleted = 0 WHERE pp.Updated > @Since OR pp.Created > @Since
+UNION
+SELECT ppg.ProductID FROM ProductProductGroup ppg INNER JOIN Product p ON p.ID = ppg.ProductID AND p.Deleted = 0 WHERE ppg.Updated > @Since OR ppg.Created > @Since
+UNION
+SELECT ps.ProductID FROM ProductSlug ps INNER JOIN Product p ON p.ID = ps.ProductID AND p.Deleted = 0 WHERE ps.Updated > @Since OR ps.Created > @Since";
+
+    internal const string HasGlobalRetailDependencyChangesSql = @"
+SELECT CAST(CASE
+    WHEN EXISTS (
+        SELECT 1
+        FROM PricingProductGroupDiscount
+        WHERE Updated > @Since OR Created > @Since
+    ) OR EXISTS (
+        SELECT 1
+        FROM ProductGroupDiscount
+        WHERE Updated > @Since OR Created > @Since
+    )
+    THEN 1 ELSE 0
+END AS bit)";
+
+    internal const string GlobalRetailDependencyProductIdsSql = @"
+SELECT ppg.ProductID
+FROM PricingProductGroupDiscount ppgd
+INNER JOIN ProductProductGroup ppg ON ppg.ProductGroupID = ppgd.ProductGroupID AND ppg.Deleted = 0
+INNER JOIN Product p ON p.ID = ppg.ProductID AND p.Deleted = 0
+WHERE ppgd.Updated > @Since OR ppgd.Created > @Since
+UNION
+SELECT ppg.ProductID
+FROM ProductGroupDiscount pgd
+INNER JOIN ClientAgreement ca ON ca.ID = pgd.ClientAgreementID AND ca.Deleted = 0
+INNER JOIN Client client ON client.ID = ca.ClientID AND client.IsForRetail = 1 AND client.Deleted = 0
+INNER JOIN ProductProductGroup ppg ON ppg.ProductGroupID = pgd.ProductGroupID AND ppg.Deleted = 0
+INNER JOIN Product p ON p.ID = ppg.ProductID AND p.Deleted = 0
+WHERE pgd.Updated > @Since OR pgd.Created > @Since";
 
     internal static IEnumerable<long[]> PartitionProductIds(IReadOnlyCollection<long> ids) {
         return ids
@@ -306,37 +349,33 @@ ORDER BY p.ID";
         using IDbConnection connection = connectionFactory();
         connection.Open();
 
-        const string sql = @"
-SELECT p.ID FROM Product p WHERE p.Deleted = 0 AND p.Updated > @Since
-UNION
-SELECT pon.ProductID FROM ProductOriginalNumber pon INNER JOIN Product p ON p.ID = pon.ProductID AND p.Deleted = 0 WHERE pon.Updated > @Since OR pon.Created > @Since
-UNION
-SELECT pon.ProductID FROM OriginalNumber on_ INNER JOIN ProductOriginalNumber pon ON pon.OriginalNumberID = on_.ID AND pon.Deleted = 0 INNER JOIN Product p ON p.ID = pon.ProductID AND p.Deleted = 0 WHERE on_.Updated > @Since
-UNION
-SELECT pa.ProductID FROM ProductAvailability pa INNER JOIN Product p ON p.ID = pa.ProductID AND p.Deleted = 0 WHERE pa.Updated > @Since
-UNION
-SELECT pp.ProductID FROM ProductPricing pp INNER JOIN Product p ON p.ID = pp.ProductID AND p.Deleted = 0 WHERE pp.Updated > @Since OR pp.Created > @Since
-UNION
-SELECT ppg.ProductID FROM ProductProductGroup ppg INNER JOIN Product p ON p.ID = ppg.ProductID AND p.Deleted = 0 WHERE ppg.Updated > @Since OR ppg.Created > @Since
-UNION
-SELECT ps.ProductID FROM ProductSlug ps INNER JOIN Product p ON p.ID = ps.ProductID AND p.Deleted = 0 WHERE ps.Updated > @Since OR ps.Created > @Since
-UNION
-SELECT ppg.ProductID
-FROM PricingProductGroupDiscount ppgd
-INNER JOIN ProductProductGroup ppg ON ppg.ProductGroupID = ppgd.ProductGroupID AND ppg.Deleted = 0
-INNER JOIN Product p ON p.ID = ppg.ProductID AND p.Deleted = 0
-WHERE ppgd.Updated > @Since OR ppgd.Created > @Since
-UNION
-SELECT ppg.ProductID
-FROM ProductGroupDiscount pgd
-INNER JOIN ClientAgreement ca ON ca.ID = pgd.ClientAgreementID AND ca.Deleted = 0
-INNER JOIN Client client ON client.ID = ca.ClientID AND client.IsForRetail = 1 AND client.Deleted = 0
-INNER JOIN ProductProductGroup ppg ON ppg.ProductGroupID = pgd.ProductGroupID AND ppg.Deleted = 0
-INNER JOIN Product p ON p.ID = ppg.ProductID AND p.Deleted = 0
-WHERE pgd.Updated > @Since OR pgd.Created > @Since";
+        IEnumerable<long> directIds = await connection.QueryAsync<long>(
+            DirectChangedProductIdsSql,
+            new { Since = since },
+            commandTimeout: 120);
 
-        IEnumerable<long> ids = await connection.QueryAsync<long>(sql, new { Since = since }, commandTimeout: 120);
-        return ids.AsList();
+        HashSet<long> ids = new(directIds);
+
+        // Pricing/group discount mutations can fan out to every product in an affected
+        // group. Keep that expensive expansion out of the common incremental-sync plan:
+        // first use two index-friendly EXISTS probes, and compile/run the joins only when
+        // a global retail dependency actually changed inside the watermark window.
+        bool hasGlobalDependencyChanges = await connection.ExecuteScalarAsync<bool>(
+            HasGlobalRetailDependencyChangesSql,
+            new { Since = since },
+            commandTimeout: 30);
+
+        if (!hasGlobalDependencyChanges) {
+            return ids.ToList();
+        }
+
+        IEnumerable<long> dependencyIds = await connection.QueryAsync<long>(
+            GlobalRetailDependencyProductIdsSql,
+            new { Since = since },
+            commandTimeout: 120);
+
+        ids.UnionWith(dependencyIds);
+        return ids.ToList();
     }
 
     public async Task<List<ProductSyncData>> GetProductsByIdsAsync(IReadOnlyCollection<long> ids) {
