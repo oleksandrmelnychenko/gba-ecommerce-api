@@ -681,6 +681,14 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             ",[Product].VendorCode " +
             ",[Product].Volume " +
             ",[Product].Weight " +
+            ",(SELECT TOP(1) [Currency].[Code] " +
+            "FROM [ClientAgreement] " +
+            "INNER JOIN [Agreement] ON [Agreement].[ID] = [ClientAgreement].[AgreementID] " +
+            "INNER JOIN [Currency] ON [Currency].[ID] = [Agreement].[CurrencyID] " +
+            "WHERE [ClientAgreement].[NetUID] = @ClientAgreementNetId " +
+            "AND [ClientAgreement].[Deleted] = 0 " +
+            "AND [Agreement].[Deleted] = 0 " +
+            "AND [Currency].[Deleted] = 0) AS [CurrencyCode] " +
             ",ProductPricing.* " +
             ",ProductProductGroup.* " +
             ",ProductSpecification.* " +
@@ -2386,7 +2394,11 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             sqlExpression,
             types,
             mapper,
-            new { Slug = slug, Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName }
+            new {
+                Slug = slug,
+                Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
+                ClientAgreementNetId = clientAgreementNetId ?? Guid.Empty
+            }
         );
 
         if (productToReturn == null) return productToReturn;
@@ -2418,8 +2430,8 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             ",[ProductPricing].* " +
             ",[Pricing].* " +
             ",[ProductPlacement].* " +
-            ",dbo.GetCalculatedProductPriceWithSharesAndVat([Product].NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS ProductCurrentPrice " +
-            ",dbo.GetCalculatedProductLocalPriceWithSharesAndVat([Product].NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS ProductCurrentLocalPrice " +
+            ",ISNULL(dbo.GetCalculatedProductPriceWithSharesAndVat([Product].NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL), 0) AS ProductCurrentPrice " +
+            ",ISNULL(dbo.GetCalculatedProductLocalPriceWithSharesAndVat([Product].NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL), 0) AS ProductCurrentLocalPrice " +
             "FROM [Product] " +
             "LEFT JOIN [ProductOriginalNumber] " +
             "ON [ProductOriginalNumber].ProductID = [Product].ID " +

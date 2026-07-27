@@ -71,6 +71,14 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
         ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
         ApiAssertions.AssertSuccessEnvelope(envelope);
         AssertProductContract(envelope.Body, netUid);
+        Assert.Equal("EUR", ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
+
+        decimal searchPrice = ParseRawProtectedPrice(
+            ApiAssertions.RequiredString(searchProduct, "P"));
+        decimal canonicalPrice = envelope.Body.GetProperty("CurrentPrice").GetDecimal();
+        Assert.Equal(
+            decimal.Round(canonicalPrice, 2, MidpointRounding.AwayFromZero),
+            searchPrice);
     }
 
     [Fact]
@@ -120,6 +128,14 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
         ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
         ApiAssertions.AssertSuccessEnvelope(envelope);
         AssertProductContract(envelope.Body, netUid);
+        Assert.Equal("EUR", ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
+
+        decimal searchPrice = ParseRawProtectedPrice(
+            ApiAssertions.RequiredString(searchProduct, "P"));
+        decimal slugPrice = envelope.Body.GetProperty("CurrentPrice").GetDecimal();
+        Assert.Equal(
+            decimal.Round(slugPrice, 2, MidpointRounding.AwayFromZero),
+            searchPrice);
     }
 
     [Fact]

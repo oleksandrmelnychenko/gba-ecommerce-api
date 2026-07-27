@@ -96,8 +96,34 @@ public sealed class ProductService : IProductService {
 
     public Task<Product> GetProductBySlug(string slug, Guid clientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        if (clientNetId.Equals(Guid.Empty))
-            return Task.FromResult(_productRepositoriesFactory.NewGetSingleProductRepository(connection).GetBySlug(slug, Guid.Empty, Guid.Empty));
+        if (clientNetId.Equals(Guid.Empty)) {
+            Storage storage = _storageRepositoryFactory
+                .NewStorageRepository(connection)
+                .GetWithHighestPriority()
+                ?? throw new InvalidOperationException("No active ecommerce storage is configured.");
+            if (!storage.OrganizationId.HasValue) {
+                throw new InvalidOperationException(
+                    $"Ecommerce storage {storage.Id} has no organization.");
+            }
+
+            Client retailClient = _clientRepositoriesFactory
+                .NewClientRepository(connection)
+                .GetRetailClient()
+                ?? throw new InvalidOperationException("No active retail client is configured.");
+            ClientAgreement retailAgreement = _clientRepositoriesFactory
+                .NewClientAgreementRepository(connection)
+                .GetByClientNetIdWithOrWithoutVat(
+                    retailClient.NetUid,
+                    storage.OrganizationId.Value,
+                    storage.ForVatProducts)
+                ?? throw new InvalidOperationException(
+                    $"No retail agreement matches ecommerce storage {storage.Id}.");
+
+            return Task.FromResult(
+                _productRepositoriesFactory
+                    .NewGetSingleProductRepository(connection)
+                    .GetBySlug(slug, retailAgreement.NetUid));
+        }
 
         IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
