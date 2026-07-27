@@ -24,6 +24,11 @@ namespace GBA.Domain.Repositories.Products;
 public sealed class GetSingleProductRepository : IGetSingleProductRepository {
     private readonly IDbConnection _connection;
 
+    private sealed class ProductPriceAgreementContext {
+        public bool WithVat { get; init; }
+        public string CurrencyCode { get; init; } = string.Empty;
+    }
+
     public GetSingleProductRepository(IDbConnection connection) {
         _connection = connection;
     }
@@ -681,14 +686,6 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             ",[Product].VendorCode " +
             ",[Product].Volume " +
             ",[Product].Weight " +
-            ",(SELECT TOP(1) [Currency].[Code] " +
-            "FROM [ClientAgreement] " +
-            "INNER JOIN [Agreement] ON [Agreement].[ID] = [ClientAgreement].[AgreementID] " +
-            "INNER JOIN [Currency] ON [Currency].[ID] = [Agreement].[CurrencyID] " +
-            "WHERE [ClientAgreement].[NetUID] = @ClientAgreementNetId " +
-            "AND [ClientAgreement].[Deleted] = 0 " +
-            "AND [Agreement].[Deleted] = 0 " +
-            "AND [Currency].[Deleted] = 0) AS [CurrencyCode] " +
             ",ProductPricing.* " +
             ",ProductProductGroup.* " +
             ",ProductSpecification.* " +
@@ -2396,19 +2393,31 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             mapper,
             new {
                 Slug = slug,
-                Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
-                ClientAgreementNetId = clientAgreementNetId ?? Guid.Empty
+                Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName
             }
         );
 
         if (productToReturn == null) return productToReturn;
 
-        bool withVat = clientAgreementNetId.HasValue && _connection.Query<bool>(
-            "SELECT [Agreement].[WithVATAccounting] FROM [ClientAgreement] " +
-            "LEFT JOIN [Agreement] " +
-            "ON [Agreement].[ID] = [ClientAgreement].[AgreementID] " +
-            "WHERE [ClientAgreement].[NetUID] = @NetId; ",
-            new { NetId = clientAgreementNetId.Value }).FirstOrDefault();
+        ProductPriceAgreementContext? agreementContext = clientAgreementNetId.HasValue
+            ? _connection.Query<ProductPriceAgreementContext>(
+                "SELECT TOP(1) " +
+                "[Agreement].[WithVATAccounting] AS [WithVat], " +
+                "[Currency].[Code] AS [CurrencyCode] " +
+                "FROM [ClientAgreement] " +
+                "INNER JOIN [Agreement] " +
+                "ON [Agreement].[ID] = [ClientAgreement].[AgreementID] " +
+                "INNER JOIN [Currency] " +
+                "ON [Currency].[ID] = [Agreement].[CurrencyID] " +
+                "WHERE [ClientAgreement].[NetUID] = @NetId " +
+                "AND [ClientAgreement].[Deleted] = 0 " +
+                "AND [Agreement].[Deleted] = 0 " +
+                "AND [Currency].[Deleted] = 0; ",
+                new { NetId = clientAgreementNetId.Value }).FirstOrDefault()
+            : null;
+
+        bool withVat = agreementContext?.WithVat ?? false;
+        productToReturn.CurrencyCode = agreementContext?.CurrencyCode;
 
         var joinProps = new {
             productToReturn.Id,
