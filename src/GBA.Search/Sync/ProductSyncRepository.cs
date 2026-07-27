@@ -9,6 +9,14 @@ using GBA.Search.Models;
 namespace GBA.Search.Sync;
 
 public sealed class ProductSyncRepository(Func<IDbConnection> connectionFactory) {
+    internal const int SqlParameterBatchSize = 2000;
+
+    internal static IEnumerable<long[]> PartitionProductIds(IReadOnlyCollection<long> ids) {
+        return ids
+            .Distinct()
+            .Chunk(SqlParameterBatchSize);
+    }
+
     public async Task<List<ProductSyncData>> GetAllProductsAsync() {
         using IDbConnection connection = connectionFactory();
         connection.Open();
@@ -445,8 +453,17 @@ LEFT JOIN Pricing pricing ON pricing.ID = rc.PricingId AND pricing.Deleted = 0
 WHERE p.Deleted = 0
 ORDER BY p.ID";
 
-        IEnumerable<ProductSyncData> products = await connection.QueryAsync<ProductSyncData>(sql, new { Ids = ids }, commandTimeout: 120);
-        return products.AsList();
+        List<ProductSyncData> products = [];
+        foreach (long[] batch in PartitionProductIds(ids)) {
+            IEnumerable<ProductSyncData> batchProducts = await connection.QueryAsync<ProductSyncData>(
+                sql,
+                new { Ids = batch },
+                commandTimeout: 120);
+            products.AddRange(batchProducts);
+        }
+
+        products.Sort((left, right) => left.Id.CompareTo(right.Id));
+        return products;
     }
 
     public async Task<List<long>> GetDeletedProductIdsAsync(DateTime since) {
