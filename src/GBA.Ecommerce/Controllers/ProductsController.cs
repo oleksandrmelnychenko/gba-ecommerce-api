@@ -35,6 +35,8 @@ public sealed class ProductsController(
     private const int _defaultSearchLimit = 20;
     private const int _maxSearchLimit = 100;
     private const int _maxSearchOffset = 5000;
+    private const int _defaultSeoIndexLimit = 1000;
+    private const int _maxSeoIndexLimit = 5000;
 
     [HttpGet]
     [AssignActionRoute(ProductsSegments.SEARCH)]
@@ -78,6 +80,27 @@ public sealed class ProductsController(
         }).ToList();
 
         return Ok(SuccessResponseBody(protectedProducts));
+    }
+
+    /// <summary>
+    /// Returns a stable, lightweight list of public product URLs for sitemap generation.
+    /// The response intentionally excludes prices, availability and client-specific data.
+    /// </summary>
+    [HttpGet]
+    [AllowAnonymous]
+    [AssignActionRoute(ProductsSegments.SEO_INDEX)]
+    [OutputCache(PolicyName = "ProductSeoIndex")]
+    [EnableRateLimiting("seo-index")]
+    public async Task<IActionResult> GetSeoIndex(
+        [FromQuery] int limit = _defaultSeoIndexLimit,
+        [FromQuery] long offset = 0) {
+        int safeLimit = limit <= 0
+            ? _defaultSeoIndexLimit
+            : Math.Min(limit, _maxSeoIndexLimit);
+        long safeOffset = Math.Max(offset, 0);
+
+        return Ok(SuccessResponseBody(
+            await productService.GetSeoIndex(safeLimit, safeOffset)));
     }
 
     [HttpGet]

@@ -1061,6 +1061,15 @@ public sealed class ProductService : IProductService {
             }
     }
 
+    public Task<SeoProductIndexPage> GetSeoIndex(int limit, long offset) {
+        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+        SeoProductIndexPage page = _productRepositoriesFactory
+            .NewGetMultipleProductsRepository(connection)
+            .GetSeoIndex(limit, offset);
+
+        return Task.FromResult(page);
+    }
+
     /// <summary>
     /// Optimized search V2 - Ukrainian only, no Polish branches, simplified scoring.
     /// </summary>

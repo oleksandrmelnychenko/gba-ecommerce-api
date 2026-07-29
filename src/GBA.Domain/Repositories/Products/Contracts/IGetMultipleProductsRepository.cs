@@ -132,5 +132,7 @@ public interface IGetMultipleProductsRepository {
 
     List<Product> GetAllLimited(int limit, int offset);
 
+    SeoProductIndexPage GetSeoIndex(int limit, long offset);
+
     long GetTotalQty();
 }

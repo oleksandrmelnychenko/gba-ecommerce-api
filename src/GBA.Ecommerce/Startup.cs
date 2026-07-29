@@ -240,6 +240,17 @@ public class Startup {
                         QueueLimit = 0
                     }));
 
+            options.AddPolicy("seo-index", context =>
+                RateLimitPartition.GetSlidingWindowLimiter(
+                    GetClientPartitionKey(context),
+                    _ => new SlidingWindowRateLimiterOptions {
+                        PermitLimit = 300,
+                        Window = TimeSpan.FromMinutes(1),
+                        SegmentsPerWindow = 6,
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = 0
+                    }));
+
             options.AddPolicy("checkout", context =>
                 RateLimitPartition.GetSlidingWindowLimiter(
                     GetClientPartitionKey(context),
@@ -285,6 +296,13 @@ public class Startup {
                 .Expire(TimeSpan.FromMinutes(2))
                 .SetVaryByRouteValue("culture")
                 .SetVaryByQuery("value", "query", "limit", "offset", "withVat")
+                .Tag("products")
+                .SetLocking(true));
+
+            options.AddPolicy("ProductSeoIndex", builder => builder
+                .With(IsAnonymousGetRequest)
+                .Expire(TimeSpan.FromHours(24))
+                .SetVaryByQuery("limit", "offset")
                 .Tag("products")
                 .SetLocking(true));
 

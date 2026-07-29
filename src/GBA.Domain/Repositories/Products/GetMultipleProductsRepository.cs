@@ -30,6 +30,79 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
         _connection = connection;
     }
 
+    public SeoProductIndexPage GetSeoIndex(int limit, long offset) {
+        const string sql = """
+            SELECT COUNT_BIG(1)
+            FROM [Product]
+            WHERE [Product].[Deleted] = 0
+              AND [Product].[IsForWeb] = 1
+              AND EXISTS (
+                  SELECT 1
+                  FROM [ProductSlug]
+                  WHERE [ProductSlug].[ProductID] = [Product].[ID]
+                    AND [ProductSlug].[Deleted] = 0
+                    AND [ProductSlug].[Locale] IN ('uk', 'ru')
+                    AND NULLIF(LTRIM(RTRIM([ProductSlug].[Url])), '') IS NOT NULL
+              );
+
+            SELECT
+                [Product].[NetUID],
+                [Product].[VendorCode],
+                [SlugUk].[Url] AS [SlugUk],
+                [SlugRu].[Url] AS [SlugRu],
+                (
+                    SELECT MAX([UpdatedAt])
+                    FROM (VALUES
+                        ([Product].[Updated]),
+                        ([SlugUk].[Updated]),
+                        ([SlugRu].[Updated])
+                    ) AS [Updates]([UpdatedAt])
+                ) AS [Updated]
+            FROM [Product]
+            OUTER APPLY (
+                SELECT TOP (1)
+                    [ProductSlug].[Url],
+                    [ProductSlug].[Updated]
+                FROM [ProductSlug]
+                WHERE [ProductSlug].[ProductID] = [Product].[ID]
+                  AND [ProductSlug].[Deleted] = 0
+                  AND [ProductSlug].[Locale] = 'uk'
+                  AND NULLIF(LTRIM(RTRIM([ProductSlug].[Url])), '') IS NOT NULL
+                ORDER BY [ProductSlug].[Updated] DESC, [ProductSlug].[ID] DESC
+            ) AS [SlugUk]
+            OUTER APPLY (
+                SELECT TOP (1)
+                    [ProductSlug].[Url],
+                    [ProductSlug].[Updated]
+                FROM [ProductSlug]
+                WHERE [ProductSlug].[ProductID] = [Product].[ID]
+                  AND [ProductSlug].[Deleted] = 0
+                  AND [ProductSlug].[Locale] = 'ru'
+                  AND NULLIF(LTRIM(RTRIM([ProductSlug].[Url])), '') IS NOT NULL
+                ORDER BY [ProductSlug].[Updated] DESC, [ProductSlug].[ID] DESC
+            ) AS [SlugRu]
+            WHERE [Product].[Deleted] = 0
+              AND [Product].[IsForWeb] = 1
+              AND ([SlugUk].[Url] IS NOT NULL OR [SlugRu].[Url] IS NOT NULL)
+            ORDER BY [Product].[ID]
+            OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY;
+            """;
+
+        using SqlMapper.GridReader result = _connection.QueryMultiple(
+            sql,
+            new {
+                Limit = limit,
+                Offset = offset
+            });
+
+        return new SeoProductIndexPage {
+            TotalCount = result.ReadSingle<long>(),
+            Offset = offset,
+            Limit = limit,
+            Items = result.Read<SeoProductIndexItem>().ToList()
+        };
+    }
+
     public List<OrderItem> GetAllOrderedProductsFiltered(
         DateTime from,
         DateTime to,

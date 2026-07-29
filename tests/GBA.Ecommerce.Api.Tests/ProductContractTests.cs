@@ -36,6 +36,42 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
     }
 
     [Fact]
+    public async Task Product_seo_index_is_anonymous_paged_and_contains_only_public_url_fields() {
+        using HttpResponseMessage response = await _client.GetAsync(
+            _config.ApiPath("products/seo/index?limit=2&offset=0"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
+        ApiAssertions.AssertSuccessEnvelope(envelope);
+        Assert.Equal(JsonValueKind.Object, envelope.Body.ValueKind);
+
+        Assert.True(ApiAssertions.RequiredInt32(envelope.Body, "TotalCount") >= 0);
+        Assert.Equal(0, ApiAssertions.RequiredInt32(envelope.Body, "Offset"));
+        Assert.Equal(2, ApiAssertions.RequiredInt32(envelope.Body, "Limit"));
+
+        JsonElement items = envelope.Body.GetProperty("Items");
+        Assert.Equal(JsonValueKind.Array, items.ValueKind);
+        Assert.True(items.GetArrayLength() <= 2);
+
+        foreach (JsonElement item in items.EnumerateArray()) {
+            ApiAssertions.RequiredGuid(item, "NetUid");
+            Assert.False(string.IsNullOrWhiteSpace(
+                ApiAssertions.RequiredString(item, "VendorCode")));
+            bool hasUkSlug = item.TryGetProperty("SlugUk", out JsonElement slugUk)
+                && slugUk.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(slugUk.GetString());
+            bool hasRuSlug = item.TryGetProperty("SlugRu", out JsonElement slugRu)
+                && slugRu.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(slugRu.GetString());
+            Assert.True(hasUkSlug || hasRuSlug);
+            Assert.True(item.TryGetProperty("Updated", out _));
+            Assert.False(item.TryGetProperty("CurrentPrice", out _));
+            Assert.False(item.TryGetProperty("AvailableQtyUk", out _));
+        }
+    }
+
+    [Fact]
     public async Task Product_search_negative_offset_clamps_safely_when_supported() {
         string url = SearchUrl(_config.SearchQuery, 1, -10);
         using HttpResponseMessage response = await _client.GetAsync(url);

@@ -28,6 +28,8 @@ public interface IProductService {
 
     Task<List<Product>> GetAllByVendorCodes(List<string> vendorCodes, Guid currentClientNetId, long limit, long offset, bool withVat);
 
+    Task<SeoProductIndexPage> GetSeoIndex(int limit, long offset);
+
     Task<List<OrderItem>> GetAllOrderedProductsFiltered(DateTime from, DateTime to, long limit, long offset, Guid clientNetId);
 
     Task<List<ProductHistoryModel>> GetAllOrderedProductsHistoryByClientNetId(Guid netId);
