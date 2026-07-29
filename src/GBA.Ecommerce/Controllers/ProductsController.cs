@@ -76,10 +76,44 @@ public sealed class ProductsController(
         long timestamp = PriceObfuscator.GetTimestamp();
         List<ProtectedSearchProduct> protectedProducts = searchResult.Documents.Select(doc => {
             prices.TryGetValue(doc.Id, out ProductPriceInfo? priceInfo);
-            return DocToProtectedProduct(doc, priceInfo, locale, timestamp);
+            ProductPriceInfo resolvedPrice = ResolveSearchPrice(
+                doc,
+                priceInfo,
+                userNetId == Guid.Empty,
+                withVat.Equals(1));
+            return DocToProtectedProduct(doc, resolvedPrice, locale, timestamp);
         }).ToList();
 
         return Ok(SuccessResponseBody(protectedProducts));
+    }
+
+    internal static ProductPriceInfo ResolveSearchPrice(
+        ProductSearchDocument document,
+        ProductPriceInfo? calculatedPrice,
+        bool isAnonymous,
+        bool withVat) {
+        if (calculatedPrice?.Price > 0 || !isAnonymous) {
+            return calculatedPrice ?? new ProductPriceInfo {
+                Price = 0,
+                CurrencyCode = document.RetailCurrencyCode
+            };
+        }
+
+        // The SQL/UDF price remains authoritative whenever it succeeds. During a retail
+        // configuration or synchronization gap it can temporarily return zero even though
+        // the catalog projection still carries the last successfully calculated retail price.
+        // Preserve storefront availability by using that projection only for anonymous
+        // shoppers and only when the authoritative result is missing/zero.
+        decimal indexedPrice = withVat
+            ? document.RetailPriceVat
+            : document.RetailPrice;
+
+        return new ProductPriceInfo {
+            Price = indexedPrice > 0 ? indexedPrice : calculatedPrice?.Price ?? 0,
+            CurrencyCode = !string.IsNullOrWhiteSpace(document.RetailCurrencyCode)
+                ? document.RetailCurrencyCode
+                : calculatedPrice?.CurrencyCode ?? "EUR"
+        };
     }
 
     /// <summary>
@@ -242,8 +276,7 @@ public sealed class ProductsController(
             OriginalNumbers = doc.OriginalNumbers,
             Image = doc.Image,
             MeasureUnitId = doc.MeasureUnitId,
-            // DEBUG: raw prices (encryption disabled for testing)
-            P = string.Join(",", new[] { price, price, 0m, 0m }.Select(p => p.ToString("F2"))),
+            P = PriceObfuscator.EncodeMultiple([price, price, 0m, 0m], timestamp),
             CurrencyCode = currencyCode,
             T = timestamp,
             ProductSlug = doc.SlugId > 0 ? new ProductSlug {
