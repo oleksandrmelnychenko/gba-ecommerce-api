@@ -96,6 +96,35 @@ public sealed class OfferService : IOfferService {
         return Task.FromResult(offer);
     }
 
+    public Task<ClientShoppingCart> GetOfferForPublicLink(Guid netId) {
+        // Manager-shared offer link: possession of the unguessable ClientShoppingCart.NetUID GUID
+        // is the authorization (same trust model as the anonymous payment-upload links), so there
+        // is no actor ownership check. Expiry/processed guards still apply — a dead link stays dead.
+        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+        ClientShoppingCart offer = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection).GetByNetId(netId);
+
+        if (offer == null) throw new Exception(OfferResourceNames.OFFER_NOT_EXISTS);
+
+        if (offer.ValidUntil < DateTime.Now.Date) throw new Exception(OfferResourceNames.OFFER_EXPIRED);
+
+        if (offer.IsOfferProcessed) throw new Exception(OfferResourceNames.OFFER_PROCESSED);
+
+        foreach (OrderItem orderItem in offer.OrderItems) {
+            orderItem.TotalAmount = decimal.Round(orderItem.Product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+            orderItem.TotalAmountLocal = orderItem.Product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty);
+
+            orderItem.Product.CurrentLocalPrice = decimal.Round(orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
+
+            orderItem.TotalAmount = decimal.Round(orderItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
+            orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
+        }
+
+        offer.TotalAmount = decimal.Round(offer.OrderItems.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero);
+        offer.TotalLocalAmount = decimal.Round(offer.OrderItems.Sum(o => o.TotalAmountLocal), 2, MidpointRounding.AwayFromZero);
+
+        return Task.FromResult(offer);
+    }
+
     public Task<List<ClientShoppingCart>> GetAllAvailableOffersByClientNetId(Guid netId) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
         IClientShoppingCartRepository shoppingCartRepository = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection);
