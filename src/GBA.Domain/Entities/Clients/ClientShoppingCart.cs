@@ -22,6 +22,8 @@ public sealed class ClientShoppingCart : EntityBase {
 
     public DateTime ValidUntil { get; set; }
 
+    public DateTime? ViewedAt { get; set; }
+
     public bool IsOfferProcessed { get; set; }
 
     public bool IsOffer { get; set; }

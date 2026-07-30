@@ -80,6 +80,8 @@ public sealed class OfferService : IOfferService {
 
         if (offer.IsOfferProcessed) throw new Exception(OfferResourceNames.OFFER_PROCESSED);
 
+        StampFirstView(connection, offer);
+
         foreach (OrderItem orderItem in offer.OrderItems) {
             orderItem.TotalAmount = decimal.Round(orderItem.Product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
             orderItem.TotalAmountLocal = orderItem.Product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty);
@@ -109,6 +111,8 @@ public sealed class OfferService : IOfferService {
 
         if (offer.IsOfferProcessed) throw new Exception(OfferResourceNames.OFFER_PROCESSED);
 
+        StampFirstView(connection, offer);
+
         foreach (OrderItem orderItem in offer.OrderItems) {
             orderItem.TotalAmount = decimal.Round(orderItem.Product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
             orderItem.TotalAmountLocal = orderItem.Product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty);
@@ -123,6 +127,14 @@ public sealed class OfferService : IOfferService {
         offer.TotalLocalAmount = decimal.Round(offer.OrderItems.Sum(o => o.TotalAmountLocal), 2, MidpointRounding.AwayFromZero);
 
         return Task.FromResult(offer);
+    }
+
+    // First successful read of a live offer = the client saw it; later reads keep the original stamp.
+    private void StampFirstView(IDbConnection connection, ClientShoppingCart offer) {
+        if (offer.ViewedAt.HasValue) return;
+
+        _clientRepositoriesFactory.NewClientShoppingCartRepository(connection).SetViewedByNetId(offer.NetUid);
+        offer.ViewedAt = DateTime.UtcNow;
     }
 
     public Task<List<ClientShoppingCart>> GetAllAvailableOffersByClientNetId(Guid netId) {

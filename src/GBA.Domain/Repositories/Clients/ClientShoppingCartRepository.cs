@@ -367,6 +367,17 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
         );
     }
 
+    public void SetViewedByNetId(Guid netId) {
+        _connection.Execute(
+            "UPDATE [ClientShoppingCart] " +
+            "SET ViewedAt = GETUTCDATE() " +
+            "WHERE [ClientShoppingCart].NetUID = @NetId " +
+            "AND [ClientShoppingCart].IsOffer = 1 " +
+            "AND [ClientShoppingCart].ViewedAt IS NULL",
+            new { NetId = netId }
+        );
+    }
+
     public bool TrySetProcessedByNetId(Guid netId) {
         return _connection.Execute(
             "UPDATE [ClientShoppingCart] " +
