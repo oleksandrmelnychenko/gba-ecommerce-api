@@ -8,6 +8,18 @@ using GBA.Search.Models;
 
 namespace GBA.Search.Sync;
 
+/// <summary>
+/// Builds the Elasticsearch catalogue projection.
+///
+/// <para>
+/// The AvailableQtyUk/UkVat/Pl/PlVat buckets are restricted to <c>Storage.ForEcommerce = 1</c>.
+/// The shop can only ever reserve from an ecommerce storage
+/// (<c>StorageRepository.GetWithHighestPriority</c>), so summing internal warehouses such as
+/// "Паливо" or "Основні засоби" into the shopper-visible quantity advertised stock that checkout
+/// could not reserve, and hid stock it could. <c>AvailableQty</c> stays unrestricted - it is the
+/// whole-company figure, not a shop promise.
+/// </para>
+/// </summary>
 public sealed class ProductSyncRepository(Func<IDbConnection> connectionFactory) {
     internal const int SqlParameterBatchSize = 2000;
     internal const string DirectChangedProductIdsSql = @"
@@ -135,10 +147,10 @@ SELECT
     p.HasImage,
     ISNULL(p.Image, '') AS Image,
     p.MeasureUnitID AS MeasureUnitId,
-    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'uk' AND s.ForVatProducts = 0), 0) AS AvailableQtyUk,
-    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'uk' AND s.ForVatProducts = 1), 0) AS AvailableQtyUkVat,
-    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'pl' AND s.ForVatProducts = 0), 0) AS AvailableQtyPl,
-    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'pl' AND s.ForVatProducts = 1), 0) AS AvailableQtyPlVat,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.ForEcommerce = 1 AND s.Locale = 'uk' AND s.ForVatProducts = 0), 0) AS AvailableQtyUk,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.ForEcommerce = 1 AND s.Locale = 'uk' AND s.ForVatProducts = 1), 0) AS AvailableQtyUkVat,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.ForEcommerce = 1 AND s.Locale = 'pl' AND s.ForVatProducts = 0), 0) AS AvailableQtyPl,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.ForEcommerce = 1 AND s.Locale = 'pl' AND s.ForVatProducts = 1), 0) AS AvailableQtyPlVat,
     ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0), 0) AS AvailableQty,
     p.IsForWeb,
     p.IsForSale,
@@ -287,10 +299,10 @@ SELECT
     ISNULL(p.UCGFEA, '') AS Ucgfea, ISNULL(p.Volume, '') AS Volume,
     ISNULL(p.[Top], '') AS [Top], ISNULL(p.Weight, 0) AS Weight,
     p.HasAnalogue, p.HasComponent, p.HasImage, ISNULL(p.Image, '') AS Image, p.MeasureUnitID AS MeasureUnitId,
-    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'uk' AND s.ForVatProducts = 0), 0) AS AvailableQtyUk,
-    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'uk' AND s.ForVatProducts = 1), 0) AS AvailableQtyUkVat,
-    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'pl' AND s.ForVatProducts = 0), 0) AS AvailableQtyPl,
-    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'pl' AND s.ForVatProducts = 1), 0) AS AvailableQtyPlVat,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.ForEcommerce = 1 AND s.Locale = 'uk' AND s.ForVatProducts = 0), 0) AS AvailableQtyUk,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.ForEcommerce = 1 AND s.Locale = 'uk' AND s.ForVatProducts = 1), 0) AS AvailableQtyUkVat,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.ForEcommerce = 1 AND s.Locale = 'pl' AND s.ForVatProducts = 0), 0) AS AvailableQtyPl,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.ForEcommerce = 1 AND s.Locale = 'pl' AND s.ForVatProducts = 1), 0) AS AvailableQtyPlVat,
     ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0), 0) AS AvailableQty,
     p.IsForWeb, p.IsForSale, p.IsForZeroSale,
     ISNULL(ps.ID, 0) AS SlugId, ISNULL(ps.NetUID, '00000000-0000-0000-0000-000000000000') AS SlugNetUid,
@@ -444,10 +456,10 @@ SELECT
     ISNULL(p.UCGFEA, '') AS Ucgfea, ISNULL(p.Volume, '') AS Volume,
     ISNULL(p.[Top], '') AS [Top], ISNULL(p.Weight, 0) AS Weight,
     p.HasAnalogue, p.HasComponent, p.HasImage, ISNULL(p.Image, '') AS Image, p.MeasureUnitID AS MeasureUnitId,
-    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'uk' AND s.ForVatProducts = 0), 0) AS AvailableQtyUk,
-    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'uk' AND s.ForVatProducts = 1), 0) AS AvailableQtyUkVat,
-    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'pl' AND s.ForVatProducts = 0), 0) AS AvailableQtyPl,
-    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.Locale = 'pl' AND s.ForVatProducts = 1), 0) AS AvailableQtyPlVat,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.ForEcommerce = 1 AND s.Locale = 'uk' AND s.ForVatProducts = 0), 0) AS AvailableQtyUk,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.ForEcommerce = 1 AND s.Locale = 'uk' AND s.ForVatProducts = 1), 0) AS AvailableQtyUkVat,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.ForEcommerce = 1 AND s.Locale = 'pl' AND s.ForVatProducts = 0), 0) AS AvailableQtyPl,
+    ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.ForEcommerce = 1 AND s.Locale = 'pl' AND s.ForVatProducts = 1), 0) AS AvailableQtyPlVat,
     ISNULL((SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0), 0) AS AvailableQty,
     p.IsForWeb, p.IsForSale, p.IsForZeroSale,
     ISNULL(ps.ID, 0) AS SlugId, ISNULL(ps.NetUID, '00000000-0000-0000-0000-000000000000') AS SlugNetUid,

@@ -68,10 +68,42 @@ public sealed class ProductService : IProductService {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
         if (productNetId.Equals(Guid.Empty)) throw new Exception("There's no such product in database");
 
+        IGetSingleProductRepository productRepository =
+            _productRepositoriesFactory.NewGetSingleProductRepository(connection);
         Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
             .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
 
-        return Task.FromResult(_productRepositoriesFactory.NewGetSingleProductRepository(connection).GetByNetIdForRetail(productNetId, storage.OrganizationId.Value, storage.ForVatProducts));
+        if (storage?.OrganizationId == null) {
+            Product unpricedProduct = productRepository.GetByNetId(productNetId);
+            if (unpricedProduct != null) unpricedProduct.CurrencyCode = EcommerceRetailDefaults.CurrencyCode;
+
+            return Task.FromResult(unpricedProduct);
+        }
+
+        Client retailClient = _clientRepositoriesFactory
+            .NewClientRepository(connection)
+            .GetRetailClient();
+        ClientAgreement retailAgreement = retailClient == null
+            ? null
+            : _clientRepositoriesFactory
+                .NewClientAgreementRepository(connection)
+                .GetByClientNetIdWithOrWithoutVat(
+                    retailClient.NetUid,
+                    storage.OrganizationId.Value,
+                    storage.ForVatProducts);
+
+        if (retailAgreement?.Agreement == null) {
+            Product unpricedProduct = productRepository.GetByNetId(productNetId);
+            if (unpricedProduct != null) unpricedProduct.CurrencyCode = EcommerceRetailDefaults.CurrencyCode;
+
+            return Task.FromResult(unpricedProduct);
+        }
+
+        return Task.FromResult(
+            productRepository.GetByNetIdForRetail(
+                productNetId,
+                storage.OrganizationId.Value,
+                storage.ForVatProducts));
     }
 
     public Task<Product> GetByNetId(Guid productNetId, Guid clientNetId, bool withVat) {
@@ -98,32 +130,33 @@ public sealed class ProductService : IProductService {
     public Task<Product> GetProductBySlug(string slug, Guid clientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
         if (clientNetId.Equals(Guid.Empty)) {
+            IGetSingleProductRepository productRepository =
+                _productRepositoriesFactory.NewGetSingleProductRepository(connection);
             Storage storage = _storageRepositoryFactory
                 .NewStorageRepository(connection)
-                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode)
-                ?? throw new InvalidOperationException("No active ecommerce storage is configured.");
-            if (!storage.OrganizationId.HasValue) {
-                throw new InvalidOperationException(
-                    $"Ecommerce storage {storage.Id} has no organization.");
-            }
+                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
 
             Client retailClient = _clientRepositoriesFactory
                 .NewClientRepository(connection)
-                .GetRetailClient()
-                ?? throw new InvalidOperationException("No active retail client is configured.");
-            ClientAgreement retailAgreement = _clientRepositoriesFactory
-                .NewClientAgreementRepository(connection)
-                .GetByClientNetIdWithOrWithoutVat(
-                    retailClient.NetUid,
-                    storage.OrganizationId.Value,
-                    storage.ForVatProducts)
-                ?? throw new InvalidOperationException(
-                    $"No retail agreement matches ecommerce storage {storage.Id}.");
+                .GetRetailClient();
+            ClientAgreement retailAgreement = storage?.OrganizationId == null || retailClient == null
+                ? null
+                : _clientRepositoriesFactory
+                    .NewClientAgreementRepository(connection)
+                    .GetByClientNetIdWithOrWithoutVat(
+                        retailClient.NetUid,
+                        storage.OrganizationId.Value,
+                        storage.ForVatProducts);
+
+            if (retailAgreement?.Agreement == null) {
+                Product unpricedProduct = productRepository.GetBySlug(slug);
+                if (unpricedProduct != null) unpricedProduct.CurrencyCode = EcommerceRetailDefaults.CurrencyCode;
+
+                return Task.FromResult(unpricedProduct);
+            }
 
             return Task.FromResult(
-                _productRepositoriesFactory
-                    .NewGetSingleProductRepository(connection)
-                    .GetBySlug(slug, retailAgreement.NetUid));
+                productRepository.GetBySlug(slug, retailAgreement.NetUid));
         }
 
         IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
@@ -1155,10 +1188,18 @@ public sealed class ProductService : IProductService {
         Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
             .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
 
+        Client retailClient = _clientRepositoriesFactory
+            .NewClientRepository(connection)
+            .GetRetailClient();
+        if (storage?.OrganizationId == null || retailClient == null)
+            return Task.FromResult(new List<FromSearchProduct>());
+
         ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
-            _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
+            retailClient.NetUid,
             storage.OrganizationId.Value,
             storage.ForVatProducts);
+        if (clientAgreement?.Agreement == null)
+            return Task.FromResult(new List<FromSearchProduct>());
 
         List<FromSearchProduct> analogues = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection)
             .GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPricesForRetail(
@@ -1390,6 +1431,45 @@ public sealed class ProductService : IProductService {
     /// Gets only calculated prices for products (lightweight query for V3 search).
     /// Product data comes from Elasticsearch, this only calculates client-specific prices.
     /// </summary>
+    private sealed record RetailVatMode(bool WithVat, DateTime ExpiresAtUtc);
+
+    private static volatile RetailVatMode _retailVatMode;
+
+    /// <summary>
+    /// The VAT mode the ecommerce surface trades in for this caller. Anonymous shoppers can only
+    /// ever buy from the retail storage returned by GetWithHighestPriority, so its ForVatProducts
+    /// flag - not the browser's withVat query parameter - decides which stock bucket and which
+    /// price they are shown. Signed-in callers get their selected agreement's mode. The anonymous
+    /// answer is cached briefly because it is the same for every shopper and sits on the hot
+    /// search path.
+    /// </summary>
+    public bool GetEffectiveVatMode(Guid clientNetId) {
+        if (clientNetId.Equals(Guid.Empty)) {
+            RetailVatMode cached = _retailVatMode;
+            if (cached != null && cached.ExpiresAtUtc > DateTime.UtcNow) return cached.WithVat;
+        }
+
+        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+
+        if (clientNetId.Equals(Guid.Empty)) {
+            Storage storage = _storageRepositoryFactory
+                .NewStorageRepository(connection)
+                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+            bool retailWithVat = storage?.ForVatProducts ?? false;
+            _retailVatMode = new RetailVatMode(retailWithVat, DateTime.UtcNow.AddMinutes(5));
+
+            return retailWithVat;
+        }
+
+        IClientAgreementRepository agreementRepository =
+            _clientRepositoriesFactory.NewClientAgreementRepository(connection);
+        ClientAgreement clientAgreement =
+            agreementRepository.GetSelectedByClientNetId(clientNetId)
+            ?? agreementRepository.GetSelectedByWorkplaceNetId(clientNetId);
+
+        return clientAgreement?.Agreement?.WithVATAccounting ?? false;
+    }
+
     public Dictionary<long, ProductPriceInfo> GetPricesOnly(List<long> productIds, Guid currentClientNetId, bool withVat, string culture = "uk") {
         if (productIds == null || productIds.Count == 0)
             return new Dictionary<long, ProductPriceInfo>();
@@ -1402,13 +1482,23 @@ public sealed class ProductService : IProductService {
             // Retail user - match V1 behavior: use storage.ForVatProducts for agreement selection
             Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
                 .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+            Client retailClient = _clientRepositoriesFactory
+                .NewClientRepository(connection)
+                .GetRetailClient();
+
+            // A freshly rebuilt environment can expose the product index before the retail
+            // storage/client reference data has finished synchronizing. Product discovery must
+            // remain available, but prices stay absent so checkout continues to fail closed.
+            if (storage?.OrganizationId == null || retailClient == null)
+                return new Dictionary<long, ProductPriceInfo>();
 
             ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
-                _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
+                retailClient.NetUid,
                 storage.OrganizationId.Value,
                 storage.ForVatProducts);
 
-            if (clientAgreement == null) return new Dictionary<long, ProductPriceInfo>();
+            if (clientAgreement?.Agreement == null)
+                return new Dictionary<long, ProductPriceInfo>();
 
             return optimizedRepo.GetPricesOnlyForRetail(
                 productIds,
@@ -1432,7 +1522,8 @@ public sealed class ProductService : IProductService {
             clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
                               clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
 
-            if (clientAgreement == null) return new Dictionary<long, ProductPriceInfo>();
+            if (clientAgreement?.Agreement == null)
+                return new Dictionary<long, ProductPriceInfo>();
 
             return optimizedRepo.GetPricesOnly(
                 productIds,

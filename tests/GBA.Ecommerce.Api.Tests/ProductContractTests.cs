@@ -1,5 +1,4 @@
 using System;
-using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Text.Json;
@@ -109,12 +108,10 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
         AssertProductContract(envelope.Body, netUid);
         Assert.Equal("EUR", ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
 
-        decimal searchPrice = ParseRawProtectedPrice(
-            ApiAssertions.RequiredString(searchProduct, "P"));
-        decimal canonicalPrice = envelope.Body.GetProperty("CurrentPrice").GetDecimal();
+        AssertOpaqueProtectedPrice(searchProduct);
         Assert.Equal(
-            decimal.Round(canonicalPrice, 2, MidpointRounding.AwayFromZero),
-            searchPrice);
+            JsonValueKind.Number,
+            envelope.Body.GetProperty("CurrentPrice").ValueKind);
     }
 
     [Fact]
@@ -134,13 +131,10 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
         ApiAssertions.AssertSuccessEnvelope(envelope);
         Assert.Equal("EUR", ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
 
-        decimal searchPrice = ParseRawProtectedPrice(
-            ApiAssertions.RequiredString(searchProduct, "P"));
-        decimal canonicalPrice = envelope.Body.GetProperty("CurrentPrice").GetDecimal();
-
+        AssertOpaqueProtectedPrice(searchProduct);
         Assert.Equal(
-            decimal.Round(canonicalPrice, 2, MidpointRounding.AwayFromZero),
-            searchPrice);
+            JsonValueKind.Number,
+            envelope.Body.GetProperty("CurrentPrice").ValueKind);
     }
 
     [Fact]
@@ -166,12 +160,10 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
         AssertProductContract(envelope.Body, netUid);
         Assert.Equal("EUR", ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
 
-        decimal searchPrice = ParseRawProtectedPrice(
-            ApiAssertions.RequiredString(searchProduct, "P"));
-        decimal slugPrice = envelope.Body.GetProperty("CurrentPrice").GetDecimal();
+        AssertOpaqueProtectedPrice(searchProduct);
         Assert.Equal(
-            decimal.Round(slugPrice, 2, MidpointRounding.AwayFromZero),
-            searchPrice);
+            JsonValueKind.Number,
+            envelope.Body.GetProperty("CurrentPrice").ValueKind);
     }
 
     [Fact]
@@ -274,13 +266,17 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
         Assert.Equal(JsonValueKind.Number, property.ValueKind);
     }
 
-    private static decimal ParseRawProtectedPrice(string protectedPrice) {
-        string[] parts = protectedPrice.Split(',');
-        Assert.True(parts.Length >= 2, "Protected retail price has an invalid format.");
+    private static void AssertOpaqueProtectedPrice(JsonElement product) {
+        string protectedPrice = ApiAssertions.RequiredString(product, "P");
+        Assert.True(
+            protectedPrice.Length >= 32,
+            "Protected retail price must remain opaque.");
+        Assert.DoesNotContain(",", protectedPrice, StringComparison.Ordinal);
+        Assert.False(product.TryGetProperty("CurrentPrice", out _));
+        Assert.False(product.TryGetProperty("CurrentLocalPrice", out _));
 
-        return decimal.Parse(
-            $"{parts[0]}.{parts[1]}",
-            NumberStyles.Number,
-            CultureInfo.InvariantCulture);
+        long timestamp = product.GetProperty("T").GetInt64();
+        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        Assert.InRange(timestamp, now - 300, now + 300);
     }
 }

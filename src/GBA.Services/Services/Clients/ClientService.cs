@@ -128,13 +128,17 @@ public sealed class ClientService : IClientService {
             List<OrderItem> orderItems = JsonSerializer.Deserialize<List<OrderItem>>(client.ShoppingCartJson, _jsonSerializerOptions) ?? new List<OrderItem>();
             List<OrderItem> anyOrderItems = new();
 
+            // IsMisplacedItem means "not on hand at the checkout storage, so it becomes a
+            // backorder" - it is flagged on ABSENCE of availability, the same direction as
+            // OrderService.RemoveUnavailableProducts and GenerateNewRetailSale. Reading the cart
+            // must not drop lines either: an out-of-stock line stays in the cart as a backorder
+            // instead of silently disappearing.
             foreach (OrderItem orderItem in orderItems.Where(i => i.IsNew() && i.Qty > 0)) {
                 ProductAvailability productAvailability =
                     productAvailabilityRepository.GetByProductAndStorageIds(orderItem.Product.Id, storage.Id);
-                if (productAvailability != null && !productAvailability.Amount.Equals(0)) {
-                    orderItem.IsMisplacedItem = true;
-                    anyOrderItems.Add(orderItem);
-                }
+
+                orderItem.IsMisplacedItem = productAvailability == null || productAvailability.Amount.Equals(0);
+                anyOrderItems.Add(orderItem);
             }
 
             client.ShoppingCartJson = JsonSerializer.Serialize(anyOrderItems);
@@ -200,10 +204,16 @@ public sealed class ClientService : IClientService {
 
             orderItems = await _orderService.RemoveUnavailableProducts(orderItems, 0);
 
+            // TotalAmount is the agreement-currency figure everywhere else in the order model
+            // (TotalAmountLocal carries the UAH one), so this summary must use CurrentPrice.
+            // It read CurrentLocalPrice only because the local price used to be identical to it.
             if (!orderItems.All(o => o.IsMisplacedItem))
-                orderItems.First().TotalAmount = orderItems
-                    .Where(o => !o.IsMisplacedItem)
-                    .Sum(o => o.Product.CurrentLocalPrice * Convert.ToDecimal(o.Qty));
+                orderItems.First().TotalAmount = decimal.Round(
+                    orderItems
+                        .Where(o => !o.IsMisplacedItem)
+                        .Sum(o => o.Product.CurrentPrice * Convert.ToDecimal(o.Qty)),
+                    2,
+                    MidpointRounding.AwayFromZero);
 
             client.ShoppingCartJson = JsonSerializer.Serialize(orderItems);
 

@@ -19,6 +19,7 @@ using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.Clients;
 using GBA.Domain.Entities.Delivery;
+using GBA.Domain.Entities.ExchangeRates;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.Entities.Sales.LifeCycleStatuses;
@@ -97,6 +98,24 @@ public sealed class OrderService : IOrderService {
         _clientResourceAccessService = clientResourceAccessService;
     }
 
+    /// <summary>
+    /// Resolves the booked FX rate from the ExchangeRate table for the given agreement currency in
+    /// the current culture. The rate is server-authoritative and is NOT derived from
+    /// CurrentLocalPrice / CurrentPrice: dbo.GetCalculatedProductLocalPriceWithSharesAndVat
+    /// currently returns the agreement-currency price unchanged, so that ratio booked every EUR
+    /// sale at 1 EUR = 1 UAH. Returns 0 when no rate row exists (the agreement is already in the
+    /// local currency), in which case the caller keeps the repository's local price.
+    /// </summary>
+    private decimal ResolveLocalExchangeRate(IDbConnection connection, string currencyCode) {
+        if (string.IsNullOrWhiteSpace(currencyCode)) return 0m;
+
+        ExchangeRate exchangeRate = _exchangeRateRepositoriesFactory
+            .NewExchangeRateRepository(connection)
+            .GetByCurrencyCodeAndCurrentCulture(currencyCode);
+
+        return exchangeRate != null && exchangeRate.Amount > 0m ? exchangeRate.Amount : 0m;
+    }
+
     private OrderItem ApplyAuthoritativeRetailProduct(
         IDbConnection connection,
         Storage storage,
@@ -111,16 +130,23 @@ public sealed class OrderService : IOrderService {
         Product product = _productRepositoriesFactory
             .NewGetSingleProductRepository(connection)
             .GetByNetIdForRetail(orderItem.Product.NetUid, storage.OrganizationId.Value, withVat);
-        if (product == null || !product.IsForWeb || !product.IsForSale)
-            throw new ArgumentException("The requested product is not available for ecommerce.");
+        if (!EcommercePurchasability.IsPurchasable(product))
+            throw new ArgumentException(EcommercePurchasability.NotAvailableMessage);
+        if (!EcommercePurchasability.HasSellablePrice(product))
+            throw new ArgumentException(EcommercePurchasability.NotPricedMessage);
+
+        decimal exchangeRateAmount = ResolveLocalExchangeRate(connection, product.CurrencyCode);
+        if (exchangeRateAmount > 0m)
+            product.CurrentLocalPrice = decimal.Round(
+                product.CurrentPrice * exchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
         // All commercial fields are server-authoritative. The browser only selects
         // the product capability and quantity.
         orderItem.Product = product;
         orderItem.ProductId = product.Id;
         orderItem.PricePerItem = product.CurrentPrice;
-        orderItem.ExchangeRateAmount = product.CurrentPrice == 0
-            ? 1
+        orderItem.ExchangeRateAmount = exchangeRateAmount > 0m
+            ? exchangeRateAmount
             : decimal.Round(product.CurrentLocalPrice / product.CurrentPrice, 14, MidpointRounding.AwayFromZero);
         orderItem.TotalAmount = decimal.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
         orderItem.TotalAmountLocal = decimal.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
@@ -160,14 +186,22 @@ public sealed class OrderService : IOrderService {
                 clientAgreement.Agreement.WithVATAccounting,
                 clientAgreement.Agreement.CurrencyId,
                 clientAgreement.Agreement.OrganizationId);
-        if (product == null || !product.IsForWeb || !product.IsForSale)
-            throw new ArgumentException("The requested product is not available for ecommerce.");
+        if (!EcommercePurchasability.IsPurchasable(product))
+            throw new ArgumentException(EcommercePurchasability.NotAvailableMessage);
+        if (!EcommercePurchasability.HasSellablePrice(product))
+            throw new ArgumentException(EcommercePurchasability.NotPricedMessage);
+
+        decimal exchangeRateAmount = ResolveLocalExchangeRate(
+            connection, clientAgreement.Agreement.Currency?.Code ?? product.CurrencyCode);
+        if (exchangeRateAmount > 0m)
+            product.CurrentLocalPrice = decimal.Round(
+                product.CurrentPrice * exchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
         orderItem.Product = product;
         orderItem.ProductId = product.Id;
         orderItem.PricePerItem = product.CurrentPrice;
-        orderItem.ExchangeRateAmount = product.CurrentPrice == 0
-            ? 1
+        orderItem.ExchangeRateAmount = exchangeRateAmount > 0m
+            ? exchangeRateAmount
             : decimal.Round(product.CurrentLocalPrice / product.CurrentPrice, 14, MidpointRounding.AwayFromZero);
         orderItem.TotalAmount = decimal.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
         orderItem.TotalAmountLocal = decimal.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
@@ -380,23 +414,70 @@ public sealed class OrderService : IOrderService {
             return Task.FromResult(sale);
     }
 
-    public Task<Order> DynamicallyCalculateTotalPrices(Order order) {
-        for (int i = 0; i < order.OrderItems.Count; i++)
-            if (order.OrderItems.ElementAt(i).Product != null) {
-                order.OrderItems.ElementAt(i).TotalAmount =
-                    Math.Round(order.OrderItems.ElementAt(i).Product.CurrentPrice * Convert.ToDecimal(order.OrderItems.ElementAt(i).Qty), 2);
-                order.OrderItems.ElementAt(i).TotalAmountLocal =
-                    Math.Round(order.OrderItems.ElementAt(i).Product.CurrentLocalPrice * Convert.ToDecimal(order.OrderItems.ElementAt(i).Qty), 2);
-                order.OrderItems.ElementAt(i).OverLordTotalAmount =
-                    Math.Round(order.OrderItems.ElementAt(i).Product.CurrentPrice * Convert.ToDecimal(order.OrderItems.ElementAt(i).OverLordQty), 2);
-                order.OrderItems.ElementAt(i).OverLordTotalAmountLocal =
-                    Math.Round(order.OrderItems.ElementAt(i).Product.CurrentLocalPrice * Convert.ToDecimal(order.OrderItems.ElementAt(i).OverLordQty), 2);
+    /// <summary>
+    /// Totals for the cart / checkout preview. The endpoint that calls this is anonymous, so every
+    /// price in the request body is untrusted input and is discarded: each line is re-resolved from
+    /// the database through the same authoritative path checkout uses - the retail
+    /// storage/agreement for anonymous callers, the caller's own agreement when signed in. The
+    /// browser only chooses the product and the quantity, never the price, discount, VAT or FX rate.
+    /// The running totals also start from zero so a caller cannot seed them.
+    /// </summary>
+    public Task<Order> DynamicallyCalculateTotalPrices(Order order, Guid clientNetId) {
+        if (order?.OrderItems == null || order.OrderItems.Count == 0)
+            throw new ArgumentException("Order must contain between 1 and 100 items.");
+        if (order.OrderItems.Count > 100)
+            throw new ArgumentException("Order must contain between 1 and 100 items.");
+        if (order.OrderItems.Any(orderItem =>
+                orderItem?.Product == null ||
+                orderItem.Product.NetUid == Guid.Empty))
+            throw new ArgumentException("Every order item must reference a valid product.");
 
-                order.TotalAmount = Math.Round(order.TotalAmount + order.OrderItems.ElementAt(i).TotalAmount, 2);
-                order.TotalAmountLocal = Math.Round(order.TotalAmountLocal + order.OrderItems.ElementAt(i).TotalAmountLocal, 2);
-                order.OverLordTotalAmount = Math.Round(order.OverLordTotalAmount + order.OrderItems.ElementAt(i).OverLordTotalAmount, 2);
-                order.OverLordTotalAmountLocal = Math.Round(order.OverLordTotalAmountLocal + order.OrderItems.ElementAt(i).OverLordTotalAmountLocal, 2);
-            }
+        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+
+        IClientAgreementRepository clientAgreementRepository =
+            _clientRepositoriesFactory.NewClientAgreementRepository(connection);
+
+        ClientAgreement clientAgreement = clientNetId == Guid.Empty
+            ? null
+            : clientAgreementRepository.GetSelectedByClientNetId(clientNetId)
+              ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(clientNetId);
+
+        Storage storage = null;
+        bool withVat = false;
+
+        if (clientAgreement == null) {
+            storage = _storageRepositoryFactory
+                .NewStorageRepository(connection)
+                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+            if (storage == null || !storage.OrganizationId.HasValue)
+                throw new InvalidOperationException("Retail storage is not configured.");
+
+            withVat = storage.ForVatProducts;
+        }
+
+        order.TotalAmount = 0m;
+        order.TotalAmountLocal = 0m;
+        order.OverLordTotalAmount = 0m;
+        order.OverLordTotalAmountLocal = 0m;
+
+        foreach (OrderItem orderItem in order.OrderItems) {
+            if (clientAgreement == null)
+                ApplyAuthoritativeRetailProduct(connection, storage, withVat, orderItem);
+            else
+                ApplyAuthoritativeClientProduct(connection, clientAgreement, orderItem);
+
+            if (orderItem.OverLordQty <= 0) orderItem.OverLordQty = orderItem.Qty;
+
+            orderItem.OverLordTotalAmount = decimal.Round(
+                orderItem.PricePerItem * Convert.ToDecimal(orderItem.OverLordQty), 2, MidpointRounding.AwayFromZero);
+            orderItem.OverLordTotalAmountLocal = decimal.Round(
+                orderItem.Product.CurrentLocalPrice * Convert.ToDecimal(orderItem.OverLordQty), 2, MidpointRounding.AwayFromZero);
+
+            order.TotalAmount = decimal.Round(order.TotalAmount + orderItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
+            order.TotalAmountLocal = decimal.Round(order.TotalAmountLocal + orderItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
+            order.OverLordTotalAmount = decimal.Round(order.OverLordTotalAmount + orderItem.OverLordTotalAmount, 2, MidpointRounding.AwayFromZero);
+            order.OverLordTotalAmountLocal = decimal.Round(order.OverLordTotalAmountLocal + orderItem.OverLordTotalAmountLocal, 2, MidpointRounding.AwayFromZero);
+        }
 
         return Task.FromResult(order);
     }

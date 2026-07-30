@@ -44,5 +44,12 @@ public interface IProductService {
     /// Gets only calculated prices for products (lightweight query for V3 search).
     /// Product data comes from Elasticsearch, this only calculates client-specific prices.
     /// </summary>
+    /// <summary>
+    /// The VAT mode the ecommerce surface actually trades in for this caller: the retail storage's
+    /// mode for anonymous shoppers, the selected agreement's mode when signed in. Resolved on the
+    /// server so prices and availability describe the same storage set checkout reserves from.
+    /// </summary>
+    bool GetEffectiveVatMode(Guid clientNetId);
+
     Dictionary<long, ProductPriceInfo> GetPricesOnly(List<long> productIds, Guid currentClientNetId, bool withVat, string culture = "uk");
 }

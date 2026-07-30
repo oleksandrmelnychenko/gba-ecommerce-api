@@ -15,6 +15,7 @@ using GBA.Common.Search;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.Clients;
+using GBA.Domain.Entities.ExchangeRates;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.Repositories.Agreements.Contracts;
@@ -43,6 +44,23 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         return orderItem;
     }
 
+    /// <summary>
+    /// Resolves the booked FX rate from the ExchangeRate table for the agreement currency in the
+    /// current culture. Server-authoritative, and deliberately not derived from
+    /// CurrentLocalPrice / CurrentPrice - that ratio is currently 1 for EUR agreements because the
+    /// local-price UDF returns the agreement-currency price unchanged. Returns 0 when the currency
+    /// has no rate row, in which case the caller keeps the repository's local price.
+    /// </summary>
+    private decimal ResolveLocalExchangeRate(IDbConnection connection, string currencyCode) {
+        if (string.IsNullOrWhiteSpace(currencyCode)) return 0m;
+
+        ExchangeRate exchangeRate = _exchangeRateRepositoriesFactory
+            .NewExchangeRateRepository(connection)
+            .GetByCurrencyCodeAndCurrentCulture(currencyCode);
+
+        return exchangeRate != null && exchangeRate.Amount > 0m ? exchangeRate.Amount : 0m;
+    }
+
     private OrderItem ApplyAuthoritativeProduct(
         IDbConnection connection,
         ClientAgreement clientAgreement,
@@ -65,14 +83,22 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             clientAgreement.Agreement.WithVATAccounting,
             clientAgreement.Agreement.CurrencyId,
             clientAgreement.Agreement.OrganizationId);
-        if (product == null || !product.IsForWeb || !product.IsForSale)
-            throw new ArgumentException("The requested product is not available for ecommerce.");
+        if (!EcommercePurchasability.IsPurchasable(product))
+            throw new ArgumentException(EcommercePurchasability.NotAvailableMessage);
+        if (!EcommercePurchasability.HasSellablePrice(product))
+            throw new ArgumentException(EcommercePurchasability.NotPricedMessage);
+
+        decimal exchangeRateAmount = ResolveLocalExchangeRate(
+            connection, clientAgreement.Agreement.Currency?.Code ?? product.CurrencyCode);
+        if (exchangeRateAmount > 0m)
+            product.CurrentLocalPrice = decimal.Round(
+                product.CurrentPrice * exchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
         orderItem.Product = product;
         orderItem.ProductId = product.Id;
         orderItem.PricePerItem = product.CurrentPrice;
-        orderItem.ExchangeRateAmount = product.CurrentPrice == 0
-            ? 1
+        orderItem.ExchangeRateAmount = exchangeRateAmount > 0m
+            ? exchangeRateAmount
             : decimal.Round(product.CurrentLocalPrice / product.CurrentPrice, 14, MidpointRounding.AwayFromZero);
         orderItem.TotalAmount = decimal.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
         orderItem.TotalAmountLocal = decimal.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);

@@ -144,7 +144,7 @@ public sealed class OrdersController(
     [Consumes("application/json")]
     [RequestSizeLimit(524288)]
     public async Task<IActionResult> CalculateTotalsForOrderAsync([FromBody] Order order) {
-        return Ok(SuccessResponseBody(await orderService.DynamicallyCalculateTotalPrices(order)));
+        return Ok(SuccessResponseBody(await orderService.DynamicallyCalculateTotalPrices(order, GetUserNetId())));
     }
 
     [HttpGet]

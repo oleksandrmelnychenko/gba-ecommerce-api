@@ -103,13 +103,14 @@ public sealed class ReadOnlyContractTests(EcommerceApiFixture fixture) : IClassF
     }
 
     [Fact]
-    public async Task Order_calculate_uses_request_prices_without_creating_sale() {
+    public async Task Order_calculate_discards_request_prices() {
         var payload = new {
             OrderItems = new[] {
                 new {
                     Qty = 2,
                     OverLordQty = 2,
                     Product = new {
+                        NetUid = Guid.Empty,
                         CurrentPrice = 10,
                         CurrentLocalPrice = 400
                     }
@@ -119,16 +120,13 @@ public sealed class ReadOnlyContractTests(EcommerceApiFixture fixture) : IClassF
 
         using HttpResponseMessage response = await _client.PostAsJsonAsync(_config.ApiPath("orders/calculate"), payload);
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        // The server is the pricing authority: an order body that names no resolvable product is
+        // rejected rather than echoed back at the caller's own prices.
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
-        ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
-        ApiAssertions.AssertSuccessEnvelope(envelope);
-
-        Assert.Equal(20m, ApiAssertions.RequiredDecimal(envelope.Body, "TotalAmount"));
-        Assert.Equal(800m, ApiAssertions.RequiredDecimal(envelope.Body, "TotalAmountLocal"));
-
-        Assert.True(envelope.Body.TryGetProperty("OrderItems", out JsonElement items));
-        Assert.Single(items.EnumerateArray());
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("\"TotalAmount\":20", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"TotalAmountLocal\":800", body, StringComparison.Ordinal);
     }
 
     [Fact]

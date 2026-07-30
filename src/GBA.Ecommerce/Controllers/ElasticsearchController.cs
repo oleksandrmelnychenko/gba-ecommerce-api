@@ -8,7 +8,7 @@ using GBA.Search.Configuration;
 using GBA.Search.Elasticsearch;
 using GBA.Search.Models;
 using GBA.Search.Sync;
-using GBA.Common.IdentityConfiguration.Roles;
+using GBA.Common.IdentityConfiguration.Policies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.OutputCaching;
@@ -18,7 +18,7 @@ using Microsoft.Extensions.Options;
 namespace GBA.Ecommerce.Controllers;
 
 [AssignControllerRoute(WebApiEnvironmnet.Current, WebApiVersion.ApiVersion1, "elasticsearch")]
-[Authorize(Roles = IdentityRoles.Administrator)]
+[Authorize(Roles = DefaultPolicies.AdministrativeRolesPolicy)]
 public sealed class ElasticsearchController(
     IElasticsearchIndexService indexService,
     IElasticsearchSyncService syncService,

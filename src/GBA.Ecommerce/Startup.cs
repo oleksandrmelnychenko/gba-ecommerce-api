@@ -122,6 +122,8 @@ public class Startup {
     private const int _maxCachedSearchOffset = 5000;
     private const int _maxCachedSearchTermLength = 128;
 
+    private static readonly string[] _callerDiscriminatorQueryKeys = { "clientNetId", "netId" };
+
     private readonly IWebHostEnvironment _environment;
 
     public Startup(IWebHostEnvironment env) {
@@ -594,6 +596,25 @@ public class Startup {
                && parsed <= maxValue;
     }
 
+    /// <summary>
+    /// Rate-limit partition key. It has to identify the CALLER, not the hop in front of it.
+    ///
+    /// <para>
+    /// Every shopper request reaches this API through the storefront's Next.js proxy, which runs
+    /// in a container on the private network. When that proxy forwards no client-IP header, the
+    /// peer address is the same for all of them and the whole shop shares one bucket - so the
+    /// "checkout" policy meant 20 sign-ups plus orders plus payment uploads per minute for ALL
+    /// customers together, and the 21st shopper was rejected because of strangers. The proxy now
+    /// forwards X-Forwarded-For / X-Real-IP; this method keeps honouring those headers only when
+    /// the peer itself is private or loopback, i.e. the request genuinely came through our own
+    /// front end, so an internet caller cannot spoof its way into someone else's bucket.
+    /// </para>
+    /// <para>
+    /// If the header is still missing, fall back to whatever caller identity the request carries
+    /// before giving up on the peer address, so the failure mode is a per-shopper bucket rather
+    /// than one global bucket. The permit limits themselves are unchanged.
+    /// </para>
+    /// </summary>
     private static string GetClientPartitionKey(HttpContext context) {
         IPAddress? remoteIp = context.Connection.RemoteIpAddress;
 
@@ -605,9 +626,25 @@ public class Startup {
             if (!string.IsNullOrWhiteSpace(forwardedIp)) {
                 return forwardedIp;
             }
+
+            string? callerId = GetCallerDiscriminator(context);
+            if (!string.IsNullOrWhiteSpace(callerId)) {
+                return $"caller:{callerId}";
+            }
         }
 
         return remoteIp?.ToString() ?? "unknown";
+    }
+
+    private static string? GetCallerDiscriminator(HttpContext context) {
+        foreach (string key in _callerDiscriminatorQueryKeys) {
+            string? value = context.Request.Query[key].FirstOrDefault();
+            if (Guid.TryParse(value, out Guid parsed) && parsed != Guid.Empty) {
+                return parsed.ToString("N");
+            }
+        }
+
+        return null;
     }
 
     private static string? GetFirstHeaderIp(HttpContext context, string headerName) {

@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Buffers.Text;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -19,15 +20,21 @@ public static class PriceObfuscator {
     private static byte[] Key => _cachedKey ??= Encoding.UTF8.GetBytes(SecuritySettings.Instance.PriceEncryptionKey);
     private static byte[] Iv => _cachedIv ??= Encoding.UTF8.GetBytes(SecuritySettings.Instance.PriceEncryptionIV);
 
+    // The payload is a machine-readable wire format, never a display string. Prices MUST be
+    // formatted and parsed with InvariantCulture: every request runs under the "uk" culture
+    // (Startup.ConfigureRequestLocalization + UrlCultureProvider), whose decimal separator is ','
+    // - the same character used to separate the prices - which made the payload self-ambiguous.
+    private static readonly CultureInfo _wireCulture = CultureInfo.InvariantCulture;
+
     public static string Encode(decimal price, long timestamp) {
         // Format: "price|timestamp" - max ~30 chars
         Span<char> dataBuffer = stackalloc char[64];
         int written = 0;
 
-        price.TryFormat(dataBuffer, out int priceLen, "F2");
+        price.TryFormat(dataBuffer, out int priceLen, "F2", _wireCulture);
         written += priceLen;
         dataBuffer[written++] = '|';
-        timestamp.TryFormat(dataBuffer[written..], out int tsLen);
+        timestamp.TryFormat(dataBuffer[written..], out int tsLen, default, _wireCulture);
         written += tsLen;
 
         // Convert to UTF8 bytes
@@ -49,12 +56,12 @@ public static class PriceObfuscator {
 
         for (int i = 0; i < prices.Length; i++) {
             if (i > 0) dataBuffer[written++] = ',';
-            prices[i].TryFormat(dataBuffer[written..], out int len, "F2");
+            prices[i].TryFormat(dataBuffer[written..], out int len, "F2", _wireCulture);
             written += len;
         }
 
         dataBuffer[written++] = '|';
-        timestamp.TryFormat(dataBuffer[written..], out int tsLen);
+        timestamp.TryFormat(dataBuffer[written..], out int tsLen, default, _wireCulture);
         written += tsLen;
 
         // Convert to UTF8 bytes
@@ -101,7 +108,9 @@ public static class PriceObfuscator {
 
             if (pipeIndex < 0) return null;
 
-            return (decimal.Parse(data[..pipeIndex]), long.Parse(data[(pipeIndex + 1)..]));
+            return (
+                decimal.Parse(data[..pipeIndex], NumberStyles.Number, _wireCulture),
+                long.Parse(data[(pipeIndex + 1)..], NumberStyles.Integer, _wireCulture));
         } catch {
             return null;
         }

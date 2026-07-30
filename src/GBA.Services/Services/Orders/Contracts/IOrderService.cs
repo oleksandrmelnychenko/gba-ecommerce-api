@@ -12,7 +12,7 @@ public interface IOrderService {
 
     Task<Sale> GenerateNewSaleWithInvoice(Sale sale, Guid clientNetId, bool isWorkplace);
 
-    Task<Order> DynamicallyCalculateTotalPrices(Order order);
+    Task<Order> DynamicallyCalculateTotalPrices(Order order, Guid clientNetId);
 
     Task<string> GenerateNewQuickSaleWithInvoice(Sale sale, Guid retailClientNetId, bool fullPayment);
 

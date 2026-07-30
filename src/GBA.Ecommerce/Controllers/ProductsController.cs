@@ -9,6 +9,7 @@ using GBA.Common.IdentityConfiguration.Roles;
 using GBA.Common.ResponseBuilder.Contracts;
 using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
+using GBA.Domain.Entities;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.EntityHelpers;
 using GBA.Domain.Repositories.Products;
@@ -73,6 +74,14 @@ public sealed class ProductsController(
             locale,
             ids => productService.GetPricesOnly(ids, userNetId, withVat.Equals(1), locale));
 
+        // The VAT mode that decides which stock bucket a caller may buy from is resolved on the
+        // server (retail storage for anonymous shoppers, the caller's agreement when signed in),
+        // exactly like the price above. The browser's withVat parameter is not trusted for it.
+        bool effectiveWithVat = productService.GetEffectiveVatMode(userNetId);
+        string fallbackCurrencyCode = userNetId == Guid.Empty
+            ? EcommerceRetailDefaults.CurrencyCode
+            : "UAH";
+
         long timestamp = PriceObfuscator.GetTimestamp();
         List<ProtectedSearchProduct> protectedProducts = searchResult.Documents.Select(doc => {
             prices.TryGetValue(doc.Id, out ProductPriceInfo? priceInfo);
@@ -81,7 +90,13 @@ public sealed class ProductsController(
                 priceInfo,
                 userNetId == Guid.Empty,
                 withVat.Equals(1));
-            return DocToProtectedProduct(doc, resolvedPrice, locale, timestamp);
+            return DocToProtectedProduct(
+                doc,
+                resolvedPrice,
+                locale,
+                timestamp,
+                effectiveWithVat,
+                fallbackCurrencyCode);
         }).ToList();
 
         return Ok(SuccessResponseBody(protectedProducts));
@@ -243,10 +258,20 @@ public sealed class ProductsController(
         ProductSearchDocument doc,
         ProductPriceInfo? priceInfo,
         string locale,
-        long timestamp) {
+        long timestamp,
+        bool effectiveWithVat,
+        string fallbackCurrencyCode) {
         decimal price = priceInfo?.Price ?? 0;
-        string currencyCode = priceInfo?.CurrencyCode ?? "UAH";
+        decimal localPrice = priceInfo?.LocalPrice ?? 0;
+        string currencyCode = priceInfo?.CurrencyCode ?? fallbackCurrencyCode;
         bool isUk = locale == "uk";
+
+        // Availability must describe the storages checkout can actually reserve from. The search
+        // projection splits uk stock into a non-VAT and a VAT bucket (both restricted to
+        // ForEcommerce storages); which one applies is decided by the retail storage or the
+        // caller's agreement. Report that single figure in both slots so a client can never read a
+        // quantity held in a storage set it is unable to buy from.
+        double reachableUkQty = effectiveWithVat ? doc.AvailableQtyUkVat : doc.AvailableQtyUk;
 
         return new ProtectedSearchProduct {
             Id = doc.Id,
@@ -260,9 +285,9 @@ public sealed class ProductsController(
             UCGFEA = doc.Ucgfea,
             Volume = doc.Volume,
             Top = doc.Top,
-            AvailableQtyUk = doc.AvailableQtyUk,
+            AvailableQtyUk = reachableUkQty,
             AvailableQtyRoad = 0,
-            AvailableQtyUkVAT = doc.AvailableQtyUkVat,
+            AvailableQtyUkVAT = reachableUkQty,
             AvailableQtyPl = doc.AvailableQtyPl,
             AvailableQtyPlVAT = doc.AvailableQtyPlVat,
             Weight = doc.Weight,
@@ -276,7 +301,11 @@ public sealed class ProductsController(
             OriginalNumbers = doc.OriginalNumbers,
             Image = doc.Image,
             MeasureUnitId = doc.MeasureUnitId,
-            P = PriceObfuscator.EncodeMultiple([price, price, 0m, 0m], timestamp),
+            // Prices are encrypted with the shared price key and never shipped as cleartext. The
+            // slots are [current, local, currentWithVat, localWithVat]; this endpoint resolves the
+            // price in exactly one VAT mode (effectiveWithVat above), so the VAT slots carry the
+            // same VAT-resolved values instead of the hardcoded 0.00 the debug path emitted.
+            P = PriceObfuscator.EncodeMultiple(new[] { price, localPrice, price, localPrice }, timestamp),
             CurrencyCode = currencyCode,
             T = timestamp,
             ProductSlug = doc.SlugId > 0 ? new ProductSlug {

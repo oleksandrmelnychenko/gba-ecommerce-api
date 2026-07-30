@@ -53,6 +53,7 @@ public sealed class OptimizedProductRepository {
 SELECT
     p.ID AS Id,
     dbo.GetCalculatedProductPriceWithSharesAndVat(p.NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS Price,
+    dbo.GetCalculatedProductLocalPriceWithSharesAndVat(p.NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS LocalPrice,
     (SELECT Code FROM Currency c
      INNER JOIN Agreement a ON a.CurrencyID = c.ID
      INNER JOIN ClientAgreement ca ON ca.AgreementID = a.ID
@@ -75,6 +76,7 @@ DROP TABLE #ProductIds;";
             r => (long)r.Id,
             r => new ProductPriceInfo {
                 Price = (decimal)(r.Price ?? 0m),
+                LocalPrice = (decimal)(r.LocalPrice ?? 0m),
                 CurrencyCode = r.CurrencyCode ?? "UAH"
             });
     }
@@ -108,6 +110,7 @@ DROP TABLE #ProductIds;";
 SELECT
     p.ID AS Id,
     dbo.GetCalculatedProductPriceWithSharesAndVat(p.NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS Price,
+    dbo.GetCalculatedProductLocalPriceWithSharesAndVat(p.NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS LocalPrice,
     (SELECT Code FROM Currency WHERE ID = @CurrencyId AND Deleted = 0) AS CurrencyCode
 FROM Product p
 INNER JOIN #ProductIds ids ON ids.Id = p.ID
@@ -128,6 +131,7 @@ DROP TABLE #ProductIds;";
             r => (long)r.Id,
             r => new ProductPriceInfo {
                 Price = (decimal)(r.Price ?? 0m),
+                LocalPrice = (decimal)(r.LocalPrice ?? 0m),
                 CurrencyCode = r.CurrencyCode ?? "UAH"
             });
     }
@@ -902,5 +906,9 @@ DROP TABLE #ProductIds;";
 
 public sealed class ProductPriceInfo {
     public decimal Price { get; set; }
+
+    /// <summary>Same price expressed in the local (UAH) currency.</summary>
+    public decimal LocalPrice { get; set; }
+
     public string CurrencyCode { get; set; } = "UAH";
 }

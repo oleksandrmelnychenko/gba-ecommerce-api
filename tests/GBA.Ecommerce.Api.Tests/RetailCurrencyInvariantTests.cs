@@ -25,7 +25,7 @@ public sealed class RetailCurrencyInvariantTests {
                 ".GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode)");
         }
 
-        Assert.Equal(16, constrainedSelections);
+        Assert.Equal(18, constrainedSelections);
     }
 
     [Fact]
