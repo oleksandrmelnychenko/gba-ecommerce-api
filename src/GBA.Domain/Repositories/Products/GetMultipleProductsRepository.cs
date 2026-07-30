@@ -3936,7 +3936,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
 
                 analogues.Add(analogue);
 
-                if (productAvailability == null) return analogue;
+                if (productAvailability == null || storage == null) return analogue;
 
                 productAvailabilities.Add(productAvailability);
 
@@ -3947,7 +3947,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             } else {
                 analogue = analogues.First(a => a.Id.Equals(analogue.Id));
 
-                if (productAvailability == null || storage.ForDefective) return analogue;
+                if (productAvailability == null || storage == null || storage.ForDefective)
+                    return analogue;
 
                 if (productAvailabilities.Any(p => p.Id.Equals(productAvailability.Id) && p.ProductId.Equals(analogue.Id))) return analogue;
 
@@ -4097,7 +4098,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
 
                 analogues.Add(analogue);
 
-                if (productAvailability == null) return analogue;
+                if (productAvailability == null || storage == null) return analogue;
 
                 productAvailabilities.Add(productAvailability);
 
@@ -4108,7 +4109,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             } else {
                 analogue = analogues.First(a => a.Id.Equals(analogue.Id));
 
-                if (productAvailability == null || storage.ForDefective) return analogue;
+                if (productAvailability == null || storage == null || storage.ForDefective)
+                    return analogue;
 
                 if (productAvailabilities.Any(p => p.Id.Equals(productAvailability.Id) && p.ProductId.Equals(analogue.Id))) return analogue;
 
@@ -4180,7 +4182,11 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [ProductImage].ProductID = [Analogue].ID " +
             "WHERE [ProductAnalogue].BaseProductID = @Id " +
             "AND [ProductAnalogue].Deleted = 0 " +
-            "AND (([Storage].ForEcommerce = 1 AND [Storage].Deleted = 0) OR [Storage].ID IS NULL) " +
+            "AND [Analogue].Deleted = 0 " +
+            "AND [Analogue].IsForWeb = 1 " +
+            "AND (([Storage].ForEcommerce = 1 " +
+            "AND [Storage].Deleted = 0 " +
+            "AND [Storage].ForDefective = 0) OR [Storage].ID IS NULL) " +
             "ORDER BY [ProductAvailability].Amount DESC, [Analogue].Name, [Analogue].VendorCode ";
 
         _connection.Query(
@@ -4339,7 +4345,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
         long productId,
         Guid nonVatAgreementNetId,
         Guid? vatAgreementNetId,
-        long? organizationId) {
+        long? organizationId,
+        bool onlyEcommerceStorages = false) {
         List<FromSearchProduct> components = new();
 
         Type[] types = {
@@ -4364,7 +4371,11 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 component = components.First(a => a.Id.Equals(component.Id));
             }
 
-            if (productAvailability == null || !storage.OrganizationId.Equals(organizationId) || storage.ForDefective) return component;
+            if (productAvailability == null
+                || storage == null
+                || !storage.OrganizationId.Equals(organizationId)
+                || storage.ForDefective)
+                return component;
 
             if (storage.Locale.ToLower().Equals("pl")) {
                 if (storage.ForVatProducts)
@@ -4430,6 +4441,10 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND [ProductAvailability].Deleted = 0 " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
+            "AND [Storage].Deleted = 0 " +
+            "AND [Storage].ForDefective = 0 " +
+            "AND [Storage].OrganizationID = @OrganizationId " +
+            "AND (@OnlyEcommerceStorages = 0 OR [Storage].ForEcommerce = 1) " +
             "LEFT JOIN [ProductSlug] " +
             "ON [ProductSlug].ID = (" +
             "SELECT TOP(1) ID " +
@@ -4440,8 +4455,9 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             ") " +
             "WHERE [ProductSet].BaseProductID = @Id " +
             "AND [ProductSet].Deleted = 0 " +
-            "AND [Storage].Locale = @Culture " +
-            "AND [Storage].ForDefective = 0 " +
+            "AND [Component].Deleted = 0 " +
+            "AND [Component].IsForWeb = 1 " +
+            "AND ([Storage].Locale = @Culture OR [Storage].ID IS NULL) " +
             "ORDER BY [ProductAvailability].Amount DESC, [Component].Name, [Component].VendorCode";
 
         _connection.Query(
@@ -4452,7 +4468,9 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 Id = productId,
                 NonVatAgreementNetId = nonVatAgreementNetId,
                 VatAgreementNetId = vatAgreementNetId ?? Guid.Empty,
-                Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName
+                Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
+                OrganizationId = organizationId,
+                OnlyEcommerceStorages = onlyEcommerceStorages
             }
         );
 

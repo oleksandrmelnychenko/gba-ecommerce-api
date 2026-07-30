@@ -105,7 +105,8 @@ public interface IGetMultipleProductsRepository {
         long productId,
         Guid nonVatAgreementNetId,
         Guid? vatAgreementNetId,
-        long? organizationId);
+        long? organizationId,
+        bool onlyEcommerceStorages = false);
 
     List<FromSearchProduct> GetProductsByOldECommerceIds(IEnumerable<long> oldECommerceIds, Guid nonVatAgreementNetId, Guid? vatAgreementNetId);
 

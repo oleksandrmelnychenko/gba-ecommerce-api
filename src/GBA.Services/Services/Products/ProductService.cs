@@ -70,31 +70,10 @@ public sealed class ProductService : IProductService {
 
         IGetSingleProductRepository productRepository =
             _productRepositoriesFactory.NewGetSingleProductRepository(connection);
-        Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
-            .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
-
-        if (storage?.OrganizationId == null) {
+        if (!TryGetRetailContext(connection, out Storage storage, out _)) {
             Product unpricedProduct = productRepository.GetByNetId(productNetId);
-            if (unpricedProduct != null) unpricedProduct.CurrencyCode = EcommerceRetailDefaults.CurrencyCode;
-
-            return Task.FromResult(unpricedProduct);
-        }
-
-        Client retailClient = _clientRepositoriesFactory
-            .NewClientRepository(connection)
-            .GetRetailClient();
-        ClientAgreement retailAgreement = retailClient == null
-            ? null
-            : _clientRepositoriesFactory
-                .NewClientAgreementRepository(connection)
-                .GetByClientNetIdWithOrWithoutVat(
-                    retailClient.NetUid,
-                    storage.OrganizationId.Value,
-                    storage.ForVatProducts);
-
-        if (retailAgreement?.Agreement == null) {
-            Product unpricedProduct = productRepository.GetByNetId(productNetId);
-            if (unpricedProduct != null) unpricedProduct.CurrencyCode = EcommerceRetailDefaults.CurrencyCode;
+            if (unpricedProduct != null)
+                unpricedProduct.CurrencyCode = EcommerceRetailDefaults.CurrencyCode;
 
             return Task.FromResult(unpricedProduct);
         }
@@ -1183,22 +1162,7 @@ public sealed class ProductService : IProductService {
 
         if (product == null) return Task.FromResult(new List<FromSearchProduct>());
 
-        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-
-        Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
-            .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
-
-        Client retailClient = _clientRepositoriesFactory
-            .NewClientRepository(connection)
-            .GetRetailClient();
-        if (storage?.OrganizationId == null || retailClient == null)
-            return Task.FromResult(new List<FromSearchProduct>());
-
-        ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
-            retailClient.NetUid,
-            storage.OrganizationId.Value,
-            storage.ForVatProducts);
-        if (clientAgreement?.Agreement == null)
+        if (!TryGetRetailContext(connection, out _, out ClientAgreement clientAgreement))
             return Task.FromResult(new List<FromSearchProduct>());
 
         List<FromSearchProduct> analogues = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection)
@@ -1246,13 +1210,34 @@ public sealed class ProductService : IProductService {
 
         if (product == null) return Task.FromResult(new List<FromSearchProduct>());
 
-        if (currentClientNetId.Equals(Guid.Empty))
-            return Task.FromResult(getMultipleProductsRepository
-                .GetAllComponentsByProductIdWithCalculatedPrices(
+        if (currentClientNetId.Equals(Guid.Empty)) {
+            if (!TryGetRetailContext(
+                    connection,
+                    out Storage storage,
+                    out ClientAgreement retailAgreement))
+                return Task.FromResult(new List<FromSearchProduct>());
+
+            List<FromSearchProduct> retailComponents =
+                getMultipleProductsRepository.GetAllComponentsByProductIdWithCalculatedPrices(
                     product.Id,
-                    currentClientNetId,
-                    null
-                ));
+                    storage.ForVatProducts ? Guid.Empty : retailAgreement.NetUid,
+                    storage.ForVatProducts ? retailAgreement.NetUid : null,
+                    retailAgreement.Agreement.OrganizationId,
+                    true);
+
+            foreach (FromSearchProduct component in retailComponents) {
+                if (storage.ForVatProducts) {
+                    component.CurrentPrice = component.CurrentWithVatPrice;
+                    component.CurrentLocalPrice = component.CurrentLocalWithVatPrice;
+                    component.AvailableQtyUk = component.AvailableQtyUkVAT;
+                    component.AvailableQtyPl = component.AvailableQtyPlVAT;
+                }
+
+                component.CurrencyCode = EcommerceRetailDefaults.CurrencyCode;
+            }
+
+            return Task.FromResult(retailComponents);
+        }
 
         IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
@@ -1266,6 +1251,34 @@ public sealed class ProductService : IProductService {
                 vatAgreement?.NetUid,
                 withVat ? vatAgreement?.Agreement?.OrganizationId : nonVatAgreement?.Agreement?.OrganizationId
             ));
+    }
+
+    private bool TryGetRetailContext(
+        IDbConnection connection,
+        out Storage storage,
+        out ClientAgreement clientAgreement) {
+        storage = _storageRepositoryFactory
+            .NewStorageRepository(connection)
+            .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+        clientAgreement = null;
+
+        if (storage?.OrganizationId == null)
+            return false;
+
+        Client retailClient = _clientRepositoriesFactory
+            .NewClientRepository(connection)
+            .GetRetailClient();
+        if (retailClient == null)
+            return false;
+
+        clientAgreement = _clientRepositoriesFactory
+            .NewClientAgreementRepository(connection)
+            .GetByClientNetIdWithOrWithoutVat(
+                retailClient.NetUid,
+                storage.OrganizationId.Value,
+                storage.ForVatProducts);
+
+        return clientAgreement?.Agreement != null;
     }
 
     public Task<List<Product>> GetAllByVendorCodes(List<string> vendorCodes, Guid currentClientNetId, long limit, long offset, bool withVat) {
