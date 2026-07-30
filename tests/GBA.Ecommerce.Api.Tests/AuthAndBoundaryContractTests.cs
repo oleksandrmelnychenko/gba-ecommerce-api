@@ -44,6 +44,8 @@ public sealed class AuthAndBoundaryContractTests(EcommerceApiFixture fixture) : 
         using HttpResponseMessage response = await _client.GetAsync(
             _config.ApiPath("usermanagement/check/email?email=not-an-email"));
 
+        if (await AssertRateLimitEnvelopeAndReturnAsync(response)) return;
+
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
         ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);

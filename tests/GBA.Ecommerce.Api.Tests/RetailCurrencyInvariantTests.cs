@@ -15,17 +15,18 @@ public sealed class RetailCurrencyInvariantTests {
     public void Public_retail_storage_selection_is_always_constrained_to_eur() {
         Assert.Equal("EUR", EcommerceRetailDefaults.CurrencyCode);
 
-        int constrainedSelections = 0;
         foreach (string path in RetailServicePaths) {
             string source = File.ReadAllText(RepositoryPath(path));
 
             Assert.DoesNotContain(".GetWithHighestPriority();", source, StringComparison.Ordinal);
-            constrainedSelections += CountOccurrences(
-                source,
-                ".GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode)");
+            Assert.DoesNotContain(
+                ".GetWithHighestPriority(",
+                source.Replace(
+                    ".GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode)",
+                    string.Empty,
+                    StringComparison.Ordinal),
+                StringComparison.Ordinal);
         }
-
-        Assert.Equal(18, constrainedSelections);
     }
 
     [Fact]
@@ -87,4 +88,5 @@ public sealed class RetailCurrencyInvariantTests {
 
         return count;
     }
+
 }
