@@ -286,6 +286,7 @@ public class Startup {
             options.MaximumBodySize = 67108864;
             options.UseCaseSensitivePaths = false;
         });
+        services.AddSignalR();
 
         services.AddOutputCache(options => {
             options.SizeLimit = 256 * 1024 * 1024;
@@ -458,6 +459,7 @@ public class Startup {
         // Price caching for logged-in users
         services.AddSingleton<IPriceCacheService, PriceCacheService>();
         services.AddSingleton<GBA.Common.Search.ISearchCacheInvalidator, GBA.Ecommerce.Background.OutputCacheSearchInvalidator>();
+        services.AddHostedService<GBA.Ecommerce.Background.RetailPricingContextMonitor>();
 
         services.AddScoped<ISqlContextFactory, SqlContextFactory>();
         services.AddScoped<ISqlDbContext>(t => new SqlDbContext(t.GetRequiredService<ConcordContext>()));
@@ -543,6 +545,7 @@ public class Startup {
 
         app.UseEndpoints(endpoints => {
             endpoints.MapControllerRoute("default", "{controller=Home}/{action=Index}");
+            endpoints.MapHub<GBA.Ecommerce.Hubs.StorefrontHub>("/hubs/storefront");
             endpoints.MapHealthChecks("/health", new HealthCheckOptions {
                 ResponseWriter = async (context, report) => {
                     context.Response.ContentType = "application/json";

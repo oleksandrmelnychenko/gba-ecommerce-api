@@ -52,7 +52,7 @@ public sealed class ClientAgreementService : IClientAgreementService {
             //Agreement defaultAgreement = agreementRepository.GetDefaultByCulture();
 
             Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
-                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+                .GetWithHighestPriority();
 
             ClientAgreement retailClientAgreement =
                 _clientRepositoriesFactory.NewClientAgreementRepository(connection)

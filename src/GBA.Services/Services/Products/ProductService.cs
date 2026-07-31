@@ -12,6 +12,7 @@ using GBA.Common.Extensions;
 using GBA.Common.Helpers;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
+using GBA.Domain.Entities.Agreements;
 using GBA.Domain.Entities.Clients;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.Entities.Sales;
@@ -71,11 +72,7 @@ public sealed class ProductService : IProductService {
         IGetSingleProductRepository productRepository =
             _productRepositoriesFactory.NewGetSingleProductRepository(connection);
         if (!TryGetRetailContext(connection, out Storage storage, out _)) {
-            Product unpricedProduct = productRepository.GetByNetId(productNetId);
-            if (unpricedProduct != null)
-                unpricedProduct.CurrencyCode = EcommerceRetailDefaults.CurrencyCode;
-
-            return Task.FromResult(unpricedProduct);
+            return Task.FromResult(productRepository.GetByNetId(productNetId));
         }
 
         return Task.FromResult(
@@ -113,7 +110,7 @@ public sealed class ProductService : IProductService {
                 _productRepositoriesFactory.NewGetSingleProductRepository(connection);
             Storage storage = _storageRepositoryFactory
                 .NewStorageRepository(connection)
-                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+                .GetWithHighestPriority();
 
             Client retailClient = _clientRepositoriesFactory
                 .NewClientRepository(connection)
@@ -128,10 +125,7 @@ public sealed class ProductService : IProductService {
                         storage.ForVatProducts);
 
             if (retailAgreement?.Agreement == null) {
-                Product unpricedProduct = productRepository.GetBySlug(slug);
-                if (unpricedProduct != null) unpricedProduct.CurrencyCode = EcommerceRetailDefaults.CurrencyCode;
-
-                return Task.FromResult(unpricedProduct);
+                return Task.FromResult(productRepository.GetBySlug(slug));
             }
 
             return Task.FromResult(
@@ -927,7 +921,7 @@ public sealed class ProductService : IProductService {
             if (idsSearchAnalogues.Any()) {
                 if (currentClientNetId.Equals(Guid.Empty)) {
                     Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
-                        .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+                        .GetWithHighestPriority();
 
                     ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
                         _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
@@ -1001,7 +995,7 @@ public sealed class ProductService : IProductService {
 
             if (currentClientNetId.Equals(Guid.Empty)) {
                 Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
-                    .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+                    .GetWithHighestPriority();
 
                 ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
                     _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
@@ -1120,7 +1114,7 @@ public sealed class ProductService : IProductService {
 
             if (currentClientNetId.Equals(Guid.Empty)) {
                 Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
-                    .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+                    .GetWithHighestPriority();
 
                 ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
                     _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
@@ -1233,7 +1227,7 @@ public sealed class ProductService : IProductService {
                     component.AvailableQtyPl = component.AvailableQtyPlVAT;
                 }
 
-                component.CurrencyCode = EcommerceRetailDefaults.CurrencyCode;
+                component.CurrencyCode = retailAgreement.Agreement.Currency?.Code;
             }
 
             return Task.FromResult(retailComponents);
@@ -1259,7 +1253,7 @@ public sealed class ProductService : IProductService {
         out ClientAgreement clientAgreement) {
         storage = _storageRepositoryFactory
             .NewStorageRepository(connection)
-            .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+            .GetWithHighestPriority();
         clientAgreement = null;
 
         if (storage?.OrganizationId == null)
@@ -1383,7 +1377,7 @@ public sealed class ProductService : IProductService {
         if (currentClientNetId.Equals(Guid.Empty)) {
             // Retail user
             Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
-                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+                .GetWithHighestPriority();
 
             ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
                 _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
@@ -1444,43 +1438,68 @@ public sealed class ProductService : IProductService {
     /// Gets only calculated prices for products (lightweight query for V3 search).
     /// Product data comes from Elasticsearch, this only calculates client-specific prices.
     /// </summary>
-    private sealed record RetailVatMode(bool WithVat, DateTime ExpiresAtUtc);
-
-    private static volatile RetailVatMode _retailVatMode;
-
     /// <summary>
     /// The VAT mode the ecommerce surface trades in for this caller. Anonymous shoppers can only
     /// ever buy from the retail storage returned by GetWithHighestPriority, so its ForVatProducts
     /// flag - not the browser's withVat query parameter - decides which stock bucket and which
     /// price they are shown. Signed-in callers get their selected agreement's mode. The anonymous
-    /// answer is cached briefly because it is the same for every shopper and sits on the hot
-    /// search path.
+    /// answer comes from the same pricing context used to partition the price cache.
     /// </summary>
-    public bool GetEffectiveVatMode(Guid clientNetId) {
-        if (clientNetId.Equals(Guid.Empty)) {
-            RetailVatMode cached = _retailVatMode;
-            if (cached != null && cached.ExpiresAtUtc > DateTime.UtcNow) return cached.WithVat;
-        }
+    public bool GetEffectiveVatMode(Guid clientNetId) =>
+        GetPricingContext(clientNetId, false).WithVat;
 
+    public ProductPricingContext GetPricingContext(Guid clientNetId, bool requestedWithVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
+        Storage storage = null;
+        ClientAgreement clientAgreement;
 
         if (clientNetId.Equals(Guid.Empty)) {
-            Storage storage = _storageRepositoryFactory
-                .NewStorageRepository(connection)
-                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
-            bool retailWithVat = storage?.ForVatProducts ?? false;
-            _retailVatMode = new RetailVatMode(retailWithVat, DateTime.UtcNow.AddMinutes(5));
-
-            return retailWithVat;
+            if (!TryGetRetailContext(connection, out storage, out clientAgreement)) {
+                return new ProductPricingContext(
+                    requestedWithVat,
+                    string.Empty,
+                    "retail:unavailable");
+            }
+        } else {
+            IClientAgreementRepository agreementRepository =
+                _clientRepositoriesFactory.NewClientAgreementRepository(connection);
+            clientAgreement =
+                agreementRepository.GetSelectedByClientNetId(clientNetId)
+                ?? agreementRepository.GetSelectedByWorkplaceNetId(clientNetId)
+                ?? agreementRepository.GetSelectedByClientNotSelectedNetId(clientNetId);
         }
 
-        IClientAgreementRepository agreementRepository =
-            _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-        ClientAgreement clientAgreement =
-            agreementRepository.GetSelectedByClientNetId(clientNetId)
-            ?? agreementRepository.GetSelectedByWorkplaceNetId(clientNetId);
+        Agreement agreement = clientAgreement?.Agreement;
+        if (agreement == null) {
+            return new ProductPricingContext(
+                requestedWithVat,
+                string.Empty,
+                $"client:{clientNetId:N}:unavailable");
+        }
 
-        return clientAgreement?.Agreement?.WithVATAccounting ?? false;
+        Currency currency = agreement.Currency;
+        if (currency == null && agreement.CurrencyId.HasValue) {
+            currency = _currencyRepositoriesFactory
+                .NewCurrencyRepository(connection)
+                .GetById(agreement.CurrencyId.Value);
+        }
+
+        string currencyCode = currency?.Code ?? string.Empty;
+        string cacheKey = string.Join(
+            ':',
+            clientAgreement.NetUid.ToString("N"),
+            agreement.CurrencyId?.ToString(CultureInfo.InvariantCulture) ?? "none",
+            agreement.PricingId?.ToString(CultureInfo.InvariantCulture) ?? "none",
+            agreement.OrganizationId?.ToString(CultureInfo.InvariantCulture) ?? "none",
+            agreement.WithVATAccounting ? "vat" : "no-vat",
+            agreement.Updated.Ticks.ToString(CultureInfo.InvariantCulture),
+            storage?.Id.ToString(CultureInfo.InvariantCulture) ?? "no-storage",
+            storage?.Updated.Ticks.ToString(CultureInfo.InvariantCulture) ?? "no-storage-version");
+
+        return new ProductPricingContext(
+            agreement.WithVATAccounting,
+            currencyCode,
+            cacheKey);
     }
 
     public Dictionary<long, ProductPriceInfo> GetPricesOnly(List<long> productIds, Guid currentClientNetId, bool withVat, string culture = "uk") {
@@ -1494,7 +1513,7 @@ public sealed class ProductService : IProductService {
         if (currentClientNetId.Equals(Guid.Empty)) {
             // Retail user - match V1 behavior: use storage.ForVatProducts for agreement selection
             Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
-                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+                .GetWithHighestPriority();
             Client retailClient = _clientRepositoriesFactory
                 .NewClientRepository(connection)
                 .GetRetailClient();
@@ -1582,7 +1601,7 @@ public sealed class ProductService : IProductService {
 
         if (currentClientNetId.Equals(Guid.Empty)) {
             Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
-                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+                .GetWithHighestPriority();
 
             ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
                 _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,

@@ -163,7 +163,7 @@ public sealed class StorageRepository : IStorageRepository {
             "ON [VatRate].ID = [Organization].VatRateID " +
             "WHERE [Storage].Deleted = 0 " +
             "AND [Storage].ForEcommerce = 1 " +
-            "AND (@RetailCurrencyCode IS NULL OR EXISTS ( " +
+            "AND EXISTS ( " +
             "SELECT 1 " +
             "FROM [Agreement] AS [RetailAgreement] " +
             "INNER JOIN [ClientAgreement] AS [RetailClientAgreement] " +
@@ -180,8 +180,8 @@ public sealed class StorageRepository : IStorageRepository {
             "AND [RetailAgreement].WithVATAccounting = [Storage].ForVatProducts " +
             "AND [RetailAgreement].Deleted = 0 " +
             "AND [RetailAgreement].IsActive = 1 " +
-            "AND [RetailCurrency].Code = @RetailCurrencyCode " +
-            ")) " +
+            "AND (@RetailCurrencyCode IS NULL OR [RetailCurrency].Code = @RetailCurrencyCode) " +
+            ") " +
             "ORDER BY [Storage].RetailPriority ASC ",
             (storage, organization, vatRate) => {
                 if (organization != null) organization.VatRate = vatRate;

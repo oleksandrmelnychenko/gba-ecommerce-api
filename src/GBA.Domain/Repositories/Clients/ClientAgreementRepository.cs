@@ -1451,10 +1451,11 @@ public sealed class ClientAgreementRepository : IClientAgreementRepository {
     }
 
     public ClientAgreement GetByClientNetIdWithOrWithoutVat(Guid netId, long organizationId, bool withVat) {
-        return _connection.Query<ClientAgreement, Agreement, Organization, ClientAgreement>(
+        return _connection.Query<ClientAgreement, Agreement, Organization, Currency, ClientAgreement>(
             "SELECT [ClientAgreement].* " +
             ", [Agreement].* " +
             ", [Organization].* " +
+            ", [Currency].* " +
             "FROM [ClientAgreement] " +
             "LEFT JOIN [Agreement] " +
             "ON [Agreement].ID = [ClientAgreement].AgreementID " +
@@ -1473,9 +1474,12 @@ public sealed class ClientAgreementRepository : IClientAgreementRepository {
             "AND [Agreement].IsActive = 1 " +
             "AND [Currency].Deleted = 0 " +
             "ORDER BY [Agreement].IsSelected DESC, [ClientAgreement].ID ",
-            (clientAgreement, agreement, organization) => {
+            (clientAgreement, agreement, organization, currency) => {
                 if (clientAgreement != null) {
-                    if (agreement != null) agreement.Organization = organization;
+                    if (agreement != null) {
+                        agreement.Organization = organization;
+                        agreement.Currency = currency;
+                    }
 
                     clientAgreement.Agreement = agreement;
                 }

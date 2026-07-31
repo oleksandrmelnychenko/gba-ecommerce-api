@@ -14,6 +14,7 @@ public interface IPriceCacheService {
         Guid clientNetId,
         bool withVat,
         string locale,
+        string pricingContextKey,
         Func<List<long>, Dictionary<long, ProductPriceInfo>> fetchFromDb);
 
     void InvalidateForClient(Guid clientNetId);
@@ -35,6 +36,7 @@ public sealed class PriceCacheService : IPriceCacheService {
         Guid clientNetId,
         bool withVat,
         string locale,
+        string pricingContextKey,
         Func<List<long>, Dictionary<long, ProductPriceInfo>> fetchFromDb) {
 
         if (productIds == null || productIds.Count == 0)
@@ -46,7 +48,13 @@ public sealed class PriceCacheService : IPriceCacheService {
 
         // Check cache for each product
         foreach (long productId in productIds) {
-            string cacheKey = BuildCacheKey(clientNetId, clientVersion, productId, withVat, locale);
+            string cacheKey = BuildCacheKey(
+                clientNetId,
+                clientVersion,
+                productId,
+                withVat,
+                locale,
+                pricingContextKey);
             if (_cache.TryGetValue(cacheKey, out ProductPriceInfo? cachedPrice) && cachedPrice != null) {
                 result[productId] = cachedPrice;
             } else {
@@ -62,7 +70,13 @@ public sealed class PriceCacheService : IPriceCacheService {
                 result[kvp.Key] = kvp.Value;
 
                 // Cache the fetched price
-                string cacheKey = BuildCacheKey(clientNetId, clientVersion, kvp.Key, withVat, locale);
+                string cacheKey = BuildCacheKey(
+                    clientNetId,
+                    clientVersion,
+                    kvp.Key,
+                    withVat,
+                    locale,
+                    pricingContextKey);
                 _cache.Set(cacheKey, kvp.Value, CacheDuration);
             }
 
@@ -84,7 +98,8 @@ public sealed class PriceCacheService : IPriceCacheService {
         long clientVersion,
         long productId,
         bool withVat,
-        string locale) {
-        return $"price:{clientNetId}:{clientVersion}:{productId}:{(withVat ? 1 : 0)}:{locale}";
+        string locale,
+        string pricingContextKey) {
+        return $"price:{clientNetId}:{clientVersion}:{productId}:{(withVat ? 1 : 0)}:{locale}:{pricingContextKey}";
     }
 }

@@ -51,5 +51,10 @@ public interface IProductService {
     /// </summary>
     bool GetEffectiveVatMode(Guid clientNetId);
 
+    /// <summary>
+    /// Resolves the current agreement-backed pricing context for cache partitioning and display.
+    /// </summary>
+    ProductPricingContext GetPricingContext(Guid clientNetId, bool requestedWithVat);
+
     Dictionary<long, ProductPriceInfo> GetPricesOnly(List<long> productIds, Guid currentClientNetId, bool withVat, string culture = "uk");
 }

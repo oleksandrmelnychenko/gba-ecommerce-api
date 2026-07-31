@@ -67,20 +67,21 @@ public sealed class ProductsController(
         // ecommerce storage/agreement (including its currency and VAT mode) exactly like
         // the product details endpoint. The per-product cache keeps repeated searches fast.
         List<long> productIds = searchResult.Documents.Select(d => d.Id).ToList();
+        ProductPricingContext pricingContext =
+            productService.GetPricingContext(userNetId, withVat.Equals(1));
         Dictionary<long, ProductPriceInfo> prices = priceCacheService.GetPrices(
             productIds,
             userNetId,
             withVat.Equals(1),
             locale,
+            pricingContext.CacheKey,
             ids => productService.GetPricesOnly(ids, userNetId, withVat.Equals(1), locale));
 
         // The VAT mode that decides which stock bucket a caller may buy from is resolved on the
         // server (retail storage for anonymous shoppers, the caller's agreement when signed in),
         // exactly like the price above. The browser's withVat parameter is not trusted for it.
-        bool effectiveWithVat = productService.GetEffectiveVatMode(userNetId);
-        string fallbackCurrencyCode = userNetId == Guid.Empty
-            ? EcommerceRetailDefaults.CurrencyCode
-            : "UAH";
+        bool effectiveWithVat = pricingContext.WithVat;
+        string fallbackCurrencyCode = pricingContext.CurrencyCode;
 
         long timestamp = PriceObfuscator.GetTimestamp();
         List<ProtectedSearchProduct> protectedProducts = searchResult.Documents.Select(doc => {
@@ -89,7 +90,8 @@ public sealed class ProductsController(
                 doc,
                 priceInfo,
                 userNetId == Guid.Empty,
-                withVat.Equals(1));
+                withVat.Equals(1),
+                pricingContext.CurrencyCode);
             return DocToProtectedProduct(
                 doc,
                 resolvedPrice,
@@ -106,7 +108,8 @@ public sealed class ProductsController(
         ProductSearchDocument document,
         ProductPriceInfo? calculatedPrice,
         bool isAnonymous,
-        bool withVat) {
+        bool withVat,
+        string configuredCurrencyCode) {
         if (calculatedPrice?.Price > 0 || !isAnonymous) {
             return calculatedPrice ?? new ProductPriceInfo {
                 Price = 0,
@@ -119,15 +122,24 @@ public sealed class ProductsController(
         // the catalog projection still carries the last successfully calculated retail price.
         // Preserve storefront availability by using that projection only for anonymous
         // shoppers and only when the authoritative result is missing/zero.
-        decimal indexedPrice = withVat
+        bool indexedCurrencyMatchesConfiguration =
+            !string.IsNullOrWhiteSpace(configuredCurrencyCode)
+            && string.Equals(
+                document.RetailCurrencyCode,
+                configuredCurrencyCode,
+                StringComparison.OrdinalIgnoreCase);
+        decimal indexedPrice = indexedCurrencyMatchesConfiguration && withVat
             ? document.RetailPriceVat
-            : document.RetailPrice;
+            : indexedCurrencyMatchesConfiguration
+                ? document.RetailPrice
+                : 0;
 
         return new ProductPriceInfo {
             Price = indexedPrice > 0 ? indexedPrice : calculatedPrice?.Price ?? 0,
-            CurrencyCode = !string.IsNullOrWhiteSpace(document.RetailCurrencyCode)
-                ? document.RetailCurrencyCode
-                : calculatedPrice?.CurrencyCode ?? "EUR"
+            LocalPrice = indexedPrice > 0 ? indexedPrice : calculatedPrice?.LocalPrice ?? 0,
+            CurrencyCode = !string.IsNullOrWhiteSpace(configuredCurrencyCode)
+                ? configuredCurrencyCode
+                : calculatedPrice?.CurrencyCode ?? string.Empty
         };
     }
 

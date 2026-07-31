@@ -106,7 +106,9 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
         ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
         ApiAssertions.AssertSuccessEnvelope(envelope);
         AssertProductContract(envelope.Body, netUid);
-        Assert.Equal("EUR", ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
+        Assert.Equal(
+            ApiAssertions.RequiredString(searchProduct, "CurrencyCode"),
+            ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
 
         AssertOpaqueProtectedPrice(searchProduct);
         Assert.Equal(
@@ -115,12 +117,13 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
     }
 
     [Fact]
-    public async Task Anonymous_product_search_matches_canonical_retail_eur_price() {
+    public async Task Anonymous_product_search_matches_configured_retail_agreement_currency() {
         JsonElement[] products = await GetSearchProductsAsync("SEM18487", 1, 0);
         JsonElement searchProduct = Assert.Single(products);
         Guid netUid = ApiAssertions.RequiredGuid(searchProduct, "NetUid");
 
-        Assert.Equal("EUR", ApiAssertions.RequiredString(searchProduct, "CurrencyCode"));
+        string searchCurrencyCode = ApiAssertions.RequiredString(searchProduct, "CurrencyCode");
+        Assert.False(string.IsNullOrWhiteSpace(searchCurrencyCode));
 
         using HttpResponseMessage response = await _client.GetAsync(
             _config.ApiPath($"products/get?netId={netUid}&withVat=0"));
@@ -129,7 +132,9 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
 
         ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
         ApiAssertions.AssertSuccessEnvelope(envelope);
-        Assert.Equal("EUR", ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
+        Assert.Equal(
+            searchCurrencyCode,
+            ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
 
         AssertOpaqueProtectedPrice(searchProduct);
         Assert.Equal(
@@ -158,7 +163,9 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
         ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
         ApiAssertions.AssertSuccessEnvelope(envelope);
         AssertProductContract(envelope.Body, netUid);
-        Assert.Equal("EUR", ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
+        Assert.Equal(
+            ApiAssertions.RequiredString(searchProduct, "CurrencyCode"),
+            ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
 
         AssertOpaqueProtectedPrice(searchProduct);
         Assert.Equal(

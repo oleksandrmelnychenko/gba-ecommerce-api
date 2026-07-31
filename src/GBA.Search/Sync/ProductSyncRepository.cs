@@ -51,6 +51,55 @@ SELECT CAST(CASE
     THEN 1 ELSE 0
 END AS bit)";
 
+    internal const string HasRetailConfigurationChangesSql = @"
+SELECT CAST(CASE
+    WHEN EXISTS (
+        SELECT 1
+        FROM Client
+        WHERE IsForRetail = 1
+          AND Deleted = 0
+          AND (Updated > @Since OR Created > @Since)
+    ) OR EXISTS (
+        SELECT 1
+        FROM ClientAgreement ca
+        INNER JOIN Client client ON client.ID = ca.ClientID
+        WHERE client.IsForRetail = 1
+          AND client.Deleted = 0
+          AND (ca.Updated > @Since OR ca.Created > @Since)
+    ) OR EXISTS (
+        SELECT 1
+        FROM Agreement a
+        INNER JOIN ClientAgreement ca ON ca.AgreementID = a.ID
+        INNER JOIN Client client ON client.ID = ca.ClientID
+        WHERE client.IsForRetail = 1
+          AND client.Deleted = 0
+          AND (a.Updated > @Since OR a.Created > @Since)
+    ) OR EXISTS (
+        SELECT 1
+        FROM Storage s
+        WHERE (s.ForEcommerce = 1 OR EXISTS (
+            SELECT 1
+            FROM Agreement a
+            INNER JOIN ClientAgreement ca ON ca.AgreementID = a.ID
+            INNER JOIN Client client ON client.ID = ca.ClientID
+            WHERE a.OrganizationID = s.OrganizationID
+              AND client.IsForRetail = 1
+              AND client.Deleted = 0
+        ))
+          AND (s.Updated > @Since OR s.Created > @Since)
+    ) OR EXISTS (
+        SELECT 1
+        FROM Pricing pricing
+        INNER JOIN Agreement a ON a.PricingID = pricing.ID
+        INNER JOIN ClientAgreement ca ON ca.AgreementID = a.ID
+        INNER JOIN Client client ON client.ID = ca.ClientID
+        WHERE client.IsForRetail = 1
+          AND client.Deleted = 0
+          AND (pricing.Updated > @Since OR pricing.Created > @Since)
+    )
+    THEN 1 ELSE 0
+END AS bit)";
+
     internal const string GlobalRetailDependencyProductIdsSql = @"
 SELECT ppg.ProductID
 FROM PricingProductGroupDiscount ppgd
@@ -99,10 +148,9 @@ WHERE pgd.Updated > @Since OR pgd.Created > @Since";
     INNER JOIN Currency c
         ON c.ID = a.CurrencyID
         AND c.Deleted = 0
-        AND c.Code = 'EUR'
     WHERE s.Deleted = 0
       AND s.ForEcommerce = 1
-    ORDER BY s.RetailPriority, ca.ID
+    ORDER BY s.RetailPriority, a.IsSelected DESC, ca.ID
 ),
 BasePricingHierarchy AS (
     SELECT rc.PricingId AS OriginalPricingId, pr.ID AS CurrentPricingId, pr.BasePricingID
@@ -167,7 +215,7 @@ SELECT
         pp.Price + (pp.Price * COALESCE(
             charge.CalculatedExtraCharge, pricing.CalculatedExtraCharge, 0) / 100.0)
     , 2), 0) AS RetailPriceVat,
-    ISNULL(rc.CurrencyCode, 'EUR') AS RetailCurrencyCode,
+    'EUR' AS RetailCurrencyCode,
     p.Updated
 FROM Product p
 OUTER APPLY (
@@ -265,10 +313,9 @@ RetailConfiguration AS (
     INNER JOIN Currency c
         ON c.ID = a.CurrencyID
         AND c.Deleted = 0
-        AND c.Code = 'EUR'
     WHERE s.Deleted = 0
       AND s.ForEcommerce = 1
-    ORDER BY s.RetailPriority, ca.ID
+    ORDER BY s.RetailPriority, a.IsSelected DESC, ca.ID
 ),
 BasePricingHierarchy AS (
     SELECT rc.PricingId AS OriginalPricingId, pr.ID AS CurrentPricingId, pr.BasePricingID
@@ -315,7 +362,7 @@ SELECT
         pp.Price + (pp.Price * COALESCE(
             charge.CalculatedExtraCharge, pricing.CalculatedExtraCharge, 0) / 100.0)
     , 2), 0) AS RetailPriceVat,
-    ISNULL(rc.CurrencyCode, 'EUR') AS RetailCurrencyCode, p.Updated
+    'EUR' AS RetailCurrencyCode, p.Updated
 FROM Product p
 INNER JOIN ChangedProductIds c ON c.ID = p.ID
 OUTER APPLY (
@@ -367,6 +414,18 @@ ORDER BY p.ID";
             commandTimeout: 120);
 
         HashSet<long> ids = new(directIds);
+
+        bool hasRetailConfigurationChanges = await connection.ExecuteScalarAsync<bool>(
+            HasRetailConfigurationChangesSql,
+            new { Since = since },
+            commandTimeout: 30);
+
+        if (hasRetailConfigurationChanges) {
+            IEnumerable<long> allProductIds = await connection.QueryAsync<long>(
+                "SELECT ID FROM Product WHERE Deleted = 0",
+                commandTimeout: 120);
+            return allProductIds.AsList();
+        }
 
         // Pricing/group discount mutations can fan out to every product in an affected
         // group. Keep that expensive expansion out of the common incremental-sync plan:
@@ -422,10 +481,9 @@ RetailConfiguration AS (
     INNER JOIN Currency c
         ON c.ID = a.CurrencyID
         AND c.Deleted = 0
-        AND c.Code = 'EUR'
     WHERE s.Deleted = 0
       AND s.ForEcommerce = 1
-    ORDER BY s.RetailPriority, ca.ID
+    ORDER BY s.RetailPriority, a.IsSelected DESC, ca.ID
 ),
 BasePricingHierarchy AS (
     SELECT rc.PricingId AS OriginalPricingId, pr.ID AS CurrentPricingId, pr.BasePricingID
@@ -472,7 +530,7 @@ SELECT
         pp.Price + (pp.Price * COALESCE(
             charge.CalculatedExtraCharge, pricing.CalculatedExtraCharge, 0) / 100.0)
     , 2), 0) AS RetailPriceVat,
-    ISNULL(rc.CurrencyCode, 'EUR') AS RetailCurrencyCode, p.Updated
+    'EUR' AS RetailCurrencyCode, p.Updated
 FROM Product p
 INNER JOIN ChangedProductIds c ON c.ID = p.ID
 OUTER APPLY (

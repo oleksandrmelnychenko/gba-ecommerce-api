@@ -1,5 +1,3 @@
-using GBA.Domain.Entities;
-
 namespace GBA.Ecommerce.Api.Tests;
 
 public sealed class RetailCurrencyInvariantTests {
@@ -12,30 +10,34 @@ public sealed class RetailCurrencyInvariantTests {
     ];
 
     [Fact]
-    public void Public_retail_storage_selection_is_always_constrained_to_eur() {
-        Assert.Equal("EUR", EcommerceRetailDefaults.CurrencyCode);
-
+    public void Public_retail_storage_selection_uses_the_configured_shop_agreement() {
         foreach (string path in RetailServicePaths) {
             string source = File.ReadAllText(RepositoryPath(path));
 
-            Assert.DoesNotContain(".GetWithHighestPriority();", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("EcommerceRetailDefaults", source, StringComparison.Ordinal);
             Assert.DoesNotContain(
-                ".GetWithHighestPriority(",
-                source.Replace(
-                    ".GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode)",
-                    string.Empty,
-                    StringComparison.Ordinal),
+                ".GetWithHighestPriority(\"EUR\")",
+                source,
                 StringComparison.Ordinal);
         }
     }
 
     [Fact]
-    public void Search_projection_uses_the_same_eur_retail_graph() {
+    public void Search_projection_uses_the_selected_dynamic_retail_graph() {
         string source = File.ReadAllText(RepositoryPath(
             "src/GBA.Search/Sync/ProductSyncRepository.cs"));
 
-        Assert.Equal(3, CountOccurrences(source, "AND c.Code = 'EUR'"));
+        Assert.DoesNotContain("c.Code = 'EUR'", source, StringComparison.Ordinal);
+        Assert.Equal(
+            3,
+            CountOccurrences(
+                source,
+                "ORDER BY s.RetailPriority, a.IsSelected DESC, ca.ID"));
         Assert.Equal(3, CountOccurrences(source, "AND a.IsActive = 1"));
+        Assert.Equal(
+            3,
+            CountOccurrences(source, "'EUR' AS RetailCurrencyCode"));
+        Assert.Contains("HasRetailConfigurationChangesSql", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -44,8 +46,15 @@ public sealed class RetailCurrencyInvariantTests {
             "src/GBA.Domain/Repositories/Storages/StorageRepository.cs"));
 
         Assert.Contains("[RetailAgreement].IsActive = 1", source, StringComparison.Ordinal);
-        Assert.Contains("[RetailCurrency].Code = @RetailCurrencyCode", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "AND (@RetailCurrencyCode IS NULL OR [RetailCurrency].Code = @RetailCurrencyCode)",
+            source,
+            StringComparison.Ordinal);
         Assert.Contains("[RetailClient].IsForRetail = 1", source, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "AND (@RetailCurrencyCode IS NULL OR EXISTS",
+            source,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -65,6 +74,7 @@ public sealed class RetailCurrencyInvariantTests {
             "ORDER BY [Agreement].IsSelected DESC, [ClientAgreement].ID",
             method,
             StringComparison.Ordinal);
+        Assert.Contains("agreement.Currency = currency", method, StringComparison.Ordinal);
     }
 
     private static string RepositoryPath(string relativePath) {

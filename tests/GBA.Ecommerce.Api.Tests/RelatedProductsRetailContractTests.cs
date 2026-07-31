@@ -23,7 +23,7 @@ public sealed class RelatedProductsRetailContractTests {
             source,
             StringComparison.Ordinal);
         Assert.Contains(
-            "component.CurrencyCode = EcommerceRetailDefaults.CurrencyCode",
+            "component.CurrencyCode = retailAgreement.Agreement.Currency?.Code",
             source,
             StringComparison.Ordinal);
     }

@@ -745,11 +745,12 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             ClientAgreement selectedAgreement = clientAgreementRepository.GetSelectedByClientNetId(netId) ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(netId);
             if (selectedAgreement == null) {
                 selectedAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(netId);
+                if (selectedAgreement?.Agreement == null)
+                    return Task.FromResult(Enumerable.Empty<OrderItem>());
+
                 selectedAgreement.Agreement.IsSelected = true;
                 agreementRepository.Update(selectedAgreement.Agreement);
             }
-
-            selectedAgreement = clientAgreementRepository.GetSelectedByClientNetId(netId) ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(netId);
 
             IEnumerable<OrderItem> orderItems = _saleRepositoriesFactory
                 .NewOrderItemRepository(connection)
@@ -952,7 +953,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
             Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
-                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+                .GetWithHighestPriority();
 
             ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
                 _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,

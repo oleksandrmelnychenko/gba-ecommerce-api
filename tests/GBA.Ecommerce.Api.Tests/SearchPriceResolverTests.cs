@@ -20,7 +20,8 @@ public sealed class SearchPriceResolverTests {
             document,
             calculated,
             isAnonymous: true,
-            withVat: false);
+            withVat: false,
+            configuredCurrencyCode: "EUR");
 
         Assert.Same(calculated, result);
         Assert.Equal(31.25m, result.Price);
@@ -38,15 +39,19 @@ public sealed class SearchPriceResolverTests {
             document,
             new ProductPriceInfo { Price = 0, CurrencyCode = "EUR" },
             isAnonymous: true,
-            withVat: false);
+            withVat: false,
+            configuredCurrencyCode: "EUR");
         ProductPriceInfo vatResult = ProductsController.ResolveSearchPrice(
             document,
             new ProductPriceInfo { Price = 0, CurrencyCode = "EUR" },
             isAnonymous: true,
-            withVat: true);
+            withVat: true,
+            configuredCurrencyCode: "EUR");
 
         Assert.Equal(27.17m, result.Price);
+        Assert.Equal(27.17m, result.LocalPrice);
         Assert.Equal(32.60m, vatResult.Price);
+        Assert.Equal(32.60m, vatResult.LocalPrice);
         Assert.Equal("EUR", result.CurrencyCode);
     }
 
@@ -65,9 +70,28 @@ public sealed class SearchPriceResolverTests {
             document,
             calculated,
             isAnonymous: false,
-            withVat: false);
+            withVat: false,
+            configuredCurrencyCode: "EUR");
 
         Assert.Same(calculated, result);
         Assert.Equal(0, result.Price);
+    }
+
+    [Fact]
+    public void Stale_indexed_currency_cannot_override_current_store_agreement() {
+        ProductSearchDocument document = new() {
+            RetailPrice = 27.17m,
+            RetailCurrencyCode = "EUR"
+        };
+
+        ProductPriceInfo result = ProductsController.ResolveSearchPrice(
+            document,
+            new ProductPriceInfo { Price = 0, CurrencyCode = "UAH" },
+            isAnonymous: true,
+            withVat: false,
+            configuredCurrencyCode: "UAH");
+
+        Assert.Equal(0, result.Price);
+        Assert.Equal("UAH", result.CurrencyCode);
     }
 }

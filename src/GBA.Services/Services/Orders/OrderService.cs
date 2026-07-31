@@ -448,7 +448,7 @@ public sealed class OrderService : IOrderService {
         if (clientAgreement == null) {
             storage = _storageRepositoryFactory
                 .NewStorageRepository(connection)
-                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+                .GetWithHighestPriority();
             if (storage == null || !storage.OrganizationId.HasValue)
                 throw new InvalidOperationException("Retail storage is not configured.");
 
@@ -960,7 +960,7 @@ public sealed class OrderService : IOrderService {
                 throw new ArgumentException("A valid retail client is required.");
 
             Storage storage = storageRepository
-                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+                .GetWithHighestPriority();
             if (storage == null || !storage.OrganizationId.HasValue)
                 throw new InvalidOperationException("Retail storage is not configured.");
 
@@ -1232,7 +1232,7 @@ public sealed class OrderService : IOrderService {
             RetailClient retailClient = retailClientRepository.GetByNetId(retailClientNetId);
 
             Storage storage = storageRepository
-                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+                .GetWithHighestPriority();
 
             ClientAgreement clientAgreement =
                 clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(clientForRetail.NetUid, storage.OrganizationId.Value, retailClient.EcommerceRegion.IsLocalPayment);
@@ -1502,7 +1502,7 @@ public sealed class OrderService : IOrderService {
             IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
 
             Storage storage = storageRepository
-                .GetWithHighestPriority(EcommerceRetailDefaults.CurrencyCode);
+                .GetWithHighestPriority();
             if (storage == null || !storage.OrganizationId.HasValue)
                 throw new InvalidOperationException("Retail storage is not configured.");
 
