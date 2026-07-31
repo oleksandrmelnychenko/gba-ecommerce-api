@@ -77,6 +77,38 @@ public sealed class RetailCurrencyInvariantTests {
         Assert.Contains("agreement.Currency = currency", method, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Cart_preview_and_checkout_use_the_product_aware_filtered_fx_rate() {
+        string[] pricingPaths = [
+            "src/GBA.Services/Services/Clients/ClientShoppingCartService.cs",
+            "src/GBA.Services/Services/Orders/OrderService.cs"
+        ];
+
+        foreach (string path in pricingPaths) {
+            string source = File.ReadAllText(RepositoryPath(path));
+
+            Assert.Contains(
+                ".GetEuroExchangeRateByCurrentCultureFiltered(",
+                source,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                ".GetByCurrencyCodeAndCurrentCulture(",
+                source,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                "CurrentLocalPrice / product.CurrentPrice",
+                source,
+                StringComparison.Ordinal);
+        }
+
+        string orderService = File.ReadAllText(RepositoryPath(pricingPaths[1]));
+        Assert.Contains("GetRetailAgreement(connection, storage, withVat)", orderService, StringComparison.Ordinal);
+        Assert.Contains(
+            "ApplyAuthoritativeRetailProduct(connection, storage, clientAgreement, orderItem)",
+            orderService,
+            StringComparison.Ordinal);
+    }
+
     private static string RepositoryPath(string relativePath) {
         DirectoryInfo? directory = new(AppContext.BaseDirectory);
         while (directory != null) {

@@ -19,7 +19,6 @@ using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.Clients;
 using GBA.Domain.Entities.Delivery;
-using GBA.Domain.Entities.ExchangeRates;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.Entities.Sales.LifeCycleStatuses;
@@ -98,28 +97,54 @@ public sealed class OrderService : IOrderService {
         _clientResourceAccessService = clientResourceAccessService;
     }
 
-    /// <summary>
-    /// Resolves the booked FX rate from the ExchangeRate table for the given agreement currency in
-    /// the current culture. The rate is server-authoritative and is NOT derived from
-    /// CurrentLocalPrice / CurrentPrice: dbo.GetCalculatedProductLocalPriceWithSharesAndVat
-    /// currently returns the agreement-currency price unchanged, so that ratio booked every EUR
-    /// sale at 1 EUR = 1 UAH. Returns 0 when no rate row exists (the agreement is already in the
-    /// local currency), in which case the caller keeps the repository's local price.
-    /// </summary>
-    private decimal ResolveLocalExchangeRate(IDbConnection connection, string currencyCode) {
-        if (string.IsNullOrWhiteSpace(currencyCode)) return 0m;
-
-        ExchangeRate exchangeRate = _exchangeRateRepositoriesFactory
+    private decimal ResolveLiveProductExchangeRate(
+        IDbConnection connection,
+        Product product,
+        long currencyId,
+        bool withVat,
+        bool isFromReSale) {
+        decimal exchangeRateAmount = _exchangeRateRepositoriesFactory
             .NewExchangeRateRepository(connection)
-            .GetByCurrencyCodeAndCurrentCulture(currencyCode);
+            .GetEuroExchangeRateByCurrentCultureFiltered(
+                product.NetUid,
+                withVat,
+                isFromReSale,
+                currencyId);
 
-        return exchangeRate != null && exchangeRate.Amount > 0m ? exchangeRate.Amount : 0m;
+        if (exchangeRateAmount <= 0m)
+            throw new InvalidOperationException(
+                $"A valid exchange rate is not configured for product {product.NetUid} and currency {currencyId}.");
+
+        return exchangeRateAmount;
+    }
+
+    private ClientAgreement GetRetailAgreement(
+        IDbConnection connection,
+        Storage storage,
+        bool withVat) {
+        Client retailClient = _clientRepositoriesFactory
+            .NewClientRepository(connection)
+            .GetRetailClient();
+        if (retailClient == null)
+            throw new InvalidOperationException("Retail client is not configured.");
+
+        ClientAgreement retailAgreement = _clientRepositoriesFactory
+            .NewClientAgreementRepository(connection)
+            .GetByClientNetIdWithOrWithoutVat(
+                retailClient.NetUid,
+                storage.OrganizationId.Value,
+                withVat);
+        if (retailAgreement?.Agreement?.Currency == null ||
+            !retailAgreement.Agreement.CurrencyId.HasValue)
+            throw new InvalidOperationException("Retail agreement currency is not configured.");
+
+        return retailAgreement;
     }
 
     private OrderItem ApplyAuthoritativeRetailProduct(
         IDbConnection connection,
         Storage storage,
-        bool withVat,
+        ClientAgreement retailAgreement,
         OrderItem orderItem) {
         if (orderItem?.Product == null || orderItem.Product.NetUid == Guid.Empty)
             throw new ArgumentException("Every order item must reference a valid product.");
@@ -127,6 +152,7 @@ public sealed class OrderService : IOrderService {
         if (!double.IsFinite(orderItem.Qty) || orderItem.Qty <= 0 || orderItem.Qty > 100000)
             throw new ArgumentException("Order item quantity is invalid.");
 
+        bool withVat = retailAgreement.Agreement.WithVATAccounting;
         Product product = _productRepositoriesFactory
             .NewGetSingleProductRepository(connection)
             .GetByNetIdForRetail(orderItem.Product.NetUid, storage.OrganizationId.Value, withVat);
@@ -135,19 +161,21 @@ public sealed class OrderService : IOrderService {
         if (!EcommercePurchasability.HasSellablePrice(product))
             throw new ArgumentException(EcommercePurchasability.NotPricedMessage);
 
-        decimal exchangeRateAmount = ResolveLocalExchangeRate(connection, product.CurrencyCode);
-        if (exchangeRateAmount > 0m)
-            product.CurrentLocalPrice = decimal.Round(
-                product.CurrentPrice * exchangeRateAmount, 2, MidpointRounding.AwayFromZero);
+        decimal exchangeRateAmount = ResolveLiveProductExchangeRate(
+            connection,
+            product,
+            retailAgreement.Agreement.CurrencyId.Value,
+            withVat,
+            false);
+        product.CurrentLocalPrice = decimal.Round(
+            product.CurrentPrice * exchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
         // All commercial fields are server-authoritative. The browser only selects
         // the product capability and quantity.
         orderItem.Product = product;
         orderItem.ProductId = product.Id;
         orderItem.PricePerItem = product.CurrentPrice;
-        orderItem.ExchangeRateAmount = exchangeRateAmount > 0m
-            ? exchangeRateAmount
-            : decimal.Round(product.CurrentLocalPrice / product.CurrentPrice, 14, MidpointRounding.AwayFromZero);
+        orderItem.ExchangeRateAmount = exchangeRateAmount;
         orderItem.TotalAmount = decimal.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
         orderItem.TotalAmountLocal = decimal.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
         orderItem.OverLordQty = orderItem.Qty;
@@ -191,18 +219,20 @@ public sealed class OrderService : IOrderService {
         if (!EcommercePurchasability.HasSellablePrice(product))
             throw new ArgumentException(EcommercePurchasability.NotPricedMessage);
 
-        decimal exchangeRateAmount = ResolveLocalExchangeRate(
-            connection, clientAgreement.Agreement.Currency?.Code ?? product.CurrencyCode);
-        if (exchangeRateAmount > 0m)
-            product.CurrentLocalPrice = decimal.Round(
-                product.CurrentPrice * exchangeRateAmount, 2, MidpointRounding.AwayFromZero);
+        decimal exchangeRateAmount = ResolveLiveProductExchangeRate(
+            connection,
+            product,
+            clientAgreement.Agreement.CurrencyId ??
+            throw new InvalidOperationException("Client agreement currency is not configured."),
+            clientAgreement.Agreement.WithVATAccounting,
+            false);
+        product.CurrentLocalPrice = decimal.Round(
+            product.CurrentPrice * exchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
         orderItem.Product = product;
         orderItem.ProductId = product.Id;
         orderItem.PricePerItem = product.CurrentPrice;
-        orderItem.ExchangeRateAmount = exchangeRateAmount > 0m
-            ? exchangeRateAmount
-            : decimal.Round(product.CurrentLocalPrice / product.CurrentPrice, 14, MidpointRounding.AwayFromZero);
+        orderItem.ExchangeRateAmount = exchangeRateAmount;
         orderItem.TotalAmount = decimal.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
         orderItem.TotalAmountLocal = decimal.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
         orderItem.OneTimeDiscount = 0;
@@ -443,6 +473,7 @@ public sealed class OrderService : IOrderService {
               ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(clientNetId);
 
         Storage storage = null;
+        ClientAgreement retailAgreement = null;
         bool withVat = false;
 
         if (clientAgreement == null) {
@@ -453,6 +484,7 @@ public sealed class OrderService : IOrderService {
                 throw new InvalidOperationException("Retail storage is not configured.");
 
             withVat = storage.ForVatProducts;
+            retailAgreement = GetRetailAgreement(connection, storage, withVat);
         }
 
         order.TotalAmount = 0m;
@@ -461,8 +493,8 @@ public sealed class OrderService : IOrderService {
         order.OverLordTotalAmountLocal = 0m;
 
         foreach (OrderItem orderItem in order.OrderItems) {
-            if (clientAgreement == null)
-                ApplyAuthoritativeRetailProduct(connection, storage, withVat, orderItem);
+            if (retailAgreement != null)
+                ApplyAuthoritativeRetailProduct(connection, storage, retailAgreement, orderItem);
             else
                 ApplyAuthoritativeClientProduct(connection, clientAgreement, orderItem);
 
@@ -983,7 +1015,7 @@ public sealed class OrderService : IOrderService {
                 .Add(order);
 
             foreach (OrderItem orderItem in sale.Order.OrderItems.Where(i => i.Qty > 0)) {
-                ApplyAuthoritativeRetailProduct(connection, storage, withVat, orderItem);
+                ApplyAuthoritativeRetailProduct(connection, storage, clientAgreement, orderItem);
 
                 ProductAvailability productAvailability =
                     productAvailabilityRepository.GetByProductAndStorageIds(orderItem.ProductId, storage.Id);
@@ -1506,10 +1538,15 @@ public sealed class OrderService : IOrderService {
             if (storage == null || !storage.OrganizationId.HasValue)
                 throw new InvalidOperationException("Retail storage is not configured.");
 
+            ClientAgreement retailAgreement = GetRetailAgreement(
+                connection,
+                storage,
+                storage.ForVatProducts);
+
             _ = retailClientId;
 
             foreach (OrderItem orderItem in orderItems) {
-                ApplyAuthoritativeRetailProduct(connection, storage, storage.ForVatProducts, orderItem);
+                ApplyAuthoritativeRetailProduct(connection, storage, retailAgreement, orderItem);
 
                 ProductAvailability productAvailability = productAvailabilityRepository.GetByProductAndStorageIds(orderItem.ProductId, storage.Id);
 

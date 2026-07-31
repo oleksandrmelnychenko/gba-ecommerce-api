@@ -15,7 +15,6 @@ using GBA.Common.Search;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.Clients;
-using GBA.Domain.Entities.ExchangeRates;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.Repositories.Agreements.Contracts;
@@ -44,21 +43,25 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         return orderItem;
     }
 
-    /// <summary>
-    /// Resolves the booked FX rate from the ExchangeRate table for the agreement currency in the
-    /// current culture. Server-authoritative, and deliberately not derived from
-    /// CurrentLocalPrice / CurrentPrice - that ratio is currently 1 for EUR agreements because the
-    /// local-price UDF returns the agreement-currency price unchanged. Returns 0 when the currency
-    /// has no rate row, in which case the caller keeps the repository's local price.
-    /// </summary>
-    private decimal ResolveLocalExchangeRate(IDbConnection connection, string currencyCode) {
-        if (string.IsNullOrWhiteSpace(currencyCode)) return 0m;
-
-        ExchangeRate exchangeRate = _exchangeRateRepositoriesFactory
+    private decimal ResolveLiveProductExchangeRate(
+        IDbConnection connection,
+        Product product,
+        ClientAgreement clientAgreement) {
+        long currencyId = clientAgreement?.Agreement?.CurrencyId ??
+            throw new InvalidOperationException("Client agreement currency is not configured.");
+        decimal exchangeRateAmount = _exchangeRateRepositoriesFactory
             .NewExchangeRateRepository(connection)
-            .GetByCurrencyCodeAndCurrentCulture(currencyCode);
+            .GetEuroExchangeRateByCurrentCultureFiltered(
+                product.NetUid,
+                clientAgreement.Agreement.WithVATAccounting,
+                false,
+                currencyId);
 
-        return exchangeRate != null && exchangeRate.Amount > 0m ? exchangeRate.Amount : 0m;
+        if (exchangeRateAmount <= 0m)
+            throw new InvalidOperationException(
+                $"A valid exchange rate is not configured for product {product.NetUid} and currency {currencyId}.");
+
+        return exchangeRateAmount;
     }
 
     private OrderItem ApplyAuthoritativeProduct(
@@ -88,18 +91,17 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         if (!EcommercePurchasability.HasSellablePrice(product))
             throw new ArgumentException(EcommercePurchasability.NotPricedMessage);
 
-        decimal exchangeRateAmount = ResolveLocalExchangeRate(
-            connection, clientAgreement.Agreement.Currency?.Code ?? product.CurrencyCode);
-        if (exchangeRateAmount > 0m)
-            product.CurrentLocalPrice = decimal.Round(
-                product.CurrentPrice * exchangeRateAmount, 2, MidpointRounding.AwayFromZero);
+        decimal exchangeRateAmount = ResolveLiveProductExchangeRate(
+            connection,
+            product,
+            clientAgreement);
+        product.CurrentLocalPrice = decimal.Round(
+            product.CurrentPrice * exchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
         orderItem.Product = product;
         orderItem.ProductId = product.Id;
         orderItem.PricePerItem = product.CurrentPrice;
-        orderItem.ExchangeRateAmount = exchangeRateAmount > 0m
-            ? exchangeRateAmount
-            : decimal.Round(product.CurrentLocalPrice / product.CurrentPrice, 14, MidpointRounding.AwayFromZero);
+        orderItem.ExchangeRateAmount = exchangeRateAmount;
         orderItem.TotalAmount = decimal.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
         orderItem.TotalAmountLocal = decimal.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
         orderItem.OverLordQty = orderItem.Qty;
