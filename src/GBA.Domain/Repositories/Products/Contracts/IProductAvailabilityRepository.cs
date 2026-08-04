@@ -25,6 +25,26 @@ public interface IProductAvailabilityRepository {
 
     IEnumerable<ProductAvailability> GetByProductAndOrganizationIds(long productId, long organizationId, bool vatStorage, bool withReSale = false, long? storageId = null);
 
+    /// <summary>
+    /// Returns the free stock that the authenticated ecommerce cart can actually reserve.
+    /// </summary>
+    IEnumerable<ProductAvailability> GetForEcommercePurchase(
+        long productId,
+        long organizationId,
+        bool withVat,
+        string culture);
+
+    /// <summary>
+    /// Resolves live, free ecommerce stock for a search result page. Anonymous retail is scoped
+    /// to one concrete retail storage; authenticated clients are scoped to their agreement.
+    /// </summary>
+    Dictionary<long, double> GetEcommerceSellableQuantities(
+        IReadOnlyCollection<long> productIds,
+        long? retailStorageId,
+        long? organizationId,
+        bool withVat,
+        string culture);
+
     List<ProductAvailability> GetAllByStorageNetIdFiltered(Guid netId, long limit, long offset, string value);
 
     List<ProductAvailability> GetAllOnDefectiveStoragesByProductId(long id);

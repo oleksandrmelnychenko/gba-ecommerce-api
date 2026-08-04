@@ -7,7 +7,11 @@ public sealed class RelatedProductsRetailContractTests {
             "src/GBA.Services/Services/Products/ProductService.cs"));
 
         Assert.Contains(
-            "TryGetRetailContext(connection, out _, out ClientAgreement clientAgreement)",
+            "TryGetRetailContext(connection, out Storage storage, out ClientAgreement clientAgreement)",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "storage.Id",
             source,
             StringComparison.Ordinal);
         Assert.Contains(

@@ -155,7 +155,11 @@ public sealed class OrderService : IOrderService {
         bool withVat = retailAgreement.Agreement.WithVATAccounting;
         Product product = _productRepositoriesFactory
             .NewGetSingleProductRepository(connection)
-            .GetByNetIdForRetail(orderItem.Product.NetUid, storage.OrganizationId.Value, withVat);
+            .GetByNetIdForRetail(
+                orderItem.Product.NetUid,
+                storage.Id,
+                storage.OrganizationId.Value,
+                withVat);
         if (!EcommercePurchasability.IsPurchasable(product))
             throw new ArgumentException(EcommercePurchasability.NotAvailableMessage);
         if (!EcommercePurchasability.HasSellablePrice(product))
@@ -693,10 +697,11 @@ public sealed class OrderService : IOrderService {
                         } else {
                             IEnumerable<ProductAvailability> productAvailabilities =
                                 productAvailabilityRepository
-                                    .GetByProductAndOrganizationIds(
+                                    .GetForEcommercePurchase(
                                         orderItem.ProductId,
                                         order.ClientAgreement.Agreement.Organization.Id,
-                                        withVat
+                                        withVat,
+                                        CultureInfo.CurrentCulture.TwoLetterISOLanguageName
                                     );
 
                             double toDecreaseAmount = orderItem.Qty - fromCartItem.Qty;
@@ -705,10 +710,11 @@ public sealed class OrderService : IOrderService {
 
                             orderItemRepository.Update(fromCartItem);
 
-                            if (productAvailabilities.Sum(a => a.Amount) < toDecreaseAmount) {
-                                orderItem.Qty -= toDecreaseAmount - productAvailabilities.Sum(a => a.Amount);
+                            double sellableQuantity = productAvailabilities.Sum(a => Math.Max(0d, a.Amount));
+                            if (sellableQuantity < toDecreaseAmount) {
+                                orderItem.Qty -= toDecreaseAmount - sellableQuantity;
 
-                                toDecreaseAmount = productAvailabilities.Sum(a => a.Amount);
+                                toDecreaseAmount = sellableQuantity;
                             }
 
                             orderItem.Id = orderItemRepository.Add(orderItem);
@@ -788,15 +794,17 @@ public sealed class OrderService : IOrderService {
 
                 IEnumerable<ProductAvailability> productAvailabilities =
                     productAvailabilityRepository
-                        .GetByProductAndOrganizationIds(
+                        .GetForEcommercePurchase(
                             orderItem.ProductId,
                             order.ClientAgreement.Agreement.Organization.Id,
-                            withVat
+                            withVat,
+                            CultureInfo.CurrentCulture.TwoLetterISOLanguageName
                         );
 
                 if (!productAvailabilities.Any()) continue;
 
-                if (productAvailabilities.Sum(a => a.Amount) < orderItem.Qty) orderItem.Qty = productAvailabilities.Sum(a => a.Amount);
+                double sellableQuantity = productAvailabilities.Sum(a => Math.Max(0d, a.Amount));
+                if (sellableQuantity < orderItem.Qty) orderItem.Qty = sellableQuantity;
 
                 double toDecreaseQty = orderItem.Qty;
 
@@ -1020,7 +1028,7 @@ public sealed class OrderService : IOrderService {
                 ProductAvailability productAvailability =
                     productAvailabilityRepository.GetByProductAndStorageIds(orderItem.ProductId, storage.Id);
 
-                if (productAvailability == null || productAvailability.Amount.Equals(0)) {
+                if (productAvailability == null || productAvailability.Amount <= 0) {
                     orderItem.IsMisplacedItem = true;
                     misplacedOrderItems.Add(orderItem);
                     continue;
@@ -1550,7 +1558,7 @@ public sealed class OrderService : IOrderService {
 
                 ProductAvailability productAvailability = productAvailabilityRepository.GetByProductAndStorageIds(orderItem.ProductId, storage.Id);
 
-                if (productAvailability == null || productAvailability.Amount.Equals(0))
+                if (productAvailability == null || productAvailability.Amount <= 0)
                     orderItem.IsMisplacedItem = true;
             }
 

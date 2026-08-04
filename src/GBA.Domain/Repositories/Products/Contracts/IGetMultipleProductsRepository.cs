@@ -97,7 +97,8 @@ public interface IGetMultipleProductsRepository {
         Guid clientAgreementNetId,
         long? organizationId,
         long? currencyId,
-        bool withVat);
+        bool withVat,
+        long? retailStorageId = null);
 
     List<FromSearchProduct> GetAllComponentsByProductIdWithCalculatedPrices(long productId, Guid nonVatAgreementNetId, Guid? vatAgreementNetId);
 

@@ -50,6 +50,8 @@ public sealed class SignUpService : ISignUpService {
         Client client,
         string password,
         Guid ecommerceRegionNetId) {
+        await _clientAgreementService.EnsureDefaultAgreementTemplateAvailable();
+
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
             IIdentityRepository identityRepository = _identityRepositoriesFactory.NewIdentityRepository();
             IClientRepository clientRepository = _clientRepositoriesFactory.NewClientRepository(connection);

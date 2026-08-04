@@ -10,6 +10,7 @@ using GBA.Common.WebApi.RoutingConfiguration.Maps;
 using GBA.Domain.Entities.Clients;
 using GBA.Domain.EntityHelpers;
 using GBA.Services.Services.Clients.Contracts;
+using GBA.Services.Services.Clients;
 using GBA.Services.Services.UserManagement.Contracts;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -43,17 +44,29 @@ public sealed class UserManagementController(
             return BadRequest(ErrorResponseBody("Ecommerce region is required", HttpStatusCode.BadRequest));
 
         Client client = BuildSignUpClient(request.Client);
-        Tuple<IdentityResponse, Client> identityResponse = await signUpService.SignUp(
-            client,
-            request.Password,
-            request.EcommerceRegionNetId
-        );
+        Tuple<IdentityResponse, Client> identityResponse;
+        try {
+            identityResponse = await signUpService.SignUp(
+                client,
+                request.Password,
+                request.EcommerceRegionNetId
+            );
+        } catch (DefaultAgreementTemplateUnavailableException) {
+            return StatusCode(
+                (int)HttpStatusCode.ServiceUnavailable,
+                ErrorResponseBody("Registration is temporarily unavailable.", HttpStatusCode.ServiceUnavailable));
+        }
 
         if (identityResponse.Item1.Succeeded) {
             await clientRegistrationTaskService.Add(identityResponse.Item2);
 
             Tuple<bool, string, CompleteAccessToken> result =
                 await requestTokenService.RequestToken(client.MobileNumber, request.Password);
+
+            if (!result.Item1 || result.Item3 == null)
+                return StatusCode(
+                    (int)HttpStatusCode.InternalServerError,
+                    ErrorResponseBody("Account was created, but the session could not be started. Sign in again.", HttpStatusCode.InternalServerError));
 
             return Ok(SuccessResponseBody(result.Item3));
         }

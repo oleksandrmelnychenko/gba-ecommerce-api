@@ -182,7 +182,7 @@ public sealed class StorageRepository : IStorageRepository {
             "AND [RetailAgreement].IsActive = 1 " +
             "AND (@RetailCurrencyCode IS NULL OR [RetailCurrency].Code = @RetailCurrencyCode) " +
             ") " +
-            "ORDER BY [Storage].RetailPriority ASC ",
+            "ORDER BY [Storage].RetailPriority ASC, [Storage].ID ASC ",
             (storage, organization, vatRate) => {
                 if (organization != null) organization.VatRate = vatRate;
                 storage.Organization = organization;

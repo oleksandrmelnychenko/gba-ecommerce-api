@@ -4067,7 +4067,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
         Guid clientAgreementNetId,
         long? organizationId,
         long? currencyId,
-        bool withVat) {
+        bool withVat,
+        long? retailStorageId = null) {
         List<FromSearchProduct> analogues = new();
         List<ProductAvailability> productAvailabilities = new();
 
@@ -4168,6 +4169,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "LEFT JOIN [ProductAvailability] " +
             "ON [ProductAvailability].ProductID = [Analogue].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
+            "AND (@RetailStorageId IS NULL OR [ProductAvailability].StorageID = @RetailStorageId) " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "LEFT JOIN [ProductSlug] " +
@@ -4199,7 +4201,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
                 CurrencyId = currencyId,
                 OrganizationId = organizationId,
-                WithVat = true
+                WithVat = withVat,
+                RetailStorageId = retailStorageId
             },
             splitOn: "ID,CurrencyCode"
         );

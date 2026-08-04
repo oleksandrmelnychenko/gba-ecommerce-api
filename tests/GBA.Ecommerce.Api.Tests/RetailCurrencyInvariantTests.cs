@@ -32,7 +32,7 @@ public sealed class RetailCurrencyInvariantTests {
             3,
             CountOccurrences(
                 source,
-                "ORDER BY s.RetailPriority, a.IsSelected DESC, ca.ID"));
+                "ORDER BY s.RetailPriority, s.ID, a.IsSelected DESC, ca.ID"));
         Assert.Equal(3, CountOccurrences(source, "AND a.IsActive = 1"));
         Assert.Equal(
             3,

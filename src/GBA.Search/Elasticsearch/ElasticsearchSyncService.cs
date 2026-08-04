@@ -410,7 +410,10 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             HasImage = data.HasImage,
             Image = data.Image ?? "",
             MeasureUnitId = data.MeasureUnitId,
-            Available = data.AvailableQty > 0,
+            Available = data.AvailableQtyUk > 0 ||
+                        data.AvailableQtyUkVat > 0 ||
+                        data.AvailableQtyPl > 0 ||
+                        data.AvailableQtyPlVat > 0,
             AvailableQtyUk = data.AvailableQtyUk + data.AvailableQtyUkVat,
             AvailableQtyUkVat = data.AvailableQtyUkVat,
             AvailableQtyPl = data.AvailableQtyPl + data.AvailableQtyPlVat,

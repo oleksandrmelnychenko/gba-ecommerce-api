@@ -1261,6 +1261,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "LEFT JOIN [ProductAvailability] " +
             "ON [ProductAvailability].ProductID = [Analogue].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
+            "AND [ProductAvailability].StorageID = @StorageId " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "AND [Storage].Deleted = 0 " +
@@ -1315,7 +1316,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
         return productToReturn;
     }
 
-    public Product GetByNetIdForRetail(Guid netId, long organizationId, bool withVat) {
+    public Product GetByNetIdForRetail(Guid netId, long storageId, long organizationId, bool withVat) {
         ClientAgreement clientAgreement = _connection.Query<ClientAgreement, Agreement, ClientAgreement>(
             "SELECT [ClientAgreement].* " +
             ", [Agreement].* " +
@@ -1413,6 +1414,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "LEFT JOIN [ProductAvailability] " +
             "ON [ProductAvailability].ProductID = [Product].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
+            "AND [ProductAvailability].StorageID = @StorageId " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "AND [Storage].Deleted = 0 " +
@@ -1434,8 +1436,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "ON [SupplyOrderUkraineItem].ProductID = Product.ID " +
             "LEFT JOIN [SupplyOrderUkraine] " +
             "ON [SupplyOrderUkraine].ID = [SupplyOrderUkraineItem].SupplyOrderUkraineID " +
-            "WHERE Product.NetUID = @NetId " +
-            "AND (Storage.ForEcommerce = 1 OR Storage.ID IS NULL) ";
+            "WHERE Product.NetUID = @NetId ";
 
         Type[] productTypes = {
             typeof(Product),
@@ -1557,6 +1558,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
                 NetId = netId,
                 Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
                 ClientAgreementNetId = clientAgreement.NetUid,
+                StorageId = storageId,
                 WithVat = clientAgreement.Agreement.WithVATAccounting,
                 clientAgreement.Agreement.OrganizationId,
                 clientAgreement.Agreement.CurrencyId
@@ -1684,9 +1686,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "ON [ProductImage].ProductID = [Analogue].ID " +
             "AND [ProductImage].Deleted = 0 " +
             "WHERE [ProductAnalogue].BaseProductID = @Id " +
-            "AND [ProductAnalogue].Deleted = 0 " +
-            "AND [Storage].Locale = @Culture " +
-            "AND [Storage].ForEcommerce = 1 ";
+            "AND [ProductAnalogue].Deleted = 0 ";
 
         _connection.Query(
             analogueExpression,
@@ -2242,6 +2242,22 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
         );
 
         return productToReturn;
+    }
+
+    public Guid? GetNetIdBySlug(string slug) {
+        return _connection.Query<Guid?>(
+            "SELECT TOP (1) [Product].NetUID " +
+            "FROM [ProductSlug] " +
+            "INNER JOIN [Product] ON [Product].ID = [ProductSlug].ProductID " +
+            "WHERE [ProductSlug].Deleted = 0 " +
+            "AND [ProductSlug].Locale = @Culture " +
+            "AND [ProductSlug].Url = @Slug " +
+            "AND [Product].Deleted = 0 " +
+            "ORDER BY [ProductSlug].Updated DESC, [ProductSlug].ID DESC",
+            new {
+                Slug = slug,
+                Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName
+            }).FirstOrDefault();
     }
 
     public Product GetBySlug(string slug, Guid? clientAgreementNetId = null) {

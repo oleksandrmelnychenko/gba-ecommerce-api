@@ -80,7 +80,9 @@ public sealed class EcommercePurchasabilityTests {
             RepositoryPath("src/GBA.Services/Services/Clients/ClientShoppingCartService.cs"));
 
         Assert.Equal(2, CountOccurrences(orderService, "EcommercePurchasability.IsPurchasable(product)"));
-        Assert.Equal(1, CountOccurrences(cartService, "EcommercePurchasability.IsPurchasable(product)"));
+        // Authoritative cart add and anonymous pre-check both fail closed on web publication and
+        // price before any stock promise is returned.
+        Assert.Equal(2, CountOccurrences(cartService, "EcommercePurchasability.IsPurchasable(product)"));
     }
 
     private static int CountOccurrences(string source, string marker) {

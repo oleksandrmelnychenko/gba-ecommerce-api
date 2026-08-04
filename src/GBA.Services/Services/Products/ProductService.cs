@@ -72,12 +72,14 @@ public sealed class ProductService : IProductService {
         IGetSingleProductRepository productRepository =
             _productRepositoriesFactory.NewGetSingleProductRepository(connection);
         if (!TryGetRetailContext(connection, out Storage storage, out _)) {
-            return Task.FromResult(productRepository.GetByNetId(productNetId));
+            return Task.FromResult(
+                MakeRetailUnavailable(productRepository.GetByNetId(productNetId)));
         }
 
         return Task.FromResult(
             productRepository.GetByNetIdForRetail(
                 productNetId,
+                storage.Id,
                 storage.OrganizationId.Value,
                 storage.ForVatProducts));
     }
@@ -108,28 +110,19 @@ public sealed class ProductService : IProductService {
         if (clientNetId.Equals(Guid.Empty)) {
             IGetSingleProductRepository productRepository =
                 _productRepositoriesFactory.NewGetSingleProductRepository(connection);
-            Storage storage = _storageRepositoryFactory
-                .NewStorageRepository(connection)
-                .GetWithHighestPriority();
+            Guid? productNetId = productRepository.GetNetIdBySlug(slug);
+            if (!productNetId.HasValue)
+                return Task.FromResult<Product>(null);
 
-            Client retailClient = _clientRepositoriesFactory
-                .NewClientRepository(connection)
-                .GetRetailClient();
-            ClientAgreement retailAgreement = storage?.OrganizationId == null || retailClient == null
-                ? null
-                : _clientRepositoriesFactory
-                    .NewClientAgreementRepository(connection)
-                    .GetByClientNetIdWithOrWithoutVat(
-                        retailClient.NetUid,
-                        storage.OrganizationId.Value,
-                        storage.ForVatProducts);
+            if (!TryGetRetailContext(connection, out Storage storage, out _))
+                return Task.FromResult(
+                    MakeRetailUnavailable(productRepository.GetByNetId(productNetId.Value)));
 
-            if (retailAgreement?.Agreement == null) {
-                return Task.FromResult(productRepository.GetBySlug(slug));
-            }
-
-            return Task.FromResult(
-                productRepository.GetBySlug(slug, retailAgreement.NetUid));
+            return Task.FromResult(productRepository.GetByNetIdForRetail(
+                productNetId.Value,
+                storage.Id,
+                storage.OrganizationId.Value,
+                storage.ForVatProducts));
         }
 
         IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
@@ -146,6 +139,28 @@ public sealed class ProductService : IProductService {
                     vatAgreement?.NetUid
                 )
         );
+    }
+
+    private static Product MakeRetailUnavailable(Product product) {
+        if (product == null) return null;
+
+        product.AvailableQtyUk = 0;
+        product.AvailableQtyUkReSale = 0;
+        product.AvailableQtyUkVAT = 0;
+        product.AvailableQtyPl = 0;
+        product.AvailableQtyPlVAT = 0;
+        product.AvailableQtyRoad = 0;
+        product.CurrentPrice = 0;
+        product.CurrentPriceEurToUah = 0;
+        product.CurrentLocalPrice = 0;
+        product.CurrentPriceReSale = 0;
+        product.CurrentPriceReSaleEurToUah = 0;
+        product.CurrentLocalPriceReSale = 0;
+        product.CurrentWithVatPrice = 0;
+        product.CurrentLocalWithVatPrice = 0;
+        product.ProductAvailabilities?.Clear();
+
+        return product;
     }
 
     public Task<List<FromSearchProduct>> GetAllFromSearch(string value, Guid currentClientNetId, long limit, long offset, bool withVat) {
@@ -938,7 +953,8 @@ public sealed class ProductService : IProductService {
                                     clientAgreement.NetUid,
                                     clientAgreement.Agreement.OrganizationId,
                                     clientAgreement.Agreement.CurrencyId,
-                                    clientAgreement.Agreement.WithVATAccounting
+                                    clientAgreement.Agreement.WithVATAccounting,
+                                    storage.Id
                                 ));
                         else break;
 
@@ -1016,7 +1032,8 @@ public sealed class ProductService : IProductService {
                                 clientAgreement.NetUid,
                                 clientAgreement.Agreement.OrganizationId,
                                 clientAgreement.Agreement.CurrencyId,
-                                clientAgreement.Agreement.WithVATAccounting
+                                clientAgreement.Agreement.WithVATAccounting,
+                                storage.Id
                             ));
                     else break;
 
@@ -1156,7 +1173,7 @@ public sealed class ProductService : IProductService {
 
         if (product == null) return Task.FromResult(new List<FromSearchProduct>());
 
-        if (!TryGetRetailContext(connection, out _, out ClientAgreement clientAgreement))
+        if (!TryGetRetailContext(connection, out Storage storage, out ClientAgreement clientAgreement))
             return Task.FromResult(new List<FromSearchProduct>());
 
         List<FromSearchProduct> analogues = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection)
@@ -1165,7 +1182,8 @@ public sealed class ProductService : IProductService {
                 clientAgreement.NetUid,
                 clientAgreement.Agreement.OrganizationId,
                 clientAgreement.Agreement.CurrencyId,
-                clientAgreement.Agreement.WithVATAccounting
+                clientAgreement.Agreement.WithVATAccounting,
+                storage.Id
             );
 
         return Task.FromResult(analogues);
@@ -1500,6 +1518,51 @@ public sealed class ProductService : IProductService {
             agreement.WithVATAccounting,
             currencyCode,
             cacheKey);
+    }
+
+    public Dictionary<long, double> GetSellableQuantities(
+        List<long> productIds,
+        Guid currentClientNetId,
+        string culture = "uk") {
+        if (productIds == null || productIds.Count == 0)
+            return new Dictionary<long, double>();
+
+        List<long> distinctProductIds = productIds.Distinct().ToList();
+        Dictionary<long, double> unavailable = distinctProductIds.ToDictionary(id => id, _ => 0d);
+        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+
+        IProductAvailabilityRepository availabilityRepository =
+            _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
+
+        if (currentClientNetId == Guid.Empty) {
+            if (!TryGetRetailContext(connection, out Storage storage, out _))
+                return unavailable;
+
+            return availabilityRepository.GetEcommerceSellableQuantities(
+                distinctProductIds,
+                storage.Id,
+                storage.OrganizationId,
+                storage.ForVatProducts,
+                culture);
+        }
+
+        IClientAgreementRepository agreementRepository =
+            _clientRepositoriesFactory.NewClientAgreementRepository(connection);
+        ClientAgreement clientAgreement =
+            agreementRepository.GetSelectedByClientNetId(currentClientNetId)
+            ?? agreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId)
+            ?? agreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
+        Agreement agreement = clientAgreement?.Agreement;
+
+        if (agreement?.OrganizationId == null)
+            return unavailable;
+
+        return availabilityRepository.GetEcommerceSellableQuantities(
+            distinctProductIds,
+            null,
+            agreement.OrganizationId.Value,
+            agreement.WithVATAccounting,
+            culture);
     }
 
     public Dictionary<long, ProductPriceInfo> GetPricesOnly(List<long> productIds, Guid currentClientNetId, bool withVat, string culture = "uk") {

@@ -189,35 +189,19 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             }
 
             ApplyAuthoritativeProduct(connection, clientAgreement, orderItem);
-            _reindexSignal.Request(orderItem.ProductId);
 
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
 
-            IEnumerable<ProductAvailability> productAvailabilities;
-
-            if (clientAgreement.Agreement.WithVATAccounting) {
-                productAvailabilities =
-                    productAvailabilityRepository
-                        .GetByProductAndOrganizationIds(
-                            orderItem.ProductId,
-                            clientAgreement.Agreement.Organization.Id,
-                            clientAgreement.Agreement.WithVATAccounting
-                        );
-            } else {
-                List<Storage> allStorages = _storageRepositoryFactory.NewStorageRepository(connection).GetAllNonDefectiveByCurrentLocale().ToList();
-
-                List<Storage> storages = new(allStorages.Where(s => s.AvailableForReSale));
-                storages.AddRange(allStorages.Where(e => e.OrganizationId.Equals(clientAgreement.Agreement.OrganizationId)));
-
-                productAvailabilities = productAvailabilityRepository
-                    .GetAllByProductAndStorageIds(
-                        orderItem.ProductId,
-                        storages.Select(e => e.Id).ToList());
-            }
+            IEnumerable<ProductAvailability> productAvailabilities =
+                productAvailabilityRepository.GetForEcommercePurchase(
+                    orderItem.ProductId,
+                    clientAgreement.Agreement.Organization.Id,
+                    clientAgreement.Agreement.WithVATAccounting,
+                    CultureInfo.CurrentCulture.TwoLetterISOLanguageName);
 
             if (!productAvailabilities.Any()) throw new Exception("Product is not available");
 
-            double qtyRemainderProducts = productAvailabilities.Sum(a => a.Amount);
+            double qtyRemainderProducts = productAvailabilities.Sum(a => Math.Max(0d, a.Amount));
 
             if (qtyRemainderProducts < orderItem.Qty)
                 throw new LocalizedException(
@@ -239,8 +223,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 if (clientShoppingCart.OrderItems.Any(i => i.ProductId.Equals(orderItem.ProductId))) {
                     OrderItem existingOrderItem = clientShoppingCart.OrderItems.First(i => i.ProductId.Equals(orderItem.ProductId));
 
-                    return Task.FromResult(
-                        UpdateExistingOrderItemInShoppingCart(
+                    OrderItem updatedItem = UpdateExistingOrderItemInShoppingCart(
                             orderItem,
                             connection,
                             productAvailabilityRepository,
@@ -249,14 +232,14 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                             existingOrderItem,
                             clientAgreement.Agreement.CurrencyId,
                             clientAgreement.NetUid
-                        )
-                    );
+                        );
+                    _reindexSignal.Request(orderItem.ProductId);
+                    return Task.FromResult(updatedItem);
                 }
 
                 orderItem.ClientShoppingCartId = clientShoppingCart.Id;
 
-                return Task.FromResult(
-                    AddNewItemToShoppingCart(
+                OrderItem addedItem = AddNewItemToShoppingCart(
                         orderItem,
                         connection,
                         productAvailabilityRepository,
@@ -264,8 +247,9 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                         productAvailabilities,
                         clientAgreement?.Agreement.CurrencyId,
                         clientAgreement?.NetUid
-                    )
-                );
+                    );
+                _reindexSignal.Request(orderItem.ProductId);
+                return Task.FromResult(addedItem);
             }
 
             clientShoppingCart = new ClientShoppingCart {
@@ -279,8 +263,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
             orderItem.ClientShoppingCartId = clientShoppingCart.Id;
 
-            return Task.FromResult(
-                AddNewItemToShoppingCart(
+            OrderItem createdItem = AddNewItemToShoppingCart(
                     orderItem,
                     connection,
                     productAvailabilityRepository,
@@ -288,8 +271,9 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                     productAvailabilities,
                     clientAgreement?.Agreement.CurrencyId,
                     clientAgreement?.NetUid
-                )
-            );
+                );
+            _reindexSignal.Request(orderItem.ProductId);
+            return Task.FromResult(createdItem);
     }
 
     public Task<List<OrderItem>> Add(List<OrderItem> orderItems, Guid clientNetId, bool withVat) {
@@ -306,29 +290,21 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 ClientAgreement vatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(clientNetId, true);
                 ClientAgreement targetAgreement = withVat ? vatAgreement : nonVatAgreement;
                 ApplyAuthoritativeProduct(connection, targetAgreement, orderItems[item]);
-                _reindexSignal.Request(orderItems[item].ProductId);
 
                 IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
 
                 IEnumerable<ProductAvailability> productAvailabilities =
-                    withVat
-                        ? productAvailabilityRepository
-                            .GetByProductAndOrganizationIds(
-                                orderItems[item].ProductId,
-                                vatAgreement.Agreement.Organization.Id,
-                                true
-                            )
-                        : productAvailabilityRepository
-                            .GetByProductAndOrganizationIds(
-                                orderItems[item].ProductId,
-                                nonVatAgreement.Agreement.Organization.Id,
-                                false
-                            );
+                    productAvailabilityRepository.GetForEcommercePurchase(
+                        orderItems[item].ProductId,
+                        targetAgreement.Agreement.Organization.Id,
+                        targetAgreement.Agreement.WithVATAccounting,
+                        CultureInfo.CurrentCulture.TwoLetterISOLanguageName);
 
                 if (!productAvailabilities.Any()) continue;
 
-                if (productAvailabilities.Sum(a => a.Amount) < orderItems[item].Qty)
-                    orderItems[item].Qty = productAvailabilities.Sum(a => a.Amount);
+                double sellableQuantity = productAvailabilities.Sum(a => Math.Max(0d, a.Amount));
+                if (sellableQuantity < orderItems[item].Qty)
+                    orderItems[item].Qty = sellableQuantity;
 
                 IClientShoppingCartRepository clientShoppingCartRepository = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection);
 
@@ -359,6 +335,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                             vatAgreement?.NetUid
                         );
 
+                        _reindexSignal.Request(orderItems[item].ProductId);
+
                         continue;
                     }
 
@@ -374,6 +352,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                         nonVatAgreement?.NetUid,
                         vatAgreement?.NetUid
                     );
+
+                    _reindexSignal.Request(orderItems[item].ProductId);
 
                     continue;
                 }
@@ -398,6 +378,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                     nonVatAgreement?.NetUid,
                     vatAgreement?.NetUid
                 );
+                _reindexSignal.Request(orderItems[item].ProductId);
             }
 
             return Task.FromResult(orderItems.Select(NormalizeOverLordQty).ToList());
@@ -448,8 +429,6 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
             orderItemRepository.UpdateOverLoadQty(orderItem);
 
-            _reindexSignal.Request(orderItem.ProductId);
-
             OrderItem orderItemFromDb = orderItemRepository.GetById(orderItem.Id);
 
             if (orderItem.Qty.Equals(orderItemFromDb.Qty))
@@ -458,35 +437,21 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
             IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
 
-            IEnumerable<ProductAvailability> productAvailabilities;
-
-            if (selectedAgreement.Agreement.WithVATAccounting) {
-                productAvailabilities =
-                    productAvailabilityRepository
-                        .GetByProductAndOrganizationIds(
-                            orderItem.ProductId,
-                            selectedAgreement.Agreement.Organization.Id,
-                            selectedAgreement.Agreement.WithVATAccounting
-                        );
-            } else {
-                List<Storage> allStorages = _storageRepositoryFactory.NewStorageRepository(connection).GetAllNonDefectiveByCurrentLocale().ToList();
-
-                List<Storage> storages = new(allStorages.Where(s => s.AvailableForReSale));
-                storages.AddRange(allStorages.Where(e => e.OrganizationId.Equals(selectedAgreement.Agreement.OrganizationId)));
-
-                productAvailabilities = productAvailabilityRepository
-                    .GetAllByProductAndStorageIds(
-                        orderItem.ProductId,
-                        storages.Select(e => e.Id).ToList());
-            }
+            IEnumerable<ProductAvailability> productAvailabilities =
+                productAvailabilityRepository.GetForEcommercePurchase(
+                    orderItem.ProductId,
+                    selectedAgreement.Agreement.Organization.Id,
+                    selectedAgreement.Agreement.WithVATAccounting,
+                    CultureInfo.CurrentCulture.TwoLetterISOLanguageName);
 
             double qtyDifference = orderItemFromDb.Qty - orderItem.Qty;
 
             if (qtyDifference < 0) {
-                if (productAvailabilities.Sum(a => a.Amount) < Math.Abs(qtyDifference)) {
-                    orderItem.Qty -= Math.Abs(qtyDifference) - productAvailabilities.Sum(a => a.Amount);
+                double sellableQuantity = productAvailabilities.Sum(a => Math.Max(0d, a.Amount));
+                if (sellableQuantity < Math.Abs(qtyDifference)) {
+                    orderItem.Qty -= Math.Abs(qtyDifference) - sellableQuantity;
 
-                    qtyDifference = 0 - productAvailabilities.Sum(a => a.Amount);
+                    qtyDifference = 0 - sellableQuantity;
                 }
 
                 double toDecreaseQty = Math.Abs(qtyDifference);
@@ -577,6 +542,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             orderItemRepository.UpdateQty(orderItem);
             orderItemRepository.UpdateOverLoadQty(orderItem);
 
+            _reindexSignal.Request(orderItem.ProductId);
+
             return Task.FromResult(NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItem.Id, selectedAgreement.NetUid)));
     }
 
@@ -611,8 +578,6 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
                 OrderItem orderItemFromDb = orderItemRepository.GetById(orderItems[item].Id);
 
-                _reindexSignal.Request(orderItems[item].ProductId);
-
                 if (orderItems[item].Qty.Equals(orderItemFromDb.Qty)) {
                     orderItems[item] = NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItems[item].Id, nonVatAgreement?.NetUid, vatAgreement?.NetUid));
 
@@ -623,27 +588,20 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
 
                 IEnumerable<ProductAvailability> productAvailabilities =
-                    withVat
-                        ? productAvailabilityRepository
-                            .GetByProductAndOrganizationIds(
-                                orderItemFromDb.ProductId,
-                                vatAgreement.Agreement.Organization.Id,
-                                true
-                            )
-                        : productAvailabilityRepository
-                            .GetByProductAndOrganizationIds(
-                                orderItemFromDb.ProductId,
-                                nonVatAgreement.Agreement.Organization.Id,
-                                false
-                            );
+                    productAvailabilityRepository.GetForEcommercePurchase(
+                        orderItemFromDb.ProductId,
+                        targetAgreement.Agreement.Organization.Id,
+                        targetAgreement.Agreement.WithVATAccounting,
+                        CultureInfo.CurrentCulture.TwoLetterISOLanguageName);
 
                 double qtyDifference = orderItemFromDb.Qty - orderItems[item].Qty;
 
                 if (qtyDifference < 0) {
-                    if (productAvailabilities.Sum(a => a.Amount) < Math.Abs(qtyDifference)) {
-                        orderItems[item].Qty -= Math.Abs(qtyDifference) - productAvailabilities.Sum(a => a.Amount);
+                    double sellableQuantity = productAvailabilities.Sum(a => Math.Max(0d, a.Amount));
+                    if (sellableQuantity < Math.Abs(qtyDifference)) {
+                        orderItems[item].Qty -= Math.Abs(qtyDifference) - sellableQuantity;
 
-                        qtyDifference = 0 - productAvailabilities.Sum(a => a.Amount);
+                        qtyDifference = 0 - sellableQuantity;
                     }
 
                     double toDecreaseQty = Math.Abs(qtyDifference);
@@ -732,6 +690,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 }
 
                 orderItemRepository.UpdateQty(orderItems[item]);
+
+                _reindexSignal.Request(orderItems[item].ProductId);
 
                 orderItems[item] = NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItems[item].Id, nonVatAgreement?.NetUid, vatAgreement?.NetUid));
             }
@@ -948,47 +908,53 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 throw new Exception("Existing OrderItem is not valid input for current request.");
             if (orderItem.ProductId.Equals(0) && orderItem.Product == null)
                 throw new Exception("Product need to be specified.");
-            if (orderItem.Qty.Equals(0)) throw new Exception("You need to specify Qty of product that will be added.");
-
-            if (orderItem.Product != null) orderItem.ProductId = orderItem.Product.Id;
+            if (!double.IsFinite(orderItem.Qty) || orderItem.Qty <= 0 || orderItem.Qty > 100000)
+                throw new ArgumentException("Order item quantity is invalid.");
 
             IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
             Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
                 .GetWithHighestPriority();
+            if (storage?.OrganizationId == null)
+                return Task.FromResult(new Tuple<bool, string>(false, "Retail storage is not configured"));
+
+            Client retailClient = _clientRepositoriesFactory
+                .NewClientRepository(connection)
+                .GetRetailClient();
+            if (retailClient == null)
+                return Task.FromResult(new Tuple<bool, string>(false, "Retail client is not configured"));
 
             ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
-                _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
+                retailClient.NetUid,
                 storage.OrganizationId.Value,
                 storage.ForVatProducts);
+            if (clientAgreement?.Agreement == null)
+                return Task.FromResult(new Tuple<bool, string>(false, "Retail agreement is not configured"));
+
+            IGetSingleProductRepository productRepository =
+                _productRepositoriesFactory.NewGetSingleProductRepository(connection);
+            Guid productNetId = orderItem.Product?.NetUid ?? Guid.Empty;
+            if (productNetId == Guid.Empty && orderItem.ProductId > 0)
+                productNetId = productRepository.GetById(orderItem.ProductId)?.NetUid ?? Guid.Empty;
+
+            Product product = productNetId == Guid.Empty
+                ? null
+                : productRepository.GetByNetIdForRetail(
+                    productNetId,
+                    storage.Id,
+                    storage.OrganizationId.Value,
+                    storage.ForVatProducts);
+            if (!EcommercePurchasability.IsPurchasable(product))
+                return Task.FromResult(new Tuple<bool, string>(false, EcommercePurchasability.NotAvailableMessage));
+            if (!EcommercePurchasability.HasSellablePrice(product))
+                return Task.FromResult(new Tuple<bool, string>(false, EcommercePurchasability.NotPricedMessage));
+
+            orderItem.ProductId = product.Id;
 
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
-
-            IEnumerable<ProductAvailability> productAvailabilities;
-
-            if (clientAgreement.Agreement.WithVATAccounting) {
-                productAvailabilities =
-                    productAvailabilityRepository
-                        .GetByProductAndOrganizationIds(
-                            orderItem.ProductId,
-                            clientAgreement.Agreement.Organization.Id,
-                            clientAgreement.Agreement.WithVATAccounting
-                        );
-            } else {
-                List<Storage> allStorages = _storageRepositoryFactory.NewStorageRepository(connection).GetAllNonDefectiveByCurrentLocale().ToList();
-
-                List<Storage> storages = new(allStorages.Where(s => s.AvailableForReSale));
-                storages.AddRange(allStorages.Where(e => e.OrganizationId.Equals(clientAgreement.Agreement.OrganizationId)));
-
-                productAvailabilities = productAvailabilityRepository
-                    .GetAllByProductAndStorageIds(
-                        orderItem.ProductId,
-                        storages.Select(e => e.Id).ToList());
-            }
-
-            if (!productAvailabilities.Any()) return Task.FromResult(new Tuple<bool, string>(false, "Product is not available"));
-
-            double qtyRemainderProducts = productAvailabilities.Sum(a => a.Amount);
+            ProductAvailability productAvailability =
+                productAvailabilityRepository.GetByProductAndStorageIds(product.Id, storage.Id);
+            double qtyRemainderProducts = Math.Max(0d, productAvailability?.Amount ?? 0d);
 
             if (qtyRemainderProducts < orderItem.Qty) return Task.FromResult(new Tuple<bool, string>(false, "Product is not available"));
 

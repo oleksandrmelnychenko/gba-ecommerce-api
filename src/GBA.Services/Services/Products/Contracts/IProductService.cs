@@ -57,4 +57,13 @@ public interface IProductService {
     ProductPricingContext GetPricingContext(Guid clientNetId, bool requestedWithVat);
 
     Dictionary<long, ProductPriceInfo> GetPricesOnly(List<long> productIds, Guid currentClientNetId, bool withVat, string culture = "uk");
+
+    /// <summary>
+    /// Gets live free stock from the exact storage scope that cart reservation uses.
+    /// Elasticsearch is intentionally not the stock authority.
+    /// </summary>
+    Dictionary<long, double> GetSellableQuantities(
+        List<long> productIds,
+        Guid currentClientNetId,
+        string culture = "uk");
 }

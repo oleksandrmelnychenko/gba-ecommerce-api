@@ -77,15 +77,18 @@ public sealed class ProductsController(
             pricingContext.CacheKey,
             ids => productService.GetPricesOnly(ids, userNetId, withVat.Equals(1), locale));
 
-        // The VAT mode that decides which stock bucket a caller may buy from is resolved on the
-        // server (retail storage for anonymous shoppers, the caller's agreement when signed in),
-        // exactly like the price above. The browser's withVat parameter is not trusted for it.
-        bool effectiveWithVat = pricingContext.WithVat;
+        // Stock is more volatile than the search document. Always overlay it from SQL using the
+        // same storage scope cart reservation uses; otherwise a targeted re-index race can expose
+        // stock that checkout cannot reserve.
+        Dictionary<long, double> sellableQuantities =
+            productService.GetSellableQuantities(productIds, userNetId, locale);
+
         string fallbackCurrencyCode = pricingContext.CurrencyCode;
 
         long timestamp = PriceObfuscator.GetTimestamp();
         List<ProtectedSearchProduct> protectedProducts = searchResult.Documents.Select(doc => {
             prices.TryGetValue(doc.Id, out ProductPriceInfo? priceInfo);
+            sellableQuantities.TryGetValue(doc.Id, out double sellableQuantity);
             ProductPriceInfo resolvedPrice = ResolveSearchPrice(
                 doc,
                 priceInfo,
@@ -97,7 +100,7 @@ public sealed class ProductsController(
                 resolvedPrice,
                 locale,
                 timestamp,
-                effectiveWithVat,
+                Math.Max(0d, sellableQuantity),
                 fallbackCurrencyCode);
         }).ToList();
 
@@ -271,19 +274,12 @@ public sealed class ProductsController(
         ProductPriceInfo? priceInfo,
         string locale,
         long timestamp,
-        bool effectiveWithVat,
+        double sellableQuantity,
         string fallbackCurrencyCode) {
         decimal price = priceInfo?.Price ?? 0;
         decimal localPrice = priceInfo?.LocalPrice ?? 0;
         string currencyCode = priceInfo?.CurrencyCode ?? fallbackCurrencyCode;
         bool isUk = locale == "uk";
-
-        // Availability must describe the storages checkout can actually reserve from. The search
-        // projection splits uk stock into a non-VAT and a VAT bucket (both restricted to
-        // ForEcommerce storages); which one applies is decided by the retail storage or the
-        // caller's agreement. Report that single figure in both slots so a client can never read a
-        // quantity held in a storage set it is unable to buy from.
-        double reachableUkQty = effectiveWithVat ? doc.AvailableQtyUkVat : doc.AvailableQtyUk;
 
         return new ProtectedSearchProduct {
             Id = doc.Id,
@@ -297,9 +293,9 @@ public sealed class ProductsController(
             UCGFEA = doc.Ucgfea,
             Volume = doc.Volume,
             Top = doc.Top,
-            AvailableQtyUk = reachableUkQty,
+            AvailableQtyUk = sellableQuantity,
             AvailableQtyRoad = 0,
-            AvailableQtyUkVAT = reachableUkQty,
+            AvailableQtyUkVAT = sellableQuantity,
             AvailableQtyPl = doc.AvailableQtyPl,
             AvailableQtyPlVAT = doc.AvailableQtyPlVat,
             Weight = doc.Weight,

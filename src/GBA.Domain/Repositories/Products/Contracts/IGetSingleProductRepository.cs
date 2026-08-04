@@ -17,11 +17,13 @@ public interface IGetSingleProductRepository {
 
     Product GetByNetId(Guid netId, Guid? clientAgreementNetId = null);
 
-    Product GetByNetIdForRetail(Guid netId, long organizationId, bool withVat);
+    Product GetByNetIdForRetail(Guid netId, long storageId, long organizationId, bool withVat);
 
     Product GetByNetId(Guid netId, Guid nonVatAgreementNetId, Guid? vatAgreementNetId);
 
     Product GetBySlug(string slug, Guid? clientAgreementNetId = null);
+
+    Guid? GetNetIdBySlug(string slug);
 
     Product GetBySlug(string slug, Guid nonVatAgreementNetId, Guid? vatAgreementNetId);
 
