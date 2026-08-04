@@ -90,17 +90,14 @@ public sealed class ProductsController(
             prices.TryGetValue(doc.Id, out ProductPriceInfo? priceInfo);
             sellableQuantities.TryGetValue(doc.Id, out double sellableQuantity);
             ProductPriceInfo resolvedPrice = ResolveSearchPrice(
-                doc,
                 priceInfo,
-                userNetId == Guid.Empty,
-                withVat.Equals(1),
                 pricingContext.CurrencyCode);
             return DocToProtectedProduct(
                 doc,
                 resolvedPrice,
                 locale,
                 timestamp,
-                Math.Max(0d, sellableQuantity),
+                ResolveVisibleSearchQuantity(resolvedPrice, sellableQuantity),
                 fallbackCurrencyCode);
         }).ToList();
 
@@ -108,42 +105,21 @@ public sealed class ProductsController(
     }
 
     internal static ProductPriceInfo ResolveSearchPrice(
-        ProductSearchDocument document,
         ProductPriceInfo? calculatedPrice,
-        bool isAnonymous,
-        bool withVat,
         string configuredCurrencyCode) {
-        if (calculatedPrice?.Price > 0 || !isAnonymous) {
-            return calculatedPrice ?? new ProductPriceInfo {
-                Price = 0,
-                CurrencyCode = document.RetailCurrencyCode
-            };
-        }
-
-        // The SQL/UDF price remains authoritative whenever it succeeds. During a retail
-        // configuration or synchronization gap it can temporarily return zero even though
-        // the catalog projection still carries the last successfully calculated retail price.
-        // Preserve storefront availability by using that projection only for anonymous
-        // shoppers and only when the authoritative result is missing/zero.
-        bool indexedCurrencyMatchesConfiguration =
-            !string.IsNullOrWhiteSpace(configuredCurrencyCode)
-            && string.Equals(
-                document.RetailCurrencyCode,
-                configuredCurrencyCode,
-                StringComparison.OrdinalIgnoreCase);
-        decimal indexedPrice = indexedCurrencyMatchesConfiguration && withVat
-            ? document.RetailPriceVat
-            : indexedCurrencyMatchesConfiguration
-                ? document.RetailPrice
-                : 0;
-
-        return new ProductPriceInfo {
-            Price = indexedPrice > 0 ? indexedPrice : calculatedPrice?.Price ?? 0,
-            LocalPrice = indexedPrice > 0 ? indexedPrice : calculatedPrice?.LocalPrice ?? 0,
-            CurrencyCode = !string.IsNullOrWhiteSpace(configuredCurrencyCode)
-                ? configuredCurrencyCode
-                : calculatedPrice?.CurrencyCode ?? string.Empty
+        return calculatedPrice ?? new ProductPriceInfo {
+            Price = 0,
+            LocalPrice = 0,
+            CurrencyCode = configuredCurrencyCode ?? string.Empty
         };
+    }
+
+    internal static double ResolveVisibleSearchQuantity(
+        ProductPriceInfo? authoritativePrice,
+        double sellableQuantity) {
+        return authoritativePrice?.Price > 0m && double.IsFinite(sellableQuantity)
+            ? Math.Max(0d, sellableQuantity)
+            : 0d;
     }
 
     /// <summary>

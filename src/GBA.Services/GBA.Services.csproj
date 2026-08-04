@@ -30,4 +30,10 @@
         <ProjectReference Include="..\GBA.Domain\GBA.Domain.csproj"/>
     </ItemGroup>
 
+    <ItemGroup>
+        <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+            <_Parameter1>GBA.Ecommerce.Api.Tests</_Parameter1>
+        </AssemblyAttribute>
+    </ItemGroup>
+
 </Project>

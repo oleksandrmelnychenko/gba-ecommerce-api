@@ -77,11 +77,12 @@ public sealed class ProductService : IProductService {
         }
 
         return Task.FromResult(
-            productRepository.GetByNetIdForRetail(
-                productNetId,
-                storage.Id,
-                storage.OrganizationId.Value,
-                storage.ForVatProducts));
+            EnsureRetailProductCanBeOffered(
+                productRepository.GetByNetIdForRetail(
+                    productNetId,
+                    storage.Id,
+                    storage.OrganizationId.Value,
+                    storage.ForVatProducts)));
     }
 
     public Task<Product> GetByNetId(Guid productNetId, Guid clientNetId, bool withVat) {
@@ -118,11 +119,13 @@ public sealed class ProductService : IProductService {
                 return Task.FromResult(
                     MakeRetailUnavailable(productRepository.GetByNetId(productNetId.Value)));
 
-            return Task.FromResult(productRepository.GetByNetIdForRetail(
-                productNetId.Value,
-                storage.Id,
-                storage.OrganizationId.Value,
-                storage.ForVatProducts));
+            return Task.FromResult(
+                EnsureRetailProductCanBeOffered(
+                    productRepository.GetByNetIdForRetail(
+                        productNetId.Value,
+                        storage.Id,
+                        storage.OrganizationId.Value,
+                        storage.ForVatProducts)));
         }
 
         IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
@@ -161,6 +164,13 @@ public sealed class ProductService : IProductService {
         product.ProductAvailabilities?.Clear();
 
         return product;
+    }
+
+    internal static Product EnsureRetailProductCanBeOffered(Product product) {
+        return EcommercePurchasability.IsPurchasable(product)
+               && EcommercePurchasability.HasSellablePrice(product)
+            ? product
+            : MakeRetailUnavailable(product);
     }
 
     public Task<List<FromSearchProduct>> GetAllFromSearch(string value, Guid currentClientNetId, long limit, long offset, bool withVat) {

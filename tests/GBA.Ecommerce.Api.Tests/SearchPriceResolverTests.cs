@@ -1,6 +1,5 @@
 using GBA.Domain.Repositories.Products;
 using GBA.Ecommerce.Controllers;
-using GBA.Search.Models;
 
 namespace GBA.Ecommerce.Api.Tests;
 
@@ -11,16 +10,8 @@ public sealed class SearchPriceResolverTests {
             Price = 31.25m,
             CurrencyCode = "EUR"
         };
-        ProductSearchDocument document = new() {
-            RetailPrice = 27.17m,
-            RetailCurrencyCode = "EUR"
-        };
-
         ProductPriceInfo result = ProductsController.ResolveSearchPrice(
-            document,
             calculated,
-            isAnonymous: true,
-            withVat: false,
             configuredCurrencyCode: "EUR");
 
         Assert.Same(calculated, result);
@@ -28,30 +19,13 @@ public sealed class SearchPriceResolverTests {
     }
 
     [Fact]
-    public void Anonymous_zero_calculation_uses_last_indexed_retail_price() {
-        ProductSearchDocument document = new() {
-            RetailPrice = 27.17m,
-            RetailPriceVat = 32.60m,
-            RetailCurrencyCode = "EUR"
-        };
-
+    public void Zero_authoritative_price_never_uses_the_search_projection() {
         ProductPriceInfo result = ProductsController.ResolveSearchPrice(
-            document,
             new ProductPriceInfo { Price = 0, CurrencyCode = "EUR" },
-            isAnonymous: true,
-            withVat: false,
-            configuredCurrencyCode: "EUR");
-        ProductPriceInfo vatResult = ProductsController.ResolveSearchPrice(
-            document,
-            new ProductPriceInfo { Price = 0, CurrencyCode = "EUR" },
-            isAnonymous: true,
-            withVat: true,
             configuredCurrencyCode: "EUR");
 
-        Assert.Equal(27.17m, result.Price);
-        Assert.Equal(27.17m, result.LocalPrice);
-        Assert.Equal(32.60m, vatResult.Price);
-        Assert.Equal(32.60m, vatResult.LocalPrice);
+        Assert.Equal(0, result.Price);
+        Assert.Equal(0, result.LocalPrice);
         Assert.Equal("EUR", result.CurrencyCode);
     }
 
@@ -61,16 +35,8 @@ public sealed class SearchPriceResolverTests {
             Price = 0,
             CurrencyCode = "EUR"
         };
-        ProductSearchDocument document = new() {
-            RetailPrice = 27.17m,
-            RetailCurrencyCode = "EUR"
-        };
-
         ProductPriceInfo result = ProductsController.ResolveSearchPrice(
-            document,
             calculated,
-            isAnonymous: false,
-            withVat: false,
             configuredCurrencyCode: "EUR");
 
         Assert.Same(calculated, result);
@@ -78,20 +44,23 @@ public sealed class SearchPriceResolverTests {
     }
 
     [Fact]
-    public void Stale_indexed_currency_cannot_override_current_store_agreement() {
-        ProductSearchDocument document = new() {
-            RetailPrice = 27.17m,
-            RetailCurrencyCode = "EUR"
-        };
-
+    public void Missing_authoritative_price_uses_only_the_configured_currency() {
         ProductPriceInfo result = ProductsController.ResolveSearchPrice(
-            document,
-            new ProductPriceInfo { Price = 0, CurrencyCode = "UAH" },
-            isAnonymous: true,
-            withVat: false,
+            calculatedPrice: null,
             configuredCurrencyCode: "UAH");
 
         Assert.Equal(0, result.Price);
         Assert.Equal("UAH", result.CurrencyCode);
+    }
+
+    [Fact]
+    public void Positive_stock_is_hidden_without_an_authoritative_sellable_price() {
+        Assert.Equal(0, ProductsController.ResolveVisibleSearchQuantity(
+            new ProductPriceInfo { Price = 0 },
+            12));
+        Assert.Equal(0, ProductsController.ResolveVisibleSearchQuantity(null, 12));
+        Assert.Equal(12, ProductsController.ResolveVisibleSearchQuantity(
+            new ProductPriceInfo { Price = 31.25m },
+            12));
     }
 }

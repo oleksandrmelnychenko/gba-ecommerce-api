@@ -1565,6 +1565,8 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             }
         );
 
+        RouteRetailAvailability(productToReturn, withVat);
+
         if (productToReturn == null) return productToReturn;
 
         Type[] analogueTypes = {
@@ -1703,6 +1705,16 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
         );
 
         return productToReturn;
+    }
+
+    internal static void RouteRetailAvailability(
+        Product product,
+        bool selectedStorageForVat) {
+        if (product == null || !selectedStorageForVat)
+            return;
+
+        product.AvailableQtyUkVAT += product.AvailableQtyUk;
+        product.AvailableQtyUk = 0;
     }
 
     public Product GetByNetId(Guid netId, Guid? clientAgreementNetId = null) {
