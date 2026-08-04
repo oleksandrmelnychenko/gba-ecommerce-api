@@ -5,19 +5,17 @@ using GBA.Services.Services.Products;
 namespace GBA.Ecommerce.Api.Tests;
 
 public sealed class RetailProductDetailAvailabilityTests {
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Anonymous_detail_routes_selected_ukrainian_storage_to_its_vat_bucket(
-        bool forVatProducts) {
-        Product product = new() { AvailableQtyUk = 12.5 };
+    [Fact]
+    public void Anonymous_detail_exposes_selected_retail_storage_in_both_storefront_buckets() {
+        Product product = new() {
+            AvailableQtyUk = 12.5,
+            AvailableQtyUkVAT = 99
+        };
 
-        GetSingleProductRepository.RouteRetailAvailability(
-            product,
-            forVatProducts);
+        GetSingleProductRepository.ExposeRetailAvailabilityInBothStorefrontBuckets(product);
 
-        Assert.Equal(forVatProducts ? 0 : 12.5, product.AvailableQtyUk);
-        Assert.Equal(forVatProducts ? 12.5 : 0, product.AvailableQtyUkVAT);
+        Assert.Equal(12.5, product.AvailableQtyUk);
+        Assert.Equal(12.5, product.AvailableQtyUkVAT);
     }
 
     [Fact]

@@ -1565,7 +1565,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             }
         );
 
-        RouteRetailAvailability(productToReturn, withVat);
+        ExposeRetailAvailabilityInBothStorefrontBuckets(productToReturn);
 
         if (productToReturn == null) return productToReturn;
 
@@ -1707,14 +1707,14 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
         return productToReturn;
     }
 
-    internal static void RouteRetailAvailability(
-        Product product,
-        bool selectedStorageForVat) {
-        if (product == null || !selectedStorageForVat)
-            return;
+    internal static void ExposeRetailAvailabilityInBothStorefrontBuckets(Product product) {
+        if (product == null) return;
 
-        product.AvailableQtyUkVAT += product.AvailableQtyUk;
-        product.AvailableQtyUk = 0;
+        // Anonymous ecommerce has one authoritative retail storage selected by priority.
+        // The search payload exposes that same sellable quantity in both compatibility
+        // buckets because the browser's withVat query cannot override the retail agreement.
+        // Keep product details on the same contract so search and detail never disagree.
+        product.AvailableQtyUkVAT = product.AvailableQtyUk;
     }
 
     public Product GetByNetId(Guid netId, Guid? clientAgreementNetId = null) {
