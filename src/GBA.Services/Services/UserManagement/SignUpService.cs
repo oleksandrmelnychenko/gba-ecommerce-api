@@ -111,7 +111,22 @@ public sealed class SignUpService : ISignUpService {
             IdentityResponse response = await identityRepository.CreateUser(user, password, false);
 
             if (response.Succeeded) {
-                await identityRepository.AddUserRoleAndClaims(user, IdentityRoles.ClientUa);
+                var roleAndClaimsResult =
+                    await identityRepository.AddUserRoleAndClaims(user, IdentityRoles.ClientUa);
+                if (!roleAndClaimsResult.Succeeded) {
+                    await identityRepository.DeleteUser(user);
+                    clientRepository.Remove(client.Id);
+
+                    IdentityResponse setupFailure = new() { Succeeded = false };
+                    foreach (var error in roleAndClaimsResult.Errors)
+                        setupFailure.Errors.Add(new ErrorItem {
+                            Code = error.Code,
+                            Description = error.Description
+                        });
+
+                    return new Tuple<IdentityResponse, Client>(setupFailure, client);
+                }
+
                 await _clientAgreementService.AddDefaultAgreementForClient(client, ecommerceRegion.IsLocalPayment);
             } else {
                 clientRepository.Remove(client.Id);
