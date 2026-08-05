@@ -60,6 +60,7 @@ using GBA.Domain.Repositories.UserRoles;
 using GBA.Domain.Repositories.UserRoles.Contracts;
 using GBA.Domain.Repositories.Users;
 using GBA.Domain.Repositories.Users.Contracts;
+using GBA.Ecommerce.Hubs;
 using GBA.Services.Services.Clients;
 using GBA.Services.Services.Clients.Contracts;
 using GBA.Services.Services.DeliveryRecipients;
@@ -337,6 +338,8 @@ public class Startup {
                 .AllowCredentials());
         });
 
+        services.AddSignalR();
+
         services.AddIdentity<UserIdentity, IdentityRole>(options => {
                 options.Password.RequireUppercase = true;
                 options.Password.RequiredLength = 10;
@@ -532,6 +535,9 @@ public class Startup {
 
         app.UseEndpoints(endpoints => {
             endpoints.MapControllerRoute("default", "{controller=Home}/{action=Index}");
+            endpoints.MapHub<ProductsReservationHub>("/hubs/products/reservation");
+            endpoints.MapHub<SuppliesOrdersHub>("/hubs/supplies/orders");
+            endpoints.MapHub<StorefrontHub>("/hubs/storefront");
             endpoints.MapHealthChecks("/health", new HealthCheckOptions {
                 ResponseWriter = async (context, report) => {
                     context.Response.ContentType = "application/json";
