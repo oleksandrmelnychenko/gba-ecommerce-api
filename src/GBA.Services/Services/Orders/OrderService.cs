@@ -141,25 +141,59 @@ public sealed class OrderService : IOrderService {
         return retailAgreement;
     }
 
+    internal static Guid ResolveProductNetId(
+        IGetSingleProductRepository productRepository,
+        OrderItem orderItem) {
+        if (orderItem == null) return Guid.Empty;
+
+        Guid productNetId = orderItem.Product?.NetUid ?? Guid.Empty;
+        if (productNetId != Guid.Empty) return productNetId;
+
+        // Cart mutations accept ProductId, while persisted guest carts can fall back to the
+        // vendor code. Translate every supported shape to the canonical NetUid, then use the
+        // same authoritative pricing lookup as a NetUid request.
+        long productId = orderItem.ProductId > 0
+            ? orderItem.ProductId
+            : orderItem.Product?.Id ?? 0;
+
+        Product product = productId > 0
+            ? productRepository.GetById(productId)
+            : !string.IsNullOrWhiteSpace(orderItem.Product?.VendorCode)
+                ? productRepository.GetProductByVendorCode(orderItem.Product.VendorCode.Trim())
+                : null;
+
+        return product?.NetUid ?? Guid.Empty;
+    }
+
+    private static bool HasProductReference(OrderItem orderItem) {
+        return orderItem != null &&
+               ((orderItem.Product != null && orderItem.Product.NetUid != Guid.Empty) ||
+                orderItem.ProductId > 0 ||
+                orderItem.Product?.Id > 0 ||
+                !string.IsNullOrWhiteSpace(orderItem.Product?.VendorCode));
+    }
+
     private OrderItem ApplyAuthoritativeRetailProduct(
         IDbConnection connection,
         Storage storage,
         ClientAgreement retailAgreement,
         OrderItem orderItem) {
-        if (orderItem?.Product == null || orderItem.Product.NetUid == Guid.Empty)
-            throw new ArgumentException("Every order item must reference a valid product.");
-
-        if (!double.IsFinite(orderItem.Qty) || orderItem.Qty <= 0 || orderItem.Qty > 100000)
+        if (orderItem == null || !double.IsFinite(orderItem.Qty) ||
+            orderItem.Qty <= 0 || orderItem.Qty > 100000)
             throw new ArgumentException("Order item quantity is invalid.");
 
         bool withVat = retailAgreement.Agreement.WithVATAccounting;
-        Product product = _productRepositoriesFactory
-            .NewGetSingleProductRepository(connection)
-            .GetByNetIdForRetail(
-                orderItem.Product.NetUid,
-                storage.Id,
-                storage.OrganizationId.Value,
-                withVat);
+        IGetSingleProductRepository productRepository = _productRepositoriesFactory
+            .NewGetSingleProductRepository(connection);
+        Guid productNetId = ResolveProductNetId(productRepository, orderItem);
+        if (productNetId == Guid.Empty)
+            throw new ArgumentException("Every order item must reference a valid product.");
+
+        Product product = productRepository.GetByNetIdForRetail(
+            productNetId,
+            storage.Id,
+            storage.OrganizationId.Value,
+            withVat);
         if (!EcommercePurchasability.IsPurchasable(product))
             throw new ArgumentException(EcommercePurchasability.NotAvailableMessage);
         if (!EcommercePurchasability.HasSellablePrice(product))
@@ -206,18 +240,22 @@ public sealed class OrderService : IOrderService {
         IDbConnection connection,
         ClientAgreement clientAgreement,
         OrderItem orderItem) {
-        if (orderItem?.Product == null || orderItem.Product.NetUid == Guid.Empty ||
-            !double.IsFinite(orderItem.Qty) || orderItem.Qty <= 0 || orderItem.Qty > 100000)
+        if (orderItem == null || !double.IsFinite(orderItem.Qty) ||
+            orderItem.Qty <= 0 || orderItem.Qty > 100000)
             throw new ArgumentException("Order item is invalid.");
 
-        Product product = _productRepositoriesFactory
-            .NewGetSingleProductRepository(connection)
-            .GetProductByNetId(
-                orderItem.Product.NetUid,
-                clientAgreement.NetUid,
-                clientAgreement.Agreement.WithVATAccounting,
-                clientAgreement.Agreement.CurrencyId,
-                clientAgreement.Agreement.OrganizationId);
+        IGetSingleProductRepository productRepository = _productRepositoriesFactory
+            .NewGetSingleProductRepository(connection);
+        Guid productNetId = ResolveProductNetId(productRepository, orderItem);
+        if (productNetId == Guid.Empty)
+            throw new ArgumentException("Every order item must reference a valid product.");
+
+        Product product = productRepository.GetProductByNetId(
+            productNetId,
+            clientAgreement.NetUid,
+            clientAgreement.Agreement.WithVATAccounting,
+            clientAgreement.Agreement.CurrencyId,
+            clientAgreement.Agreement.OrganizationId);
         if (!EcommercePurchasability.IsPurchasable(product))
             throw new ArgumentException(EcommercePurchasability.NotAvailableMessage);
         if (!EcommercePurchasability.HasSellablePrice(product))
@@ -461,9 +499,7 @@ public sealed class OrderService : IOrderService {
             throw new ArgumentException("Order must contain between 1 and 100 items.");
         if (order.OrderItems.Count > 100)
             throw new ArgumentException("Order must contain between 1 and 100 items.");
-        if (order.OrderItems.Any(orderItem =>
-                orderItem?.Product == null ||
-                orderItem.Product.NetUid == Guid.Empty))
+        if (order.OrderItems.Any(orderItem => !HasProductReference(orderItem)))
             throw new ArgumentException("Every order item must reference a valid product.");
 
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
