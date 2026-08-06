@@ -119,11 +119,11 @@ public sealed class SeoPageService : ISeoPageService {
 
             List<SeoPage> seoPages = pageRepository.GetAll(locale);
 
-            pageModel.HomePage = seoPages[0];
-            pageModel.ProductsPage = seoPages[1];
-            pageModel.AboutCompanyPage = seoPages[2];
-            pageModel.PhotoGalleryPage = seoPages[3];
-            pageModel.ContactsPage = seoPages[4];
+            pageModel.HomePage = seoPages.ElementAtOrDefault(0);
+            pageModel.ProductsPage = seoPages.ElementAtOrDefault(1);
+            pageModel.AboutCompanyPage = seoPages.ElementAtOrDefault(2);
+            pageModel.PhotoGalleryPage = seoPages.ElementAtOrDefault(3);
+            pageModel.ContactsPage = seoPages.ElementAtOrDefault(4);
 
             pageModel.EcommerceContactsList = contactsRepository.GetAll();
             pageModel.EcommerceContactInfo = contactInfoRepository.GetLast(locale);
