@@ -41,7 +41,6 @@ public sealed class ProductsController(
 
     [HttpGet]
     [AssignActionRoute(ProductsSegments.SEARCH)]
-    [OutputCache(PolicyName = "AnonymousProductSearch")]
     [EnableRateLimiting("search")]
     public async Task<IActionResult> GetAllFromSearchAsync([FromQuery] string value, [FromQuery] long limit, [FromQuery] long offset, [FromQuery] int withVat = 0, CancellationToken cancellationToken = default) {
         return await SearchWithElasticsearchAsync(value, limit, offset, withVat, cancellationToken);

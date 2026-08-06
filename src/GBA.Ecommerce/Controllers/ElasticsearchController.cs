@@ -84,7 +84,6 @@ public sealed class ElasticsearchController(
     [HttpGet]
     [Route("search")]
     [AllowAnonymous]
-    [OutputCache(PolicyName = "AnonymousProductSearch")]
     [EnableRateLimiting("search")]
     public async Task<IActionResult> SearchAsync(
         [FromQuery] string query,
