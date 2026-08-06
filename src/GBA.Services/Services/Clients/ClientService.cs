@@ -96,16 +96,32 @@ public sealed class ClientService : IClientService {
     public Task<Client> GetRootClientBySubClientNerId(Guid netId) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
             IExchangeRateRepository exchangeRateRepository = _exchangeRateRepositoriesFactory.NewExchangeRateRepository(connection);
+            IClientRepository clientRepository = _clientRepositoriesFactory.NewClientRepository(connection);
 
-            Client client = _clientRepositoriesFactory.NewClientRepository(connection).GetRootClientBySubClientNetId(netId);
+            Client client = clientRepository.GetRootClientBySubClientNetId(netId);
+            Guid debtClientNetId = netId;
 
-            dynamic data = _clientRepositoriesFactory.NewClientRepository(connection).GetDebtTotalsForClientStructureWithRootByClientNetId(netId, true);
+            if (client == null) {
+                Workplace workplace = _clientRepositoriesFactory.NewWorkplaceRepository(connection).GetByNetIdWithClient(netId);
+                if (workplace?.MainClient == null)
+                    throw new ArgumentException("A client profile could not be resolved.", nameof(netId));
 
-            ClientAgreement clientAgreement = client.ClientAgreements.FirstOrDefault(ca => ca.Agreement.IsSelected);
+                client = workplace.MainClient;
+                client.CurrentWorkplace = workplace;
+                debtClientNetId = client.NetUid;
+            }
 
-            ExchangeRate agreementExchangeRate = clientAgreement == null
-                ? exchangeRateRepository.GetByCurrencyCodeAndCurrentCulture(client.ClientAgreements.First().Agreement.Currency.Code)
-                : exchangeRateRepository.GetByCurrencyCodeAndCurrentCulture(clientAgreement.Agreement.Currency.Code);
+            dynamic data = clientRepository.GetDebtTotalsForClientStructureWithRootByClientNetId(debtClientNetId, true);
+
+            ClientAgreement clientAgreement =
+                client.ClientAgreements?.FirstOrDefault(ca => ca.Agreement?.IsSelected == true)
+                ?? client.ClientAgreements?.FirstOrDefault(ca => ca.Agreement?.Currency?.Code != null);
+
+            string agreementCurrencyCode = clientAgreement?.Agreement?.Currency?.Code;
+
+            ExchangeRate agreementExchangeRate = agreementCurrencyCode == null
+                ? null
+                : exchangeRateRepository.GetByCurrencyCodeAndCurrentCulture(agreementCurrencyCode);
 
             decimal totalLocalDebt = data.TotalLocal ?? 0m;
 
