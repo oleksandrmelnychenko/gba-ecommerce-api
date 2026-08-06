@@ -23,6 +23,9 @@ public interface IElasticsearchProductSearchService : IProductSearchService {
 }
 
 public sealed class ElasticsearchProductSearchService : IElasticsearchProductSearchService {
+    private const int MaxSearchTerms = 16;
+    private const int MaxNgramSearchTermLength = 15;
+
     private readonly HttpClient _http;
     private readonly ElasticsearchSettings _settings;
     private readonly SearchTextProcessor _textProcessor;
@@ -118,7 +121,9 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         }
 
         string normalized = NumberNormalizer.NormalizeQuery(query);
-        string[] terms = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string[] terms = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Take(MaxSearchTerms)
+            .ToArray();
 
         debug.NormalizedQuery = normalized;
         debug.Terms = terms.ToList();
@@ -138,12 +143,16 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
     private object BuildSearchQuery(string query, string locale, int limit, int offset) {
         string normalized = NumberNormalizer.NormalizeQuery(query);
         string normalizedLower = normalized.ToLowerInvariant();
+        // Every term is repeated across the searchable fields and ranking filters.
+        // Keep the generated bool query comfortably below Elasticsearch's clause limit.
         string[] terms = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Select(t => EscapeElasticsearchQuery(t.ToLowerInvariant()))
+            .Take(MaxSearchTerms)
             .ToArray();
         // Keep original terms for size field (preserves "=" and other special chars)
         string[] originalTerms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Select(t => t.ToLowerInvariant())
+            .Take(MaxSearchTerms)
             .ToArray();
 
         if (terms.Length == 0)
@@ -222,51 +231,51 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
                 c == 'І' || c == 'Ї' || c == 'Є' || c == 'Ґ');
             if (isCyrillic) {
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{primarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{primarySearchName}.ngram", termLower),
                     weight = 3000
                 });
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{secondarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{secondarySearchName}.ngram", termLower),
                     weight = 2500
                 });
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{primaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{primaryDesc}.ngram", termLower),
                     weight = 500
                 });
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{secondaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{secondaryDesc}.ngram", termLower),
                     weight = 400
                 });
             } else {
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { ["vendorCodeClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery("vendorCodeClean.ngram", termLower),
                     weight = 5000
                 });
                 functions.Add(new {
                     filter = new {
                         @bool = new {
                             should = new object[] {
-                                new { match = new Dictionary<string, object> { ["mainOriginalNumberClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
-                                new { match = new Dictionary<string, object> { ["originalNumbersClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } }
+                                BuildNgramMatchQuery("mainOriginalNumberClean.ngram", termLower),
+                                BuildNgramMatchQuery("originalNumbersClean.ngram", termLower)
                             }
                         }
                     },
                     weight = 3000
                 });
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{primarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{primarySearchName}.ngram", termLower),
                     weight = 1500
                 });
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{secondarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{secondarySearchName}.ngram", termLower),
                     weight = 1200
                 });
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{primaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{primaryDesc}.ngram", termLower),
                     weight = 300
                 });
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{secondaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{secondaryDesc}.ngram", termLower),
                     weight = 200
                 });
             }
@@ -326,29 +335,29 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
 
     private static object BuildTermMatchQuery(string term, string locale, string originalTerm = null) {
         // Each term can match in ANY of these fields (OR logic within term)
-        // Using wildcard for PATINDEX-like behavior (substring anywhere in field)
+        // N-gram fields provide PATINDEX-like substring matching without broad wildcards.
         List<object> shouldClauses = new List<object>();
 
         // Lowercase for case-insensitive matching
         string termLower = term.ToLowerInvariant();
         string originalTermLower = (originalTerm ?? term).ToLowerInvariant();
 
-        shouldClauses.Add(new { match = new Dictionary<string, object> { ["vendorCodeClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
+        shouldClauses.Add(BuildNgramMatchQuery("vendorCodeClean.ngram", termLower));
 
-        shouldClauses.Add(new { match = new Dictionary<string, object> { ["mainOriginalNumberClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
-        shouldClauses.Add(new { match = new Dictionary<string, object> { ["originalNumbersClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
+        shouldClauses.Add(BuildNgramMatchQuery("mainOriginalNumberClean.ngram", termLower));
+        shouldClauses.Add(BuildNgramMatchQuery("originalNumbersClean.ngram", termLower));
 
         (string primaryName, string secondaryName) = locale == "uk"
             ? ("searchNameUA", "searchName")
             : ("searchName", "searchNameUA");
-        shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{primaryName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
-        shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{secondaryName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
+        shouldClauses.Add(BuildNgramMatchQuery($"{primaryName}.ngram", termLower));
+        shouldClauses.Add(BuildNgramMatchQuery($"{secondaryName}.ngram", termLower));
 
         (string primaryDesc, string secondaryDesc) = locale == "uk"
             ? ("searchDescriptionUA", "searchDescription")
             : ("searchDescription", "searchDescriptionUA");
-        shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{primaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
-        shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{secondaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
+        shouldClauses.Add(BuildNgramMatchQuery($"{primaryDesc}.ngram", termLower));
+        shouldClauses.Add(BuildNgramMatchQuery($"{secondaryDesc}.ngram", termLower));
 
         if (IsDimensionSearchTerm(originalTermLower)) {
             // Preserve substring semantics for explicit dimensions without penalizing
@@ -365,6 +374,26 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             @bool = new {
                 should = shouldClauses,
                 minimum_should_match = 1
+            }
+        };
+    }
+
+    private static object BuildNgramMatchQuery(string field, string term) {
+        // The field's index analyzer emits every 3..15 character n-gram. Reusing it as
+        // the search analyzer multiplies each user term into many Lucene bool clauses,
+        // once for every searched field and scoring function. A keyword-style search
+        // analyzer keeps this to one clause and works with existing indices. Since the
+        // index stores n-grams only up to 15 characters, use a matching bounded token.
+        string searchTerm = term.Length <= MaxNgramSearchTermLength
+            ? term
+            : term[..MaxNgramSearchTermLength];
+
+        return new {
+            match = new Dictionary<string, object> {
+                [field] = new {
+                    query = searchTerm,
+                    analyzer = "lowercase_analyzer"
+                }
             }
         };
     }
