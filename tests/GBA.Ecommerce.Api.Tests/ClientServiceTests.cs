@@ -177,4 +177,91 @@ public sealed class ClientServiceTests {
 
         Assert.Equal(10m, result.AccountBalance);
     }
+
+    [Fact]
+    public async Task Profile_without_agreements_falls_back_to_local_debt() {
+        Guid clientNetId = Guid.NewGuid();
+        Client client = new() { NetUid = clientNetId };
+
+        Mock<IDbConnection> connection = new();
+        Mock<IDbConnectionFactory> connectionFactory = new();
+        connectionFactory
+            .Setup(factory => factory.NewSqlConnection())
+            .Returns(connection.Object);
+
+        Mock<IClientRepository> clientRepository = new();
+        clientRepository
+            .Setup(repository => repository.GetByNetId(clientNetId, true))
+            .Returns(client);
+        dynamic debtTotals = new ExpandoObject();
+        debtTotals.TotalLocal = 42.4m;
+        clientRepository
+            .Setup(repository => repository.GetDebtTotalsForClientStructureWithRootByClientNetId(clientNetId, true))
+            .Returns((object)debtTotals);
+
+        Mock<IClientRepositoriesFactory> clientRepositoriesFactory = new();
+        clientRepositoriesFactory
+            .Setup(factory => factory.NewClientRepository(connection.Object))
+            .Returns(clientRepository.Object);
+
+        Mock<IExchangeRateRepositoriesFactory> exchangeRateRepositoriesFactory = new();
+        exchangeRateRepositoriesFactory
+            .Setup(factory => factory.NewExchangeRateRepository(connection.Object))
+            .Returns(Mock.Of<IExchangeRateRepository>());
+
+        ClientService service = new(
+            clientRepositoriesFactory.Object,
+            exchangeRateRepositoriesFactory.Object,
+            Mock.Of<IRetailClientRepositoriesFactory>(),
+            Mock.Of<IEcommerceAdminPanelRepositoriesFactory>(),
+            connectionFactory.Object,
+            Mock.Of<IOrderService>(),
+            Mock.Of<IProductRepositoriesFactory>(),
+            Mock.Of<IStorageRepositoryFactory>());
+
+        Client result = await service.GetByNetId(clientNetId);
+
+        Assert.Equal(42.4m, result.AccountBalance);
+    }
+
+    [Fact]
+    public async Task Unknown_profile_reports_a_controlled_error() {
+        Guid unknownNetId = Guid.NewGuid();
+
+        Mock<IDbConnection> connection = new();
+        Mock<IDbConnectionFactory> connectionFactory = new();
+        connectionFactory
+            .Setup(factory => factory.NewSqlConnection())
+            .Returns(connection.Object);
+
+        Mock<IClientRepository> clientRepository = new();
+        clientRepository
+            .Setup(repository => repository.GetByNetId(unknownNetId, true))
+            .Returns((Client)null!);
+
+        Mock<IWorkplaceRepository> workplaceRepository = new();
+        workplaceRepository
+            .Setup(repository => repository.GetByNetIdWithClient(unknownNetId))
+            .Returns((Workplace)null!);
+
+        Mock<IClientRepositoriesFactory> clientRepositoriesFactory = new();
+        clientRepositoriesFactory
+            .Setup(factory => factory.NewClientRepository(connection.Object))
+            .Returns(clientRepository.Object);
+        clientRepositoriesFactory
+            .Setup(factory => factory.NewWorkplaceRepository(connection.Object))
+            .Returns(workplaceRepository.Object);
+
+        ClientService service = new(
+            clientRepositoriesFactory.Object,
+            Mock.Of<IExchangeRateRepositoriesFactory>(),
+            Mock.Of<IRetailClientRepositoriesFactory>(),
+            Mock.Of<IEcommerceAdminPanelRepositoriesFactory>(),
+            connectionFactory.Object,
+            Mock.Of<IOrderService>(),
+            Mock.Of<IProductRepositoriesFactory>(),
+            Mock.Of<IStorageRepositoryFactory>());
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.GetByNetId(unknownNetId));
+    }
 }
