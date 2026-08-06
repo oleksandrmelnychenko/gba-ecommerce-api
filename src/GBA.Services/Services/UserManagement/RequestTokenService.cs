@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -103,8 +104,12 @@ public sealed class RequestTokenService : IRequestTokenService {
                         await _identityRepositoriesFactory.NewIdentityRepository().AuthAndGetClaimsIdentityByNetId(clientNetId.ToString(), password, userName);
                 } else {
                     Client clientEmail = _clientRepositoriesFactory.NewClientRepository(connection).GetEmail(userName);
-                    if (clientEmail == null)
-                        clientEmail = _clientRepositoriesFactory.NewClientRepository(connection).GetClientNetIdByMobileNumber(userName);
+                    if (clientEmail == null) {
+                        foreach (string mobileNumberCandidate in BuildMobileNumberCandidates(userName)) {
+                            clientEmail = _clientRepositoriesFactory.NewClientRepository(connection).GetClientNetIdByMobileNumber(mobileNumberCandidate);
+                            if (clientEmail != null) break;
+                        }
+                    }
 
                     if (clientEmail != null)
                         identityResult =
@@ -145,6 +150,26 @@ public sealed class RequestTokenService : IRequestTokenService {
         }
     }
 
+    private static IEnumerable<string> BuildMobileNumberCandidates(string userName) {
+        List<string> candidates = new() { userName };
+
+        string digits = Regex.Replace(userName, @"\D", "");
+        if (digits.Length >= 9) {
+            candidates.Add(digits);
+
+            string localNumber = digits.Length > 10 && digits.StartsWith("38")
+                ? digits.Substring(2)
+                : digits;
+            if (localNumber.Length == 9)
+                localNumber = "0" + localNumber;
+
+            candidates.Add(localNumber);
+            if (localNumber.StartsWith("0"))
+                candidates.Add("38" + localNumber);
+        }
+
+        return candidates.Distinct();
+    }
 
     private CompleteAccessToken GenerateAccessAndRefreshToken(
         IUserTokenRepository userTokensRepository,
