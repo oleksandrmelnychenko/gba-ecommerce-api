@@ -17,6 +17,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using NLog;
 
 namespace GBA.Ecommerce.Api.Tests;
 
@@ -131,6 +132,23 @@ public sealed class SecurityRegressionTests {
         Assert.Equal((int)expectedStatus, context.Response.StatusCode);
         Assert.Equal(expectedMessage, root.GetProperty(nameof(ErrorResponse.Message)).GetString());
         Assert.DoesNotContain("sensitive-internal-message", root.GetRawText(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest, "Warn")]
+    [InlineData(HttpStatusCode.Forbidden, "Warn")]
+    [InlineData(HttpStatusCode.InternalServerError, "Error")]
+    public void Only_server_failures_are_logged_as_errors(
+        HttpStatusCode statusCode,
+        string expectedLogLevel) {
+        MethodInfo getLogLevel = typeof(GlobalExceptionHandler).GetMethod(
+            "GetLogLevel",
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        LogLevel actual = Assert.IsType<LogLevel>(
+            getLogLevel.Invoke(null, new object[] { statusCode }));
+
+        Assert.Equal(expectedLogLevel, actual.Name);
     }
 
     [Fact]
