@@ -75,7 +75,7 @@ public class GlobalExceptionHandler : IGlobalExceptionHandler {
             PropertyNamingPolicy = null
         })).ConfigureAwait(false);
 
-        LogEventInfo logEvent = new(LogLevel.Error, _logger.Name, exceptionHandler.Error.Message) {
+        LogEventInfo logEvent = new(GetLogLevel(statusCode), _logger.Name, exceptionHandler.Error.Message) {
             Exception = exceptionHandler.Error
         };
         logEvent.Properties[LoggingDefaults.CorrelationIdProperty] = correlationId;
@@ -84,5 +84,11 @@ public class GlobalExceptionHandler : IGlobalExceptionHandler {
         logEvent.Properties["UserNetId"] = context.GetUserNetId();
         logEvent.Properties["StatusCode"] = (int)statusCode;
         _logger.Log(logEvent);
+    }
+
+    private static LogLevel GetLogLevel(HttpStatusCode statusCode) {
+        return (int)statusCode >= (int)HttpStatusCode.InternalServerError
+            ? LogLevel.Error
+            : LogLevel.Warn;
     }
 }
