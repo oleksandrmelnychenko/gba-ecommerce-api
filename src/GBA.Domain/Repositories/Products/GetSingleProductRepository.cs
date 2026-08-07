@@ -1261,7 +1261,6 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "LEFT JOIN [ProductAvailability] " +
             "ON [ProductAvailability].ProductID = [Analogue].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
-            "AND [ProductAvailability].StorageID = @StorageId " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "AND [Storage].Deleted = 0 " +
@@ -1673,6 +1672,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "LEFT JOIN [ProductAvailability] " +
             "ON [ProductAvailability].ProductID = [Analogue].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
+            "AND [ProductAvailability].StorageID = @StorageId " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "AND [Storage].Deleted = 0 " +
@@ -1698,6 +1698,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
                 productToReturn.Id,
                 ClientAgreementNetId = clientAgreement.NetUid,
                 Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
+                StorageId = storageId,
                 clientAgreement.Agreement.OrganizationId,
                 clientAgreement.Agreement.CurrencyId,
                 WithVat = true

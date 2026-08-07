@@ -67,6 +67,27 @@ public sealed class EcommerceStockContractTests {
     }
 
     [Fact]
+    public void Retail_product_detail_queries_bind_the_selected_storage() {
+        string source = ReadSource("src/GBA.Domain/Repositories/Products/GetSingleProductRepository.cs");
+        int standardMethodStart = source.IndexOf("public Product GetProductByNetId(", StringComparison.Ordinal);
+        int retailMethodStart = source.IndexOf("public Product GetByNetIdForRetail(", StringComparison.Ordinal);
+        int retailMethodEnd = source.IndexOf(
+            "internal static void ExposeRetailAvailabilityInBothStorefrontBuckets",
+            retailMethodStart,
+            StringComparison.Ordinal);
+
+        Assert.True(standardMethodStart >= 0 && retailMethodStart > standardMethodStart);
+        Assert.True(retailMethodEnd > retailMethodStart);
+
+        string standardMethod = source[standardMethodStart..retailMethodStart];
+        string retailMethod = source[retailMethodStart..retailMethodEnd];
+
+        Assert.DoesNotContain("@StorageId", standardMethod, StringComparison.Ordinal);
+        Assert.Equal(2, Count(retailMethod, "AND [ProductAvailability].StorageID = @StorageId"));
+        Assert.Equal(2, Count(retailMethod, "StorageId = storageId"));
+    }
+
+    [Fact]
     public void Cart_reindex_is_requested_after_stock_mutation() {
         string source = ReadSource("src/GBA.Services/Services/Clients/ClientShoppingCartService.cs");
 
