@@ -344,13 +344,27 @@ public sealed class OrderService : IOrderService {
         };
     }
 
+    internal static HttpRequestMessage CreateEcommerceSaleUpdateRequest(
+        string crmApiUrl,
+        string payload,
+        Guid operationNetUid) {
+        if (operationNetUid == Guid.Empty)
+            throw new ArgumentException("A valid CRM operation identity is required.", nameof(operationNetUid));
+
+        HttpRequestMessage requestMessage = new(HttpMethod.Post, crmApiUrl) {
+            Content = new StringContent(payload, Encoding.UTF8, "application/json")
+        };
+        requestMessage.Headers.Add("Idempotency-Key", operationNetUid.ToString("D"));
+        return requestMessage;
+    }
+
     private void QueueEcommerceSaleUpdate(string crmApiUrl, string payload, string operationName) {
+        Guid operationNetUid = Guid.NewGuid();
         BackgroundSyncRunner.Run(async cancellationToken => {
             using HttpClient httpClient = _httpClientFactory.CreateClient(
                 EcommerceInternalHttpClientDefaults.ClientName);
-            using HttpRequestMessage requestMessage = new(HttpMethod.Post, crmApiUrl) {
-                Content = new StringContent(payload, Encoding.UTF8, "application/json")
-            };
+            using HttpRequestMessage requestMessage =
+                CreateEcommerceSaleUpdateRequest(crmApiUrl, payload, operationNetUid);
 
             HttpResponseMessage responseMessage =
                 await httpClient.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
