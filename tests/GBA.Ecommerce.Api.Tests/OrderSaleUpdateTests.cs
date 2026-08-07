@@ -5,6 +5,17 @@ namespace GBA.Ecommerce.Api.Tests;
 
 public sealed class OrderSaleUpdateTests {
     [Fact]
+    public void Crm_sale_update_rejects_an_empty_operation_identity() {
+        ArgumentException exception = Assert.Throws<ArgumentException>(() =>
+            OrderService.CreateEcommerceSaleUpdateRequest(
+                "http://crm/api/v1/en/sales/update/ecommerce",
+                "{\"netUid\":\"sale-1\"}",
+                Guid.Empty));
+
+        Assert.Equal("operationNetUid", exception.ParamName);
+    }
+
+    [Fact]
     public async Task Crm_sale_update_has_a_unique_operation_identity() {
         Guid firstOperationNetUid = Guid.NewGuid();
         Guid secondOperationNetUid = Guid.NewGuid();
