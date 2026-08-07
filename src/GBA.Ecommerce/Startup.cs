@@ -520,8 +520,8 @@ public class Startup {
             }
         });
 
-        app.UseExceptionHandler(builder => {
-            builder.Run(async context => {
+        app.UseExceptionHandler(new ExceptionHandlerOptions {
+            ExceptionHandler = async context => {
                 IExceptionHandlerFeature? error = context.Features.Get<IExceptionHandlerFeature>();
                 if (error?.Error == null) {
                     context.Response.StatusCode = StatusCodes.Status500InternalServerError;
@@ -530,7 +530,12 @@ public class Startup {
                 IGlobalExceptionHandler globalExceptionHandler = globalExceptionFactory.New();
 
                 await globalExceptionHandler.HandleException(context, error);
-            });
+            },
+            // GlobalExceptionHandler records handled failures at their final severity.
+            // Avoid the framework's duplicate ERROR for expected 4xx responses.
+            SuppressDiagnosticsCallback = diagnosticsContext =>
+                ShouldSuppressExceptionHandlerDiagnostics(
+                    diagnosticsContext.HttpContext.Response.StatusCode)
         });
 
         app.UseMiddleware<ReflectionTypeLoadExceptionLoggingMiddleware>();
@@ -561,6 +566,11 @@ public class Startup {
                 }
             });
         });
+    }
+
+    internal static bool ShouldSuppressExceptionHandlerDiagnostics(int statusCode) {
+        return statusCode >= StatusCodes.Status400BadRequest
+            && statusCode < StatusCodes.Status500InternalServerError;
     }
 
     private static bool IsAnonymousGetRequest(OutputCacheContext context) {

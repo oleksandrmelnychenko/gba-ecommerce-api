@@ -151,6 +151,18 @@ public sealed class SecurityRegressionTests {
         Assert.Equal(expectedLogLevel, actual.Name);
     }
 
+    [Theory]
+    [InlineData(StatusCodes.Status400BadRequest, true)]
+    [InlineData(StatusCodes.Status403Forbidden, true)]
+    [InlineData(StatusCodes.Status500InternalServerError, false)]
+    public void Framework_error_diagnostics_are_suppressed_only_for_handled_client_failures(
+        int statusCode,
+        bool expected) {
+        Assert.Equal(
+            expected,
+            Startup.ShouldSuppressExceptionHandlerDiagnostics(statusCode));
+    }
+
     [Fact]
     public void Signup_dto_cannot_mass_assign_server_controlled_client_flags() {
         string[] propertyNames = typeof(UserManagementController.SignUpClientRequest)
