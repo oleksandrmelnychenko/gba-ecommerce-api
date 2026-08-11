@@ -83,6 +83,14 @@ public sealed class EcommerceStockContractTests {
         string retailMethod = source[retailMethodStart..retailMethodEnd];
 
         Assert.DoesNotContain("@StorageId", standardMethod, StringComparison.Ordinal);
+        Assert.Contains(
+            "IncludeAvailabilityFromJoinedStorage(productToReturn, productAvailability, storage);",
+            standardMethod,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "IncludeAvailabilityFromJoinedStorage(product, productAvailability, storage);",
+            standardMethod,
+            StringComparison.Ordinal);
         Assert.Equal(2, Count(retailMethod, "AND [ProductAvailability].StorageID = @StorageId"));
         Assert.Equal(2, Count(retailMethod, "StorageId = storageId"));
     }

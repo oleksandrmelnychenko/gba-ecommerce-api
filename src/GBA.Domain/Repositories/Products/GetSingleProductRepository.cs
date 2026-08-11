@@ -1084,15 +1084,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
                     productToReturn.ProductProductGroups.Add(productProductGroup);
                 }
 
-                if (productAvailability != null && !productToReturn.ProductAvailabilities.Any(a => a.Id.Equals(productAvailability.Id))) {
-                    if (storage.Locale.ToLower().Equals("pl")) {
-                        productToReturn.AvailableQtyPl += productAvailability.Amount;
-                        productToReturn.ProductAvailabilities.Add(productAvailability);
-                    } else {
-                        productToReturn.AvailableQtyUk += productAvailability.Amount;
-                        productToReturn.ProductAvailabilities.Add(productAvailability);
-                    }
-                }
+                IncludeAvailabilityFromJoinedStorage(productToReturn, productAvailability, storage);
 
                 if (image != null && !productToReturn.ProductImages.Any(i => i.Id.Equals(image.Id))) productToReturn.ProductImages.Add(image);
             } else {
@@ -1125,15 +1117,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
                     product.ProductOriginalNumbers.Add(productOriginalNumber);
                 }
 
-                if (productAvailability != null) {
-                    if (storage.Locale.ToLower().Equals("pl")) {
-                        product.AvailableQtyPl += productAvailability.Amount;
-                        product.ProductAvailabilities.Add(productAvailability);
-                    } else {
-                        product.AvailableQtyUk += productAvailability.Amount;
-                        product.ProductAvailabilities.Add(productAvailability);
-                    }
-                }
+                IncludeAvailabilityFromJoinedStorage(product, productAvailability, storage);
 
                 productToReturn = product;
             }
@@ -1313,6 +1297,24 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
         );
 
         return productToReturn;
+    }
+
+    internal static void IncludeAvailabilityFromJoinedStorage(
+        Product product,
+        ProductAvailability productAvailability,
+        Storage storage) {
+        if (productAvailability == null ||
+            storage == null ||
+            string.IsNullOrWhiteSpace(storage.Locale) ||
+            product.ProductAvailabilities.Any(availability => availability.Id.Equals(productAvailability.Id)))
+            return;
+
+        if (storage.Locale.Equals("pl", StringComparison.OrdinalIgnoreCase))
+            product.AvailableQtyPl += productAvailability.Amount;
+        else
+            product.AvailableQtyUk += productAvailability.Amount;
+
+        product.ProductAvailabilities.Add(productAvailability);
     }
 
     public Product GetByNetIdForRetail(Guid netId, long storageId, long organizationId, bool withVat) {
