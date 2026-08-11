@@ -137,6 +137,19 @@ public sealed class DeliveryRecipientRepository : IDeliveryRecipientRepository {
             .SingleOrDefault();
     }
 
+    public DeliveryRecipient GetByClientIdAndContact(long clientId, string fullName, string mobilePhone) {
+        return _connection.Query<DeliveryRecipient>(
+                "SELECT TOP 1 * FROM DeliveryRecipient " +
+                "WHERE ClientId = @ClientId " +
+                "AND FullName = @FullName " +
+                "AND ISNULL(MobilePhone, '') = @MobilePhone " +
+                "AND Deleted = 0 " +
+                "ORDER BY Priority DESC, Id",
+                new { ClientId = clientId, FullName = fullName, MobilePhone = mobilePhone }
+            )
+            .SingleOrDefault();
+    }
+
     public void Remove(Guid netId) {
         _connection.Execute(
             "UPDATE DeliveryRecipient SET Deleted = 1 WHERE NetUid = @NetId",

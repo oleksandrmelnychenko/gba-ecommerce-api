@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 using System.Threading.Tasks;
 using GBA.Common.IdentityConfiguration.Roles;
 using GBA.Common.ResponseBuilder.Contracts;
@@ -24,11 +25,41 @@ public sealed class DeliveryRecipientsController(
         return Ok(SuccessResponseBody(await deliveryRecipientService.GetAllRecipientsByClientNetId(userNetId)));
     }
 
+    [HttpPost]
+    [AssignActionRoute(DeliveryRecipientsSegments.ADD_NEW)]
+    [Consumes("application/json")]
+    [RequestSizeLimit(16384)]
+    public async Task<IActionResult> AddRecipientAsync([FromBody] CreateDeliveryRecipientRequest request) {
+        string fullName = request?.FullName?.Trim() ?? string.Empty;
+        string mobilePhone = request?.MobilePhone?.Trim() ?? string.Empty;
+        if (fullName.Length is < 1 or > 250 || mobilePhone.Length is < 1 or > 100)
+            return BadRequest(ErrorResponseBody(
+                "Delivery recipient name and phone are required.",
+                HttpStatusCode.BadRequest));
+
+        try {
+            return Ok(SuccessResponseBody(await deliveryRecipientService.AddRecipient(
+                GetUserNetId(),
+                fullName,
+                mobilePhone)));
+        } catch (ArgumentException) {
+            return BadRequest(ErrorResponseBody(
+                "Delivery recipient is invalid.",
+                HttpStatusCode.BadRequest));
+        }
+    }
+
     [HttpGet]
     [AssignActionRoute(DeliveryRecipientAddressesSegments.ECOMMERCE_GET_ALL_BY_RECIPIENT_NET_ID)]
     public async Task<IActionResult> GetAllRecipientAddressesByRecipientNetIdAsync([FromQuery] Guid netId) {
         if (!clientResourceAccessService.CanAccessDeliveryRecipient(GetUserNetId(), netId)) return Forbid();
 
         return Ok(SuccessResponseBody(await deliveryRecipientService.GetAllAddressesByRecipientNetId(netId)));
+    }
+
+    public sealed class CreateDeliveryRecipientRequest {
+        public string FullName { get; set; } = string.Empty;
+
+        public string MobilePhone { get; set; } = string.Empty;
     }
 }

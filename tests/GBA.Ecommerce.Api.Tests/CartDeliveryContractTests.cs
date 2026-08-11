@@ -37,10 +37,14 @@ public sealed class CartDeliveryContractTests(EcommerceApiFixture fixture) : ICl
     }
 
     [Theory]
-    [InlineData("deliveries/recipients/all/current")]
-    [InlineData("deliveries/recipients/addresses/all/recipient?netId=00000000-0000-0000-0000-000000000000")]
-    public async Task Delivery_recipient_endpoints_require_bearer_token(string relativePath) {
-        using HttpResponseMessage response = await _client.GetAsync(_config.ApiPath(relativePath));
+    [InlineData("deliveries/recipients/all/current", "GET")]
+    [InlineData("deliveries/recipients/addresses/all/recipient?netId=00000000-0000-0000-0000-000000000000", "GET")]
+    [InlineData("deliveries/recipients/new", "POST")]
+    public async Task Delivery_recipient_endpoints_require_bearer_token(string relativePath, string method) {
+        using HttpRequestMessage request = new(new HttpMethod(method), _config.ApiPath(relativePath));
+        if (method == "POST") request.Content = JsonContent.Create(new { });
+
+        using HttpResponseMessage response = await _client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Contains("Bearer", response.Headers.WwwAuthenticate.ToString());
