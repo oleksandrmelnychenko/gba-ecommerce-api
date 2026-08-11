@@ -991,7 +991,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "ON [Storage].ID = [ProductAvailability].StorageID ";
         if (withVat)
             sqlExpression +=
-                "AND [Storage].OrganizationID = @OrganizationId " +
+                "AND " + EcommerceStorageScope.NamedStorageSql + " " +
                 "AND [Storage].Deleted = 0 " +
                 "AND [Storage].ForDefective = 0 " +
                 "AND [Storage].ForVatProducts = 1 " +
@@ -1007,7 +1007,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
                 "UNION " +
                 "SELECT ID FROM Storage " +
                 "WHERE [Storage].Deleted = 0 " +
-                "AND [Storage].OrganizationID = @OrganizationId " +
+                "AND " + EcommerceStorageScope.NamedStorageSql + " " +
                 "AND [Storage].ForDefective = 0 " +
                 "AND [Storage].Locale = @Culture) ";
         sqlExpression +=

@@ -38,12 +38,19 @@ public sealed class EcommerceStockContractTests {
     [Fact]
     public void Authenticated_cart_and_search_share_the_multi_storage_agreement_scope() {
         string availabilityRepository = ReadSource("src/GBA.Domain/Repositories/Products/ProductAvailabilityRepository.cs");
+        string productRepository = ReadSource("src/GBA.Domain/Repositories/Products/GetSingleProductRepository.cs");
+        string storageScope = ReadSource("src/GBA.Domain/Repositories/Products/EcommerceStorageScope.cs");
         string cartService = ReadSource("src/GBA.Services/Services/Clients/ClientShoppingCartService.cs");
         string orderService = ReadSource("src/GBA.Services/Services/Orders/OrderService.cs");
 
         Assert.Contains("GetForEcommercePurchase", cartService);
         Assert.Contains("GetForEcommercePurchase", orderService);
-        Assert.Contains("s.OrganizationID = @OrganizationId", availabilityRepository);
+        Assert.Equal(2, Count(availabilityRepository, "EcommerceStorageScope.NamedStorageSql"));
+        Assert.Equal(2, Count(availabilityRepository, "EcommerceStorageScope.AliasedStorageSql"));
+        Assert.Equal(2, Count(productRepository, "EcommerceStorageScope.NamedStorageSql"));
+        Assert.Contains("[Storage].OrganizationID = @OrganizationId", storageScope);
+        Assert.Contains("[AgreementOrganization].StorageID = [Storage].ID", storageScope);
+        Assert.Contains("[AgreementOrganization].StorageID = s.ID", storageScope);
         Assert.Contains("s.ForVatProducts = 1", availabilityRepository);
         Assert.Contains("s.AvailableForReSale = 1", availabilityRepository);
         Assert.Contains("s.ForDefective = 0", availabilityRepository);
