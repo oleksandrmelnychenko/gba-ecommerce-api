@@ -54,13 +54,30 @@ public sealed class SearchPriceResolverTests {
     }
 
     [Fact]
-    public void Positive_stock_is_hidden_without_an_authoritative_sellable_price() {
+    public void Anonymous_positive_stock_is_hidden_without_an_authoritative_sellable_price() {
         Assert.Equal(0, ProductsController.ResolveVisibleSearchQuantity(
             new ProductPriceInfo { Price = 0 },
-            12));
-        Assert.Equal(0, ProductsController.ResolveVisibleSearchQuantity(null, 12));
+            12,
+            isAuthenticated: false));
+        Assert.Equal(0, ProductsController.ResolveVisibleSearchQuantity(
+            null,
+            12,
+            isAuthenticated: false));
         Assert.Equal(12, ProductsController.ResolveVisibleSearchQuantity(
             new ProductPriceInfo { Price = 31.25m },
-            12));
+            12,
+            isAuthenticated: false));
+    }
+
+    [Fact]
+    public void Authenticated_contract_stock_is_not_replaced_with_zero_when_price_is_missing() {
+        Assert.Equal(16, ProductsController.ResolveVisibleSearchQuantity(
+            new ProductPriceInfo { Price = 0 },
+            16,
+            isAuthenticated: true));
+        Assert.Equal(0, ProductsController.ResolveVisibleSearchQuantity(
+            new ProductPriceInfo { Price = 0 },
+            -4,
+            isAuthenticated: true));
     }
 }

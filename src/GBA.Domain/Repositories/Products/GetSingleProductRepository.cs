@@ -992,7 +992,9 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
         if (withVat)
             sqlExpression +=
                 "AND [Storage].OrganizationID = @OrganizationId " +
+                "AND [Storage].Deleted = 0 " +
                 "AND [Storage].ForDefective = 0 " +
+                "AND [Storage].ForVatProducts = 1 " +
                 "AND [Storage].Locale = @Culture ";
         else
             sqlExpression +=
@@ -1006,6 +1008,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
                 "SELECT ID FROM Storage " +
                 "WHERE [Storage].Deleted = 0 " +
                 "AND [Storage].OrganizationID = @OrganizationId " +
+                "AND [Storage].ForDefective = 0 " +
                 "AND [Storage].Locale = @Culture) ";
         sqlExpression +=
             "LEFT JOIN MeasureUnit " +
@@ -1084,7 +1087,11 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
                     productToReturn.ProductProductGroups.Add(productProductGroup);
                 }
 
-                IncludeAvailabilityFromJoinedStorage(productToReturn, productAvailability, storage);
+                IncludeAvailabilityFromJoinedStorage(
+                    productToReturn,
+                    productAvailability,
+                    storage,
+                    withVat);
 
                 if (image != null && !productToReturn.ProductImages.Any(i => i.Id.Equals(image.Id))) productToReturn.ProductImages.Add(image);
             } else {
@@ -1117,7 +1124,11 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
                     product.ProductOriginalNumbers.Add(productOriginalNumber);
                 }
 
-                IncludeAvailabilityFromJoinedStorage(product, productAvailability, storage);
+                IncludeAvailabilityFromJoinedStorage(
+                    product,
+                    productAvailability,
+                    storage,
+                    withVat);
 
                 productToReturn = product;
             }
@@ -1302,18 +1313,27 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
     internal static void IncludeAvailabilityFromJoinedStorage(
         Product product,
         ProductAvailability productAvailability,
-        Storage storage) {
+        Storage storage,
+        bool withVat) {
         if (productAvailability == null ||
             storage == null ||
             string.IsNullOrWhiteSpace(storage.Locale) ||
             product.ProductAvailabilities.Any(availability => availability.Id.Equals(productAvailability.Id)))
             return;
 
-        if (storage.Locale.Equals("pl", StringComparison.OrdinalIgnoreCase))
-            product.AvailableQtyPl += productAvailability.Amount;
-        else
-            product.AvailableQtyUk += productAvailability.Amount;
+        if (storage.Locale.Equals("pl", StringComparison.OrdinalIgnoreCase)) {
+            if (withVat)
+                product.AvailableQtyPlVAT += productAvailability.Amount;
+            else
+                product.AvailableQtyPl += productAvailability.Amount;
+        } else {
+            if (withVat)
+                product.AvailableQtyUkVAT += productAvailability.Amount;
+            else
+                product.AvailableQtyUk += productAvailability.Amount;
+        }
 
+        productAvailability.Storage = storage;
         product.ProductAvailabilities.Add(productAvailability);
     }
 

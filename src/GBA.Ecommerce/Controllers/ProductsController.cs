@@ -96,7 +96,10 @@ public sealed class ProductsController(
                 resolvedPrice,
                 locale,
                 timestamp,
-                ResolveVisibleSearchQuantity(resolvedPrice, sellableQuantity),
+                ResolveVisibleSearchQuantity(
+                    resolvedPrice,
+                    sellableQuantity,
+                    userNetId != Guid.Empty),
                 fallbackCurrencyCode);
         }).ToList();
 
@@ -115,8 +118,10 @@ public sealed class ProductsController(
 
     internal static double ResolveVisibleSearchQuantity(
         ProductPriceInfo? authoritativePrice,
-        double sellableQuantity) {
-        return authoritativePrice?.Price > 0m && double.IsFinite(sellableQuantity)
+        double sellableQuantity,
+        bool isAuthenticated) {
+        return (isAuthenticated || authoritativePrice?.Price > 0m)
+               && double.IsFinite(sellableQuantity)
             ? Math.Max(0d, sellableQuantity)
             : 0d;
     }
