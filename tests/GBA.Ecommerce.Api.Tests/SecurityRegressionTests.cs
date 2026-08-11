@@ -9,6 +9,7 @@ using GBA.Common.ResponseBuilder;
 using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
 using GBA.Ecommerce.Controllers;
+using GBA.Ecommerce.Controllers.Clients;
 using GBA.Ecommerce.Controllers.UserManagement;
 using GBA.Services.Services.UserManagement;
 using Microsoft.AspNetCore.Authorization;
@@ -186,6 +187,24 @@ public sealed class SecurityRegressionTests {
 
         Assert.NotNull(typeof(OrdersController).GetCustomAttribute<AuthorizeAttribute>());
         Assert.Null(action.GetCustomAttribute<AllowAnonymousAttribute>());
+    }
+
+    [Fact]
+    public void Delivery_recipient_creation_is_post_only_and_requires_customer_authentication() {
+        MethodInfo action = typeof(DeliveryRecipientsController)
+            .GetMethod(nameof(DeliveryRecipientsController.AddRecipientAsync))!;
+        AuthorizeAttribute authorize = Assert.IsType<AuthorizeAttribute>(
+            typeof(DeliveryRecipientsController).GetCustomAttribute<AuthorizeAttribute>());
+
+        Assert.Equal(
+            DeliveryRecipientsSegments.ADD_NEW,
+            Assert.Single(action.GetCustomAttributes<AssignActionRouteAttribute>()).Template);
+        Assert.NotNull(action.GetCustomAttribute<HttpPostAttribute>());
+        Assert.Null(action.GetCustomAttribute<HttpGetAttribute>());
+        Assert.Null(action.GetCustomAttribute<AllowAnonymousAttribute>());
+        Assert.Contains("ClientUa", authorize.Roles, StringComparison.Ordinal);
+        Assert.Contains("Workplace", authorize.Roles, StringComparison.Ordinal);
+        Assert.NotNull(Assert.Single(action.GetParameters()).GetCustomAttribute<FromBodyAttribute>());
     }
 
     [Fact]
