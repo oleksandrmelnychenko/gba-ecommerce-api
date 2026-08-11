@@ -111,12 +111,16 @@ public sealed class ClientRepository : IClientRepository {
 
     public Guid GetRootNetIdBySubClientNetId(Guid netId) {
         return _connection.Query<Guid>(
-            "SELECT RootClient.NetUID FROM Client AS RootClient " +
-            "LEFT JOIN ClientSubClient " +
-            "ON ClientSubClient.RootClientID = RootClient.ID " +
-            "LEFT JOIN Client AS SubClient " +
-            "ON SubClient.ID = ClientSubClient.SubClientID " +
-            "WHERE SubClient.NetUID = @NetId ",
+            "SELECT [RootClient].NetUID " +
+            "FROM [ClientSubClient] " +
+            "INNER JOIN [Client] AS [RootClient] " +
+            "ON [RootClient].ID = [ClientSubClient].RootClientID " +
+            "AND [RootClient].Deleted = 0 " +
+            "INNER JOIN [Client] AS [SubClient] " +
+            "ON [SubClient].ID = [ClientSubClient].SubClientID " +
+            "AND [SubClient].Deleted = 0 " +
+            "WHERE [ClientSubClient].Deleted = 0 " +
+            "AND [SubClient].NetUID = @NetId ",
             new { NetId = netId }
         ).FirstOrDefault();
     }

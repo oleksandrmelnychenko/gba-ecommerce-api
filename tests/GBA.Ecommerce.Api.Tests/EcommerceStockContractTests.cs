@@ -58,6 +58,25 @@ public sealed class EcommerceStockContractTests {
     }
 
     [Fact]
+    public void Authenticated_stock_resolves_sub_clients_to_the_root_agreement_owner() {
+        string agreementRepository = ReadSource("src/GBA.Domain/Repositories/Clients/ClientAgreementRepository.cs");
+        string clientRepository = ReadSource("src/GBA.Domain/Repositories/Clients/ClientRepository.cs");
+        string agreementService = ReadSource("src/GBA.Services/Services/Clients/ClientAgreementService.cs");
+        string productService = ReadSource("src/GBA.Services/Services/Products/ProductService.cs");
+
+        Assert.Equal(2, Count(agreementRepository, "GetByClientContextNetId(clientNetId"));
+        Assert.Contains(
+            "COALESCE([ClientOwnerLink].RootClientID, [ActorClient].ID)",
+            agreementRepository,
+            StringComparison.Ordinal);
+        Assert.Contains("[ClientOwnerLink].Deleted = 0", agreementRepository, StringComparison.Ordinal);
+        Assert.Contains("[Agreement].ForReSale = 0", agreementRepository, StringComparison.Ordinal);
+        Assert.Contains("WHERE [ClientSubClient].Deleted = 0", clientRepository, StringComparison.Ordinal);
+        Assert.Contains("GetRootNetIdBySubClientNetId(clientNetId)", agreementService, StringComparison.Ordinal);
+        Assert.Contains("agreementRepository.GetSelectedByClientNetId(currentClientNetId)", productService, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Retail_configuration_gaps_fail_closed_without_exposing_internal_stock() {
         string productService = ReadSource("src/GBA.Services/Services/Products/ProductService.cs");
         string cartService = ReadSource("src/GBA.Services/Services/Clients/ClientShoppingCartService.cs");

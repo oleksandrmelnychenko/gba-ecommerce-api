@@ -173,26 +173,28 @@ public sealed class ClientAgreementService : IClientAgreementService {
         IAgreementRepository agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
         IClientRepository clientRepository = _clientRepositoriesFactory.NewClientRepository(connection);
 
-            Client client = clientRepository.GetByNetId(clientNetId, true);
-            if (client != null) {
-                foreach (ClientAgreement clientAgreement in client.ClientAgreements) {
-                    clientAgreement.Agreement.IsSelected = clientAgreement.NetUid.Equals(clientAgreementNetId);
+        Guid rootClientNetId = clientRepository.GetRootNetIdBySubClientNetId(clientNetId);
+        Guid agreementOwnerNetId = rootClientNetId == Guid.Empty ? clientNetId : rootClientNetId;
+        Client client = clientRepository.GetByNetId(agreementOwnerNetId, true);
+        if (client != null) {
+            foreach (ClientAgreement clientAgreement in client.ClientAgreements) {
+                clientAgreement.Agreement.IsSelected = clientAgreement.NetUid.Equals(clientAgreementNetId);
 
-                    agreementRepository.Update(clientAgreement.Agreement);
-                }
-            } else {
-                IWorkplaceRepository workplaceRepository = _clientRepositoriesFactory.NewWorkplaceRepository(connection);
-
-                Workplace workplace = workplaceRepository.GetByNetIdWithClient(clientNetId);
-                client = workplace.MainClient;
-                client.CurrentWorkplace = workplace;
-
-                foreach (WorkplaceClientAgreement workplaceClientAgreement in workplace.WorkplaceClientAgreements) {
-                    workplaceClientAgreement.IsSelected = workplaceClientAgreement.ClientAgreement.NetUid.Equals(clientAgreementNetId);
-
-                    workplaceRepository.UpdateWorkplaceClientAgreement(workplaceClientAgreement);
-                }
+                agreementRepository.Update(clientAgreement.Agreement);
             }
+        } else {
+            IWorkplaceRepository workplaceRepository = _clientRepositoriesFactory.NewWorkplaceRepository(connection);
+
+            Workplace workplace = workplaceRepository.GetByNetIdWithClient(clientNetId);
+            client = workplace.MainClient;
+            client.CurrentWorkplace = workplace;
+
+            foreach (WorkplaceClientAgreement workplaceClientAgreement in workplace.WorkplaceClientAgreements) {
+                workplaceClientAgreement.IsSelected = workplaceClientAgreement.ClientAgreement.NetUid.Equals(clientAgreementNetId);
+
+                workplaceRepository.UpdateWorkplaceClientAgreement(workplaceClientAgreement);
+            }
+        }
 
         return Task.FromResult(client);
     }

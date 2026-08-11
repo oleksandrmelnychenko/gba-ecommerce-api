@@ -185,45 +185,41 @@ public sealed class ClientAgreementRepository : IClientAgreementRepository {
     }
 
     public ClientAgreement GetSelectedByClientNetId(Guid clientNetId) {
-        return _connection.Query<ClientAgreement, Agreement, Organization, ClientAgreement>(
-            "SELECT TOP(1) ClientAgreement.* " +
-            ",Agreement.* " +
-            ",Organization.* " +
-            "FROM ClientAgreement " +
-            "LEFT JOIN Client " +
-            "ON Client.ID = ClientAgreement.ClientID " +
-            "LEFT JOIN Agreement " +
-            "ON Agreement.ID = ClientAgreement.AgreementID " +
-            "LEFT JOIN Organization " +
-            "ON Agreement.OrganizationID = Organization.ID " +
-            "WHERE Client.NetUID = @ClientNetId " +
-            "AND ClientAgreement.Deleted = 0 " +
-            "AND [Agreement].IsSelected = 1 ",
-            (clientAgreement, agreement, organization) => {
-                agreement.Organization = organization;
-
-                clientAgreement.Agreement = agreement;
-
-                return clientAgreement;
-            },
-            new { ClientNetId = clientNetId }
-        ).SingleOrDefault();
+        return GetByClientContextNetId(clientNetId, selectedOnly: true);
     }
 
     public ClientAgreement GetSelectedByClientNotSelectedNetId(Guid clientNetId) {
+        return GetByClientContextNetId(clientNetId, selectedOnly: false);
+    }
+
+    private ClientAgreement GetByClientContextNetId(Guid clientNetId, bool selectedOnly) {
+        string selectedAgreementFilter = selectedOnly
+            ? "AND [Agreement].IsSelected = 1 "
+            : string.Empty;
+
         return _connection.Query<ClientAgreement, Agreement, Organization, ClientAgreement>(
-            "SELECT TOP(1) ClientAgreement.* " +
-            ",Agreement.* " +
-            ",Organization.* " +
-            "FROM ClientAgreement " +
-            "LEFT JOIN Client " +
-            "ON Client.ID = ClientAgreement.ClientID " +
-            "LEFT JOIN Agreement " +
-            "ON Agreement.ID = ClientAgreement.AgreementID " +
-            "LEFT JOIN Organization " +
-            "ON Agreement.OrganizationID = Organization.ID " +
-            "WHERE Client.NetUID = @ClientNetId " +
-            "AND ClientAgreement.Deleted = 0 ",
+            "SELECT TOP(1) [ClientAgreement].* " +
+            ",[Agreement].* " +
+            ",[Organization].* " +
+            "FROM [Client] AS [ActorClient] " +
+            "LEFT JOIN [ClientSubClient] AS [ClientOwnerLink] " +
+            "ON [ClientOwnerLink].SubClientID = [ActorClient].ID " +
+            "AND [ClientOwnerLink].Deleted = 0 " +
+            "INNER JOIN [Client] AS [AgreementClient] " +
+            "ON [AgreementClient].ID = COALESCE([ClientOwnerLink].RootClientID, [ActorClient].ID) " +
+            "INNER JOIN [ClientAgreement] " +
+            "ON [ClientAgreement].ClientID = [AgreementClient].ID " +
+            "INNER JOIN [Agreement] " +
+            "ON [Agreement].ID = [ClientAgreement].AgreementID " +
+            "LEFT JOIN [Organization] " +
+            "ON [Organization].ID = [Agreement].OrganizationID " +
+            "WHERE [ActorClient].NetUID = @ClientNetId " +
+            "AND [ActorClient].Deleted = 0 " +
+            "AND [AgreementClient].Deleted = 0 " +
+            "AND [ClientAgreement].Deleted = 0 " +
+            "AND [Agreement].ForReSale = 0 " +
+            selectedAgreementFilter +
+            "ORDER BY [ClientAgreement].ID ",
             (clientAgreement, agreement, organization) => {
                 agreement.Organization = organization;
 

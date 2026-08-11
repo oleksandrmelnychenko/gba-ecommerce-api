@@ -2,6 +2,7 @@ using System;
 using System.Data;
 using System.Threading.Tasks;
 using GBA.Domain.DbConnectionFactory.Contracts;
+using GBA.Domain.Entities.Agreements;
 using GBA.Domain.Entities.Clients;
 using GBA.Domain.Repositories.Agreements.Contracts;
 using GBA.Domain.Repositories.Clients.Contracts;
@@ -58,5 +59,135 @@ public sealed class ClientAgreementServiceTests {
         clientRepositoriesFactory.Verify(
             factory => factory.NewClientAgreementRepository(It.IsAny<IDbConnection>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task Sub_client_selects_the_root_clients_fenix_agreement() {
+        Guid actorNetId = Guid.NewGuid();
+        Guid rootClientNetId = Guid.NewGuid();
+        Guid fenixAgreementNetId = Guid.NewGuid();
+        Agreement fenixAgreement = new() { IsSelected = false };
+        Agreement otherAgreement = new() { IsSelected = true };
+        Client rootClient = new() { NetUid = rootClientNetId };
+        rootClient.ClientAgreements.Add(new ClientAgreement {
+            NetUid = fenixAgreementNetId,
+            Agreement = fenixAgreement
+        });
+        rootClient.ClientAgreements.Add(new ClientAgreement {
+            NetUid = Guid.NewGuid(),
+            Agreement = otherAgreement
+        });
+
+        Mock<IDbConnection> connection = new();
+        Mock<IDbConnectionFactory> connectionFactory = new();
+        connectionFactory
+            .Setup(factory => factory.NewSqlConnection())
+            .Returns(connection.Object);
+
+        Mock<IClientRepository> clientRepository = new();
+        clientRepository
+            .Setup(repository => repository.GetRootNetIdBySubClientNetId(actorNetId))
+            .Returns(rootClientNetId);
+        clientRepository
+            .Setup(repository => repository.GetByNetId(rootClientNetId, true))
+            .Returns(rootClient);
+        Mock<IClientRepositoriesFactory> clientRepositoriesFactory = new();
+        clientRepositoriesFactory
+            .Setup(factory => factory.NewClientRepository(connection.Object))
+            .Returns(clientRepository.Object);
+
+        Mock<IAgreementRepository> agreementRepository = new();
+        Mock<IAgreementRepositoriesFactory> agreementRepositoriesFactory = new();
+        agreementRepositoriesFactory
+            .Setup(factory => factory.NewAgreementRepository(connection.Object))
+            .Returns(agreementRepository.Object);
+
+        ClientAgreementService service = CreateService(
+            connectionFactory.Object,
+            clientRepositoriesFactory.Object,
+            agreementRepositoriesFactory.Object);
+
+        Client result = await service.UpdateSelectedClientAgreement(
+            actorNetId,
+            fenixAgreementNetId);
+
+        Assert.Same(rootClient, result);
+        Assert.True(fenixAgreement.IsSelected);
+        Assert.False(otherAgreement.IsSelected);
+        clientRepository.Verify(
+            repository => repository.GetByNetId(actorNetId, true),
+            Times.Never);
+        agreementRepository.Verify(
+            repository => repository.Update(It.IsAny<Agreement>()),
+            Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task Direct_client_keeps_its_own_agreement_context() {
+        Guid actorNetId = Guid.NewGuid();
+        Guid agreementNetId = Guid.NewGuid();
+        Agreement agreement = new() { IsSelected = false };
+        Client directClient = new() { NetUid = actorNetId };
+        directClient.ClientAgreements.Add(new ClientAgreement {
+            NetUid = agreementNetId,
+            Agreement = agreement
+        });
+
+        Mock<IDbConnection> connection = new();
+        Mock<IDbConnectionFactory> connectionFactory = new();
+        connectionFactory
+            .Setup(factory => factory.NewSqlConnection())
+            .Returns(connection.Object);
+
+        Mock<IClientRepository> clientRepository = new();
+        clientRepository
+            .Setup(repository => repository.GetRootNetIdBySubClientNetId(actorNetId))
+            .Returns(Guid.Empty);
+        clientRepository
+            .Setup(repository => repository.GetByNetId(actorNetId, true))
+            .Returns(directClient);
+        Mock<IClientRepositoriesFactory> clientRepositoriesFactory = new();
+        clientRepositoriesFactory
+            .Setup(factory => factory.NewClientRepository(connection.Object))
+            .Returns(clientRepository.Object);
+
+        Mock<IAgreementRepository> agreementRepository = new();
+        Mock<IAgreementRepositoriesFactory> agreementRepositoriesFactory = new();
+        agreementRepositoriesFactory
+            .Setup(factory => factory.NewAgreementRepository(connection.Object))
+            .Returns(agreementRepository.Object);
+
+        ClientAgreementService service = CreateService(
+            connectionFactory.Object,
+            clientRepositoriesFactory.Object,
+            agreementRepositoriesFactory.Object);
+
+        Client result = await service.UpdateSelectedClientAgreement(
+            actorNetId,
+            agreementNetId);
+
+        Assert.Same(directClient, result);
+        Assert.True(agreement.IsSelected);
+        clientRepository.Verify(
+            repository => repository.GetByNetId(actorNetId, true),
+            Times.Once);
+        agreementRepository.Verify(
+            repository => repository.Update(agreement),
+            Times.Once);
+    }
+
+    private static ClientAgreementService CreateService(
+        IDbConnectionFactory connectionFactory,
+        IClientRepositoriesFactory clientRepositoriesFactory,
+        IAgreementRepositoriesFactory agreementRepositoriesFactory) {
+        return new ClientAgreementService(
+            connectionFactory,
+            clientRepositoriesFactory,
+            Mock.Of<IOrganizationRepositoriesFactory>(),
+            Mock.Of<ICurrencyRepositoriesFactory>(),
+            Mock.Of<IPricingRepositoriesFactory>(),
+            agreementRepositoriesFactory,
+            Mock.Of<IStorageRepositoryFactory>(),
+            Mock.Of<ILogger<ClientAgreementService>>());
     }
 }
