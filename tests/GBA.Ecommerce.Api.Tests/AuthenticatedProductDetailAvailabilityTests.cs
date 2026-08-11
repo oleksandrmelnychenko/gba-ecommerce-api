@@ -40,7 +40,7 @@ public sealed class AuthenticatedProductDetailAvailabilityTests {
     }
 
     [Fact]
-    public void Detail_puts_the_exact_fenix_availability_in_the_VAT_bucket_for_a_VAT_agreement() {
+    public void Detail_puts_the_exact_availability_in_the_VAT_bucket_for_a_VAT_agreement() {
         Product product = new();
         ProductAvailability availability = new() { Id = 19, Amount = 16 };
         Storage storage = new() { Locale = "uk", ForVatProducts = true };
@@ -54,5 +54,44 @@ public sealed class AuthenticatedProductDetailAvailabilityTests {
         Assert.Equal(0, product.AvailableQtyUk);
         Assert.Equal(16, product.AvailableQtyUkVAT);
         Assert.Same(storage, Assert.Single(product.ProductAvailabilities).Storage);
+    }
+
+    [Fact]
+    public void Fenix_primary_storage_link_preserves_the_exact_non_VAT_quantity() {
+        const long fenixOrganizationId = 41;
+        const long fenixPrimaryStorageId = 73;
+        Product product = new();
+        ProductAvailability availability = new() { Id = 20, Amount = 16 };
+        Storage storage = new() {
+            Id = fenixPrimaryStorageId,
+            Locale = "uk",
+            OrganizationId = null,
+            ForVatProducts = false
+        };
+
+        Assert.True(EcommerceStorageScope.MatchesOrganization(
+            storage.OrganizationId,
+            storage.Id,
+            fenixOrganizationId,
+            organizationStorageId: fenixPrimaryStorageId));
+
+        GetSingleProductRepository.IncludeAvailabilityFromJoinedStorage(
+            product,
+            availability,
+            storage,
+            withVat: false);
+
+        Assert.Equal(16, product.AvailableQtyUk);
+        Assert.Equal(0, product.AvailableQtyUkVAT);
+        Assert.Same(storage, Assert.Single(product.ProductAvailabilities).Storage);
+    }
+
+    [Fact]
+    public void Unrelated_storage_is_not_included_in_the_agreement_organization_scope() {
+        Assert.False(EcommerceStorageScope.MatchesOrganization(
+            storageOrganizationId: 42,
+            storageId: 73,
+            organizationId: 41,
+            organizationStorageId: 74));
     }
 }

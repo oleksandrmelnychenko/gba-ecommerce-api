@@ -79,10 +79,10 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
             "AND [Storage].ForDefective = 0 " +
             "AND [Storage].Locale = @Culture " +
             "AND ((@WithVat = 1 " +
-            "      AND [Storage].OrganizationID = @OrganizationId " +
+            "      AND " + EcommerceStorageScope.NamedStorageSql + " " +
             "      AND [Storage].ForVatProducts = 1) " +
             "  OR (@WithVat = 0 " +
-            "      AND ([Storage].OrganizationID = @OrganizationId " +
+            "      AND (" + EcommerceStorageScope.NamedStorageSql + " " +
             "           OR [Storage].AvailableForReSale = 1))) " +
             "ORDER BY [Storage].RetailPriority, [Storage].ID, [ProductAvailability].ID",
             (availability, storage) => {
@@ -127,10 +127,10 @@ SELECT requested.ID AS ProductId,
                  AND s.ForDefective = 0
                  AND s.Locale = @Culture
                  AND ((@WithVat = 1
-                       AND s.OrganizationID = @OrganizationId
+                       AND " + EcommerceStorageScope.AliasedStorageSql + @"
                        AND s.ForVatProducts = 1)
                       OR (@WithVat = 0
-                          AND (s.OrganizationID = @OrganizationId
+                          AND (" + EcommerceStorageScope.AliasedStorageSql + @"
                                OR s.AvailableForReSale = 1)))
            ) END,
            0) AS float) AS Quantity
