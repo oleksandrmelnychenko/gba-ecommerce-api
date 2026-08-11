@@ -67,7 +67,6 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
     public IEnumerable<ProductAvailability> GetForEcommercePurchase(
         long productId,
         long organizationId,
-        bool withVat,
         string culture) {
         return _connection.Query<ProductAvailability, Storage, ProductAvailability>(
             "SELECT [ProductAvailability].*, [Storage].* " +
@@ -78,12 +77,7 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
             "AND [Storage].Deleted = 0 " +
             "AND [Storage].ForDefective = 0 " +
             "AND [Storage].Locale = @Culture " +
-            "AND ((@WithVat = 1 " +
-            "      AND " + EcommerceStorageScope.NamedStorageSql + " " +
-            "      AND [Storage].ForVatProducts = 1) " +
-            "  OR (@WithVat = 0 " +
-            "      AND (" + EcommerceStorageScope.NamedStorageSql + " " +
-            "           OR [Storage].AvailableForReSale = 1))) " +
+            "AND " + EcommerceStorageScope.NamedStorageSql + " " +
             "ORDER BY [Storage].RetailPriority, [Storage].ID, [ProductAvailability].ID",
             (availability, storage) => {
                 availability.Storage = storage;
@@ -92,7 +86,6 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
             new {
                 ProductId = productId,
                 OrganizationId = organizationId,
-                WithVat = withVat,
                 Culture = culture
             });
     }
@@ -101,7 +94,6 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
         IReadOnlyCollection<long> productIds,
         long? retailStorageId,
         long? organizationId,
-        bool withVat,
         string culture) {
         if (productIds == null || productIds.Count == 0)
             return new Dictionary<long, double>();
@@ -126,12 +118,7 @@ SELECT requested.ID AS ProductId,
                  AND s.Deleted = 0
                  AND s.ForDefective = 0
                  AND s.Locale = @Culture
-                 AND ((@WithVat = 1
-                       AND " + EcommerceStorageScope.AliasedStorageSql + @"
-                       AND s.ForVatProducts = 1)
-                      OR (@WithVat = 0
-                          AND (" + EcommerceStorageScope.AliasedStorageSql + @"
-                               OR s.AvailableForReSale = 1)))
+                 AND " + EcommerceStorageScope.AliasedStorageSql + @"
            ) END,
            0) AS float) AS Quantity
 FROM Product requested
@@ -143,7 +130,6 @@ WHERE requested.ID IN @ProductIds";
                     ProductIds = productIds,
                     RetailStorageId = retailStorageId,
                     OrganizationId = organizationId,
-                    WithVat = withVat,
                     Culture = culture
                 })
             .ToDictionary(row => row.ProductId, row => row.Quantity);

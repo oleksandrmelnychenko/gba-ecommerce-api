@@ -196,7 +196,6 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 productAvailabilityRepository.GetForEcommercePurchase(
                     orderItem.ProductId,
                     clientAgreement.Agreement.Organization.Id,
-                    clientAgreement.Agreement.WithVATAccounting,
                     CultureInfo.CurrentCulture.TwoLetterISOLanguageName);
 
             if (!productAvailabilities.Any()) throw new Exception("Product is not available");
@@ -297,7 +296,6 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                     productAvailabilityRepository.GetForEcommercePurchase(
                         orderItems[item].ProductId,
                         targetAgreement.Agreement.Organization.Id,
-                        targetAgreement.Agreement.WithVATAccounting,
                         CultureInfo.CurrentCulture.TwoLetterISOLanguageName);
 
                 if (!productAvailabilities.Any()) continue;
@@ -441,7 +439,6 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 productAvailabilityRepository.GetForEcommercePurchase(
                     orderItem.ProductId,
                     selectedAgreement.Agreement.Organization.Id,
-                    selectedAgreement.Agreement.WithVATAccounting,
                     CultureInfo.CurrentCulture.TwoLetterISOLanguageName);
 
             double qtyDifference = orderItemFromDb.Qty - orderItem.Qty;
@@ -591,7 +588,6 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                     productAvailabilityRepository.GetForEcommercePurchase(
                         orderItemFromDb.ProductId,
                         targetAgreement.Agreement.Organization.Id,
-                        targetAgreement.Agreement.WithVATAccounting,
                         CultureInfo.CurrentCulture.TwoLetterISOLanguageName);
 
                 double qtyDifference = orderItemFromDb.Qty - orderItems[item].Qty;

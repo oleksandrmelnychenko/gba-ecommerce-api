@@ -31,7 +31,6 @@ public interface IProductAvailabilityRepository {
     IEnumerable<ProductAvailability> GetForEcommercePurchase(
         long productId,
         long organizationId,
-        bool withVat,
         string culture);
 
     /// <summary>
@@ -42,7 +41,6 @@ public interface IProductAvailabilityRepository {
         IReadOnlyCollection<long> productIds,
         long? retailStorageId,
         long? organizationId,
-        bool withVat,
         string culture);
 
     List<ProductAvailability> GetAllByStorageNetIdFiltered(Guid netId, long limit, long offset, string value);

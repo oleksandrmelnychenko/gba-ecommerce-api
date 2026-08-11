@@ -3940,10 +3940,11 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
 
                 productAvailabilities.Add(productAvailability);
 
-                if (storage.Locale.ToLower().Equals("pl"))
-                    analogue.AvailableQtyPl += productAvailability.Amount;
-                else
-                    analogue.AvailableQtyUk += productAvailability.Amount;
+                AddAvailabilityToRequestedBucket(
+                    analogue,
+                    productAvailability,
+                    storage,
+                    withVat);
             } else {
                 analogue = analogues.First(a => a.Id.Equals(analogue.Id));
 
@@ -3953,10 +3954,11 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 if (productAvailabilities.Any(p => p.Id.Equals(productAvailability.Id) && p.ProductId.Equals(analogue.Id))) return analogue;
 
                 productAvailabilities.Add(productAvailability);
-                if (storage.Locale.ToLower().Equals("pl"))
-                    analogue.AvailableQtyPl += productAvailability.Amount;
-                else
-                    analogue.AvailableQtyUk += productAvailability.Amount;
+                AddAvailabilityToRequestedBucket(
+                    analogue,
+                    productAvailability,
+                    storage,
+                    withVat);
             }
 
             return analogue;
@@ -4024,25 +4026,9 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND [Storage].ForDefective = 0 " +
             "AND [Storage].Deleted = 0 ";
 
-        if (withVat)
-            sqlExpression +=
-                "AND [Storage].OrganizationID = @OrganizationId " +
-                "ORDER BY [ProductAvailability].Amount DESC, [Analogue].Name, [Analogue].VendorCode ";
-        else
-            sqlExpression +=
-                "AND [Storage].ID IN " +
-                "(SELECT [Storage].ID FROM [Storage] " +
-                "WHERE [Storage].Locale = @Culture " +
-                "AND [Storage].Deleted = 0" +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].AvailableForReSale = 1" +
-                "UNION " +
-                "SELECT [Storage].ID FROM [Storage] " +
-                "WHERE [Storage].OrganizationID = @OrganizationId " +
-                "AND [Storage].Deleted = 0 " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].Locale = @Culture) " +
-                "ORDER BY [ProductAvailability].Amount DESC, [Analogue].Name, [Analogue].VendorCode ";
+        sqlExpression +=
+            "AND " + EcommerceStorageScope.NamedStorageSql + " " +
+            "ORDER BY [ProductAvailability].Amount DESC, [Analogue].Name, [Analogue].VendorCode ";
 
         _connection.Query(
             sqlExpression,
@@ -4060,6 +4046,25 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
         );
 
         return analogues;
+    }
+
+    internal static void AddAvailabilityToRequestedBucket(
+        FromSearchProduct product,
+        ProductAvailability availability,
+        Storage storage,
+        bool withVat) {
+        bool isPolish = storage.Locale.Equals("pl", StringComparison.OrdinalIgnoreCase);
+        if (isPolish) {
+            if (withVat)
+                product.AvailableQtyPlVAT += availability.Amount;
+            else
+                product.AvailableQtyPl += availability.Amount;
+        } else {
+            if (withVat)
+                product.AvailableQtyUkVAT += availability.Amount;
+            else
+                product.AvailableQtyUk += availability.Amount;
+        }
     }
 
     public List<FromSearchProduct> GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPricesForRetail(

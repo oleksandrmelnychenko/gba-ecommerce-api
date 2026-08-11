@@ -750,7 +750,6 @@ public sealed class OrderService : IOrderService {
                                     .GetForEcommercePurchase(
                                         orderItem.ProductId,
                                         order.ClientAgreement.Agreement.Organization.Id,
-                                        withVat,
                                         CultureInfo.CurrentCulture.TwoLetterISOLanguageName
                                     );
 
@@ -847,7 +846,6 @@ public sealed class OrderService : IOrderService {
                         .GetForEcommercePurchase(
                             orderItem.ProductId,
                             order.ClientAgreement.Agreement.Organization.Id,
-                            withVat,
                             CultureInfo.CurrentCulture.TwoLetterISOLanguageName
                         );
 

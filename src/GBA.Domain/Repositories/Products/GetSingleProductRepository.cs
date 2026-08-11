@@ -989,27 +989,11 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "AND [ProductAvailability].Deleted = 0 " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID ";
-        if (withVat)
-            sqlExpression +=
-                "AND " + EcommerceStorageScope.NamedStorageSql + " " +
-                "AND [Storage].Deleted = 0 " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].ForVatProducts = 1 " +
-                "AND [Storage].Locale = @Culture ";
-        else
-            sqlExpression +=
-                "AND [Storage].ID IN ( " +
-                "SELECT ID FROM Storage " +
-                "WHERE Deleted = 0 " +
-                "AND [Storage].Locale = @Culture " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].AvailableForReSale = 1 " +
-                "UNION " +
-                "SELECT ID FROM Storage " +
-                "WHERE [Storage].Deleted = 0 " +
-                "AND " + EcommerceStorageScope.NamedStorageSql + " " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].Locale = @Culture) ";
+        sqlExpression +=
+            "AND " + EcommerceStorageScope.NamedStorageSql + " " +
+            "AND [Storage].Deleted = 0 " +
+            "AND [Storage].ForDefective = 0 " +
+            "AND [Storage].Locale = @Culture ";
         sqlExpression +=
             "LEFT JOIN MeasureUnit " +
             "ON MeasureUnit.ID = Product.MeasureUnitID " +
@@ -1175,12 +1159,13 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             analogue.CurrentPrice = decimal.Round(analogue.CurrentPrice, 2, MidpointRounding.AwayFromZero);
 
             if (productToReturn.AnalogueProducts.Any(a => a.AnalogueProductId.Equals(analogue.Id))) {
-                if (storage.Locale.ToLower().Equals("pl"))
-                    productToReturn.AnalogueProducts.Single(a =>
-                        a.AnalogueProductId.Equals(analogue.Id)).AnalogueProduct.AvailableQtyPl += productAvailability.Amount;
-                else
-                    productToReturn.AnalogueProducts.Single(a =>
-                        a.AnalogueProductId.Equals(analogue.Id)).AnalogueProduct.AvailableQtyUk += productAvailability.Amount;
+                Product existingAnalogue = productToReturn.AnalogueProducts.Single(a =>
+                    a.AnalogueProductId.Equals(analogue.Id)).AnalogueProduct;
+                IncludeAvailabilityFromJoinedStorage(
+                    existingAnalogue,
+                    productAvailability,
+                    storage,
+                    withVat);
             } else {
                 if (productAnalogue == null) return analogue;
 
@@ -1190,12 +1175,13 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
 
                 productAnalogue.AnalogueProduct = analogue;
 
-                if (productAvailability == null) return analogue;
+                IncludeAvailabilityFromJoinedStorage(
+                    analogue,
+                    productAvailability,
+                    storage,
+                    withVat);
 
-                if (storage.Locale.ToLower().Equals("pl"))
-                    analogue.AvailableQtyPl += productAvailability.Amount;
-                else
-                    analogue.AvailableQtyUk += productAvailability.Amount;
+                if (productAvailability == null) return analogue;
 
                 if (!productToReturn.AnalogueProducts.Any(a => a.AnalogueProductId.Equals(analogue.Id))) productToReturn.AnalogueProducts.Add(productAnalogue);
             }
@@ -1274,24 +1260,9 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "AND [ProductAnalogue].Deleted = 0 " +
             "AND [Storage].Locale = @Culture " +
             "AND [Storage].ForDefective = 0 ";
-        if (withVat)
-            analogueExpression +=
-                "AND [Storage].ID = @OrganizationId " +
-                "ORDER BY [ProductAvailability].Amount DESC, [Analogue].Name, [Analogue].VendorCode ";
-        else
-            analogueExpression +=
-                "AND [Storage].ID IN " +
-                "(SELECT [Storage].ID FROM [Storage] " +
-                "WHERE Deleted = 0 " +
-                "AND [Storage].Locale = @Culture " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].AvailableForReSale = 1 " +
-                "UNION " +
-                "SELECT ID FROM [Storage] " +
-                "WHERE [Storage].Deleted = 0 " +
-                "AND [Storage].OrganizationID = @OrganizationId) " +
-                "AND [Storage].Locale = @Culture " +
-                "ORDER BY [ProductAvailability].Amount DESC, [Analogue].Name, [Analogue].VendorCode ";
+        analogueExpression +=
+            "AND " + EcommerceStorageScope.NamedStorageSql + " " +
+            "ORDER BY [ProductAvailability].Amount DESC, [Analogue].Name, [Analogue].VendorCode ";
 
         _connection.Query(
             analogueExpression,

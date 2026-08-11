@@ -1552,7 +1552,6 @@ public sealed class ProductService : IProductService {
                 distinctProductIds,
                 storage.Id,
                 storage.OrganizationId,
-                storage.ForVatProducts,
                 culture);
         }
 
@@ -1571,7 +1570,6 @@ public sealed class ProductService : IProductService {
             distinctProductIds,
             null,
             agreement.OrganizationId.Value,
-            agreement.WithVATAccounting,
             culture);
     }
 

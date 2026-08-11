@@ -1,8 +1,11 @@
 namespace GBA.Domain.Repositories.Products;
 
 internal static class EcommerceStorageScope {
-    // Synced data can express the same ownership in either direction. Both links
-    // are source IDs and must remain valid until the legacy relation is migrated.
+    // Stock follows the selected agreement organization, while VAT remains a pricing and
+    // presentation concern. Synced data can express storage ownership in either direction;
+    // both source links stay valid until the legacy relation is migrated. Do not broaden this
+    // scope with AvailableForReSale or ForVatProducts: that mixes another organization's stock
+    // into the quantity the current agreement can reserve.
     internal const string NamedStorageSql =
         "([Storage].OrganizationID = @OrganizationId " +
         "OR EXISTS (" +

@@ -39,22 +39,34 @@ public sealed class EcommerceStockContractTests {
     public void Authenticated_cart_and_search_share_the_multi_storage_agreement_scope() {
         string availabilityRepository = ReadSource("src/GBA.Domain/Repositories/Products/ProductAvailabilityRepository.cs");
         string productRepository = ReadSource("src/GBA.Domain/Repositories/Products/GetSingleProductRepository.cs");
+        string multipleProductsRepository = ReadSource("src/GBA.Domain/Repositories/Products/GetMultipleProductsRepository.cs");
         string storageScope = ReadSource("src/GBA.Domain/Repositories/Products/EcommerceStorageScope.cs");
         string cartService = ReadSource("src/GBA.Services/Services/Clients/ClientShoppingCartService.cs");
         string orderService = ReadSource("src/GBA.Services/Services/Orders/OrderService.cs");
+        int ecommerceAvailabilityStart = availabilityRepository.IndexOf(
+            "public IEnumerable<ProductAvailability> GetForEcommercePurchase(",
+            StringComparison.Ordinal);
+        int ecommerceAvailabilityEnd = availabilityRepository.IndexOf(
+            "public IEnumerable<ProductAvailability> GetAllByProductAndStorageIds(",
+            ecommerceAvailabilityStart,
+            StringComparison.Ordinal);
+
+        Assert.True(ecommerceAvailabilityStart >= 0 && ecommerceAvailabilityEnd > ecommerceAvailabilityStart);
+        string ecommerceAvailability = availabilityRepository[ecommerceAvailabilityStart..ecommerceAvailabilityEnd];
 
         Assert.Contains("GetForEcommercePurchase", cartService);
         Assert.Contains("GetForEcommercePurchase", orderService);
-        Assert.Equal(2, Count(availabilityRepository, "EcommerceStorageScope.NamedStorageSql"));
-        Assert.Equal(2, Count(availabilityRepository, "EcommerceStorageScope.AliasedStorageSql"));
+        Assert.Equal(1, Count(availabilityRepository, "EcommerceStorageScope.NamedStorageSql"));
+        Assert.Equal(1, Count(availabilityRepository, "EcommerceStorageScope.AliasedStorageSql"));
         Assert.Equal(2, Count(productRepository, "EcommerceStorageScope.NamedStorageSql"));
+        Assert.Contains("EcommerceStorageScope.NamedStorageSql", multipleProductsRepository);
         Assert.Contains("[Storage].OrganizationID = @OrganizationId", storageScope);
         Assert.Contains("[AgreementOrganization].StorageID = [Storage].ID", storageScope);
         Assert.Contains("[AgreementOrganization].StorageID = s.ID", storageScope);
-        Assert.Contains("s.ForVatProducts = 1", availabilityRepository);
-        Assert.Contains("s.AvailableForReSale = 1", availabilityRepository);
-        Assert.Contains("s.ForDefective = 0", availabilityRepository);
-        Assert.Contains("s.Locale = @Culture", availabilityRepository);
+        Assert.DoesNotContain("ForVatProducts", ecommerceAvailability, StringComparison.Ordinal);
+        Assert.DoesNotContain("AvailableForReSale", ecommerceAvailability, StringComparison.Ordinal);
+        Assert.Contains("s.ForDefective = 0", ecommerceAvailability);
+        Assert.Contains("s.Locale = @Culture", ecommerceAvailability);
     }
 
     [Fact]
@@ -96,16 +108,21 @@ public sealed class EcommerceStockContractTests {
     public void Retail_product_detail_queries_bind_the_selected_storage() {
         string source = ReadSource("src/GBA.Domain/Repositories/Products/GetSingleProductRepository.cs");
         int standardMethodStart = source.IndexOf("public Product GetProductByNetId(", StringComparison.Ordinal);
+        int standardMethodEnd = source.IndexOf(
+            "internal static void IncludeAvailabilityFromJoinedStorage(",
+            standardMethodStart,
+            StringComparison.Ordinal);
         int retailMethodStart = source.IndexOf("public Product GetByNetIdForRetail(", StringComparison.Ordinal);
         int retailMethodEnd = source.IndexOf(
             "internal static void ExposeRetailAvailabilityInBothStorefrontBuckets",
             retailMethodStart,
             StringComparison.Ordinal);
 
-        Assert.True(standardMethodStart >= 0 && retailMethodStart > standardMethodStart);
+        Assert.True(standardMethodStart >= 0 && standardMethodEnd > standardMethodStart);
+        Assert.True(retailMethodStart > standardMethodEnd);
         Assert.True(retailMethodEnd > retailMethodStart);
 
-        string standardMethod = source[standardMethodStart..retailMethodStart];
+        string standardMethod = source[standardMethodStart..standardMethodEnd];
         string retailMethod = source[retailMethodStart..retailMethodEnd];
 
         Assert.DoesNotContain("@StorageId", standardMethod, StringComparison.Ordinal);
@@ -117,7 +134,9 @@ public sealed class EcommerceStockContractTests {
             "IncludeAvailabilityFromJoinedStorage(\n                    product,\n                    productAvailability,\n                    storage,\n                    withVat);",
             standardMethod,
             StringComparison.Ordinal);
-        Assert.Contains("AND [Storage].ForVatProducts = 1", standardMethod, StringComparison.Ordinal);
+        Assert.Contains("EcommerceStorageScope.NamedStorageSql", standardMethod, StringComparison.Ordinal);
+        Assert.DoesNotContain("ForVatProducts", standardMethod, StringComparison.Ordinal);
+        Assert.DoesNotContain("AvailableForReSale", standardMethod, StringComparison.Ordinal);
         Assert.Equal(2, Count(retailMethod, "AND [ProductAvailability].StorageID = @StorageId"));
         Assert.Equal(2, Count(retailMethod, "StorageId = storageId"));
     }
