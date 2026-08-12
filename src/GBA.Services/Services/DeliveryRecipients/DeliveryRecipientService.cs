@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Transactions;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities.Clients;
 using GBA.Domain.Entities.Delivery;
@@ -13,6 +14,9 @@ using GBA.Services.Services.DeliveryRecipients.Contracts;
 namespace GBA.Services.Services.DeliveryRecipients;
 
 public sealed class DeliveryRecipientService : IDeliveryRecipientService {
+    private static readonly TimeSpan AddressMutationTransactionTimeout =
+        TimeSpan.FromSeconds(45);
+
     private readonly IDbConnectionFactory _connectionFactory;
     private readonly IClientRepositoriesFactory _clientRepositoriesFactory;
     private readonly IDeliveryRepositoriesFactory _deliveryRepositoriesFactory;
@@ -99,7 +103,15 @@ public sealed class DeliveryRecipientService : IDeliveryRecipientService {
         if (normalizedDepartment.Length > 250)
             throw new ArgumentException("Delivery department is invalid.", nameof(department));
 
+        using TransactionScope transaction = new(
+            TransactionScopeOption.Required,
+            new TransactionOptions {
+                IsolationLevel = System.Transactions.IsolationLevel.Serializable,
+                Timeout = AddressMutationTransactionTimeout
+            },
+            TransactionScopeAsyncFlowOption.Enabled);
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
+        connection.Open();
         Client client = ResolveClient(connection, actorNetId);
         DeliveryRecipient recipient = _deliveryRepositoriesFactory
             .NewDeliveryRecipientRepository(connection)
@@ -109,13 +121,17 @@ public sealed class DeliveryRecipientService : IDeliveryRecipientService {
 
         IDeliveryRecipientAddressRepository repository =
             _deliveryRepositoriesFactory.NewDeliveryRecipientAddressRepository(connection);
+        repository.AcquireAddressMutationLock(recipientNetId);
         DeliveryRecipientAddress existing = repository
             .GetAllByRecipientNetId(recipientNetId)
             .FirstOrDefault(address =>
                 string.Equals(address.Value?.Trim(), normalizedValue, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(address.City?.Trim(), normalizedCity, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(address.Department?.Trim() ?? string.Empty, normalizedDepartment, StringComparison.OrdinalIgnoreCase));
-        if (existing != null) return Task.FromResult(existing);
+        if (existing != null) {
+            transaction.Complete();
+            return Task.FromResult(existing);
+        }
 
         DeliveryRecipientAddress address = new() {
             DeliveryRecipientId = recipient.Id,
@@ -128,6 +144,7 @@ public sealed class DeliveryRecipientService : IDeliveryRecipientService {
         if (created == null || created.NetUid == Guid.Empty)
             throw new InvalidOperationException("The delivery address could not be created.");
 
+        transaction.Complete();
         return Task.FromResult(created);
     }
 

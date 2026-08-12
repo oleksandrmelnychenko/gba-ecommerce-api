@@ -5,6 +5,8 @@ using GBA.Domain.Entities.Delivery;
 namespace GBA.Domain.Repositories.Delivery.Contracts;
 
 public interface IDeliveryRecipientAddressRepository {
+    void AcquireAddressMutationLock(Guid recipientNetId);
+
     long Add(DeliveryRecipientAddress deliveryRecipientAddress);
 
     void Update(DeliveryRecipientAddress deliveryRecipientAddress);

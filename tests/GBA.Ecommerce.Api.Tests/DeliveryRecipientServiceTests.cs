@@ -192,10 +192,23 @@ public sealed class DeliveryRecipientServiceTests {
         Mock<IDeliveryRecipientRepository> recipientRepository = new();
         recipientRepository.Setup(repository => repository.GetByNetId(recipientNetId)).Returns(recipient);
         DeliveryRecipientAddress inserted = null!;
+        bool addressMutationLockAcquired = false;
         Mock<IDeliveryRecipientAddressRepository> addressRepository = new();
         addressRepository
+            .Setup(repository => repository.AcquireAddressMutationLock(recipientNetId))
+            .Callback(() => {
+                addressMutationLockAcquired = true;
+                Assert.NotNull(System.Transactions.Transaction.Current);
+                Assert.Equal(
+                    System.Transactions.IsolationLevel.Serializable,
+                    System.Transactions.Transaction.Current.IsolationLevel);
+            });
+        addressRepository
             .Setup(repository => repository.GetAllByRecipientNetId(recipientNetId))
-            .Returns([]);
+            .Returns(() => {
+                Assert.True(addressMutationLockAcquired);
+                return [];
+            });
         addressRepository
             .Setup(repository => repository.Add(It.IsAny<DeliveryRecipientAddress>()))
             .Callback<DeliveryRecipientAddress>(address => inserted = address)
@@ -226,6 +239,85 @@ public sealed class DeliveryRecipientServiceTests {
         Assert.Equal("Peremohy Avenue 10", inserted.Value);
         Assert.Equal("Kyiv", inserted.City);
         Assert.Equal("Warehouse 3", inserted.Department);
+        addressRepository.Verify(
+            repository => repository.AcquireAddressMutationLock(recipientNetId),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task Existing_address_is_returned_under_the_recipient_lock_without_inserting() {
+        Guid clientNetId = Guid.NewGuid();
+        Guid recipientNetId = Guid.NewGuid();
+        Client client = new() { Id = 42, NetUid = clientNetId };
+        DeliveryRecipient recipient = new() {
+            Id = 77,
+            NetUid = recipientNetId,
+            ClientId = client.Id
+        };
+        DeliveryRecipientAddress existing = new() {
+            Id = 88,
+            NetUid = Guid.NewGuid(),
+            DeliveryRecipientId = recipient.Id,
+            Value = "Peremohy Avenue 10",
+            City = "Kyiv",
+            Department = "Warehouse 3"
+        };
+
+        Mock<IDbConnection> connection = new();
+        Mock<IDbConnectionFactory> connectionFactory = new();
+        connectionFactory.Setup(factory => factory.NewSqlConnection()).Returns(connection.Object);
+        Mock<IClientRepository> clientRepository = new();
+        clientRepository.Setup(repository => repository.GetByNetIdWithoutIncludes(clientNetId)).Returns(client);
+        Mock<IClientRepositoriesFactory> clientRepositoriesFactory = new();
+        clientRepositoriesFactory
+            .Setup(factory => factory.NewClientRepository(connection.Object))
+            .Returns(clientRepository.Object);
+        Mock<IDeliveryRecipientRepository> recipientRepository = new();
+        recipientRepository.Setup(repository => repository.GetByNetId(recipientNetId)).Returns(recipient);
+        bool addressMutationLockAcquired = false;
+        Mock<IDeliveryRecipientAddressRepository> addressRepository = new();
+        addressRepository
+            .Setup(repository => repository.AcquireAddressMutationLock(recipientNetId))
+            .Callback(() => {
+                addressMutationLockAcquired = true;
+                Assert.NotNull(System.Transactions.Transaction.Current);
+                Assert.Equal(
+                    System.Transactions.IsolationLevel.Serializable,
+                    System.Transactions.Transaction.Current.IsolationLevel);
+            });
+        addressRepository
+            .Setup(repository => repository.GetAllByRecipientNetId(recipientNetId))
+            .Returns(() => {
+                Assert.True(addressMutationLockAcquired);
+                return [existing];
+            });
+        Mock<IDeliveryRepositoriesFactory> deliveryRepositoriesFactory = new();
+        deliveryRepositoriesFactory
+            .Setup(factory => factory.NewDeliveryRecipientRepository(connection.Object))
+            .Returns(recipientRepository.Object);
+        deliveryRepositoriesFactory
+            .Setup(factory => factory.NewDeliveryRecipientAddressRepository(connection.Object))
+            .Returns(addressRepository.Object);
+
+        DeliveryRecipientService service = new(
+            clientRepositoriesFactory.Object,
+            deliveryRepositoriesFactory.Object,
+            connectionFactory.Object);
+
+        DeliveryRecipientAddress result = await service.AddAddress(
+            clientNetId,
+            recipientNetId,
+            "  peremohy avenue 10 ",
+            " kyiv ",
+            " warehouse 3 ");
+
+        Assert.Same(existing, result);
+        addressRepository.Verify(
+            repository => repository.AcquireAddressMutationLock(recipientNetId),
+            Times.Once);
+        addressRepository.Verify(
+            repository => repository.Add(It.IsAny<DeliveryRecipientAddress>()),
+            Times.Never);
     }
 
     [Fact]

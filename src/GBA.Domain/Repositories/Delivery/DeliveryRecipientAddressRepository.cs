@@ -9,10 +9,38 @@ using GBA.Domain.Repositories.Delivery.Contracts;
 namespace GBA.Domain.Repositories.Delivery;
 
 public sealed class DeliveryRecipientAddressRepository : IDeliveryRecipientAddressRepository {
+    private const int AddressMutationLockTimeoutMilliseconds = 30000;
+
     private readonly IDbConnection _connection;
 
     public DeliveryRecipientAddressRepository(IDbConnection connection) {
         _connection = connection;
+    }
+
+    public void AcquireAddressMutationLock(Guid recipientNetId) {
+        if (recipientNetId == Guid.Empty)
+            throw new ArgumentException(
+                "The delivery recipient identity is invalid.",
+                nameof(recipientNetId));
+
+        int lockResult = _connection.QuerySingle<int>(
+            "DECLARE @LockResult int; " +
+            "EXEC @LockResult = sys.sp_getapplock " +
+            "@Resource = @Resource, " +
+            "@LockMode = N'Exclusive', " +
+            "@LockOwner = N'Transaction', " +
+            "@LockTimeout = @LockTimeoutMilliseconds, " +
+            "@DbPrincipal = N'public'; " +
+            "SELECT @LockResult;",
+            new {
+                Resource = $"GBA_ECOM_DELIVERY_ADDRESS_{recipientNetId:N}",
+                LockTimeoutMilliseconds =
+                    AddressMutationLockTimeoutMilliseconds
+            });
+
+        if (lockResult < 0)
+            throw new TimeoutException(
+                $"The delivery address mutation lock could not be acquired ({lockResult}).");
     }
 
     public long Add(DeliveryRecipientAddress deliveryAddress) {
