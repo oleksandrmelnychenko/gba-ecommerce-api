@@ -92,16 +92,24 @@ public sealed class RequestTokenService : IRequestTokenService {
             Regex regionCodeRegex = new(@"^(\D{2,3}\d{5})$");
 
             Tuple<ClaimsIdentity, string, UserIdentity> identityResult;
+            IIdentityRepository identityRepository =
+                _identityRepositoriesFactory.NewIdentityRepository();
 
             using (IDbConnection connection = _connectionFactory.NewSqlConnection()) {
-                if (regionCodeRegex.IsMatch(userName)) {
+                // Console creates the Identity account with the supplied login. Prefer that
+                // stable identity over non-unique client contact fields such as phone/email.
+                UserIdentity exactLoginUser = await identityRepository.GetUserName(userName);
+                if (exactLoginUser != null) {
+                    identityResult =
+                        await identityRepository.AuthAndGetClaimsIdentity(exactLoginUser, password);
+                } else if (regionCodeRegex.IsMatch(userName)) {
                     Guid clientNetId = _clientRepositoriesFactory.NewClientRepository(connection).GetClientNetIdByRegionCode(userName);
 
                     if (clientNetId.Equals(Guid.Empty))
                         return new Tuple<bool, string, CompleteAccessToken>(false, "Invalid credentials", null);
 
                     identityResult =
-                        await _identityRepositoriesFactory.NewIdentityRepository().AuthAndGetClaimsIdentityByNetId(clientNetId.ToString(), password, userName);
+                        await identityRepository.AuthAndGetClaimsIdentityByNetId(clientNetId.ToString(), password, userName);
                 } else {
                     Client clientEmail = _clientRepositoriesFactory.NewClientRepository(connection).GetEmail(userName);
                     if (clientEmail == null) {
@@ -113,9 +121,9 @@ public sealed class RequestTokenService : IRequestTokenService {
 
                     if (clientEmail != null)
                         identityResult =
-                            await _identityRepositoriesFactory.NewIdentityRepository().AuthAndGetClaimsIdentityByNetId(clientEmail.NetUid.ToString(), password, userName);
+                            await identityRepository.AuthAndGetClaimsIdentityByNetId(clientEmail.NetUid.ToString(), password, userName);
                     else
-                        identityResult = await _identityRepositoriesFactory.NewIdentityRepository().AuthAndGetClaimsIdentity(userName, password);
+                        identityResult = await identityRepository.AuthAndGetClaimsIdentity(userName, password);
                 }
 
                 if (identityResult.Item1 == null) return new Tuple<bool, string, CompleteAccessToken>(false, identityResult.Item2, null);
