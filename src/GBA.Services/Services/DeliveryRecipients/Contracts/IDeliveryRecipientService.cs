@@ -10,5 +10,12 @@ public interface IDeliveryRecipientService {
 
     Task<DeliveryRecipient> AddRecipient(Guid actorNetId, string fullName, string mobilePhone);
 
+    Task<DeliveryRecipientAddress> AddAddress(
+        Guid actorNetId,
+        Guid recipientNetId,
+        string value,
+        string city,
+        string department);
+
     Task<List<DeliveryRecipientAddress>> GetAllAddressesByRecipientNetId(Guid netId);
 }

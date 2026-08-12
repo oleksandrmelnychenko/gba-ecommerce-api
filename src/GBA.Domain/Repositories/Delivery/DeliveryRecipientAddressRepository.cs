@@ -33,6 +33,7 @@ public sealed class DeliveryRecipientAddressRepository : IDeliveryRecipientAddre
                 "ON [DeliveryRecipient].ID = [DeliveryRecipientAddress].DeliveryRecipientID " +
                 "AND [DeliveryRecipient].Deleted = 0 " +
                 "WHERE [DeliveryRecipient].NetUID = @RecipientNetId " +
+                "AND [DeliveryRecipientAddress].Deleted = 0 " +
                 "ORDER BY [DeliveryRecipientAddress].Priority DESC, [DeliveryRecipientAddress].Value, [DeliveryRecipient].Priority DESC, [DeliveryRecipient].FullName",
                 (deliveryRecipientAddress, deliveryRecipient) => {
                     deliveryRecipientAddress.DeliveryRecipient = deliveryRecipient;

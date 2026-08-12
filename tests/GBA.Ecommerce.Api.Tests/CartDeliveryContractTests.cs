@@ -47,6 +47,21 @@ public sealed class CartDeliveryContractTests(EcommerceApiFixture fixture) : ICl
     }
 
     [Fact]
+    public async Task Delivery_address_creation_requires_bearer_token() {
+        using HttpResponseMessage response = await _client.PostAsJsonAsync(
+            _config.ApiPath("deliveries/recipients/addresses/new"),
+            new {
+                DeliveryRecipientNetUid = Guid.NewGuid(),
+                Value = "Peremohy Avenue 10",
+                City = "Kyiv",
+                Department = "Warehouse 3"
+            });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Contains("Bearer", response.Headers.WwwAuthenticate.ToString());
+    }
+
+    [Fact]
     public async Task Authenticated_delivery_recipients_contract_matches_current_client_when_credentials_are_configured() {
         if (!_config.HasCredentials) return;
 

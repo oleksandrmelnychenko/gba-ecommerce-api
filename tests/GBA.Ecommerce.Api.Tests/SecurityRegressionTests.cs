@@ -208,6 +208,24 @@ public sealed class SecurityRegressionTests {
     }
 
     [Fact]
+    public void Delivery_address_creation_is_post_only_and_requires_customer_authentication() {
+        MethodInfo action = typeof(DeliveryRecipientsController)
+            .GetMethod(nameof(DeliveryRecipientsController.AddRecipientAddressAsync))!;
+        AuthorizeAttribute authorize = Assert.IsType<AuthorizeAttribute>(
+            typeof(DeliveryRecipientsController).GetCustomAttribute<AuthorizeAttribute>());
+
+        Assert.Equal(
+            DeliveryRecipientAddressesSegments.ECOMMERCE_ADD_NEW,
+            Assert.Single(action.GetCustomAttributes<AssignActionRouteAttribute>()).Template);
+        Assert.NotNull(action.GetCustomAttribute<HttpPostAttribute>());
+        Assert.Null(action.GetCustomAttribute<HttpGetAttribute>());
+        Assert.Null(action.GetCustomAttribute<AllowAnonymousAttribute>());
+        Assert.Contains("ClientUa", authorize.Roles, StringComparison.Ordinal);
+        Assert.Contains("Workplace", authorize.Roles, StringComparison.Ordinal);
+        Assert.NotNull(Assert.Single(action.GetParameters()).GetCustomAttribute<FromBodyAttribute>());
+    }
+
+    [Fact]
     public void Preorders_require_authenticated_customer_role() {
         AuthorizeAttribute authorize =
             Assert.IsType<AuthorizeAttribute>(typeof(PreOrderController).GetCustomAttribute<AuthorizeAttribute>());
