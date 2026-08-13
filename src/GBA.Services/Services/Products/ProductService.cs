@@ -1201,7 +1201,6 @@ public sealed class ProductService : IProductService {
 
     public Task<List<FromSearchProduct>> GetAllAnaloguesByProductNetId(Guid productNetId, Guid currentClientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        IProductRepository productRepository = _productRepositoriesFactory.NewProductRepository(connection);
 
         Product product = _productRepositoriesFactory.NewGetSingleProductRepository(connection).GetByNetIdWithoutIncludes(productNetId);
 
@@ -1209,8 +1208,13 @@ public sealed class ProductService : IProductService {
 
         IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
-        ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
-                                          clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
+        ClientAgreement clientAgreement =
+            clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId)
+            ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId)
+            ?? clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
+
+        if (clientAgreement?.Agreement == null)
+            return Task.FromResult(new List<FromSearchProduct>());
 
         List<FromSearchProduct> analogues = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection)
             .GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPrices(

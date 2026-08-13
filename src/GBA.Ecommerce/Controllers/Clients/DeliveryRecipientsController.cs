@@ -49,6 +49,26 @@ public sealed class DeliveryRecipientsController(
         }
     }
 
+    [HttpPost]
+    [AssignActionRoute(DeliveryRecipientAddressesSegments.ECOMMERCE_ADD_NEW)]
+    [Consumes("application/json")]
+    [RequestSizeLimit(16384)]
+    public async Task<IActionResult> AddRecipientAddressAsync(
+        [FromBody] CreateDeliveryRecipientAddressRequest request) {
+        try {
+            return Ok(SuccessResponseBody(await deliveryRecipientService.AddAddress(
+                GetUserNetId(),
+                request?.DeliveryRecipientNetUid ?? Guid.Empty,
+                request?.Value,
+                request?.City,
+                request?.Department)));
+        } catch (ArgumentException) {
+            return BadRequest(ErrorResponseBody(
+                "Delivery address is invalid.",
+                HttpStatusCode.BadRequest));
+        }
+    }
+
     [HttpGet]
     [AssignActionRoute(DeliveryRecipientAddressesSegments.ECOMMERCE_GET_ALL_BY_RECIPIENT_NET_ID)]
     public async Task<IActionResult> GetAllRecipientAddressesByRecipientNetIdAsync([FromQuery] Guid netId) {
@@ -61,5 +81,15 @@ public sealed class DeliveryRecipientsController(
         public string FullName { get; set; } = string.Empty;
 
         public string MobilePhone { get; set; } = string.Empty;
+    }
+
+    public sealed class CreateDeliveryRecipientAddressRequest {
+        public Guid DeliveryRecipientNetUid { get; set; }
+
+        public string Value { get; set; } = string.Empty;
+
+        public string City { get; set; } = string.Empty;
+
+        public string Department { get; set; } = string.Empty;
     }
 }
