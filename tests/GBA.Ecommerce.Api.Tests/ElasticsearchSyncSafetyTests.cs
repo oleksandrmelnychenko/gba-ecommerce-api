@@ -1,9 +1,27 @@
 using System.Net;
 using GBA.Search.Elasticsearch;
+using GBA.Search.Sync;
+using Microsoft.Extensions.Logging;
 
 namespace GBA.Ecommerce.Api.Tests;
 
 public sealed class ElasticsearchSyncSafetyTests {
+    [Fact]
+    public void ProductSearchSync_TaskCanceledTimeout_IsAWarning() {
+        LogLevel level = ProductSearchSyncBackgroundService.GetIterationFailureLogLevel(
+            new TaskCanceledException());
+
+        Assert.Equal(LogLevel.Warning, level);
+    }
+
+    [Fact]
+    public void ProductSearchSync_UnexpectedFailure_RemainsAnError() {
+        LogLevel level = ProductSearchSyncBackgroundService.GetIterationFailureLogLevel(
+            new InvalidOperationException("invalid Elasticsearch response"));
+
+        Assert.Equal(LogLevel.Error, level);
+    }
+
     [Fact]
     public void PartitionBulkItems_UsesConfiguredBatchSize() {
         int[] items = Enumerable.Range(1, 2501).ToArray();
