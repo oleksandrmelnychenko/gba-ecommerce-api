@@ -4008,6 +4008,13 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "LEFT JOIN [ProductAvailability] " +
             "ON [ProductAvailability].ProductID = [Analogue].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
+            "AND EXISTS (" +
+            "SELECT 1 FROM [Storage] " +
+            "WHERE [Storage].ID = [ProductAvailability].StorageID " +
+            "AND [Storage].Locale = @Culture " +
+            "AND [Storage].ForDefective = 0 " +
+            "AND [Storage].Deleted = 0 " +
+            "AND " + EcommerceStorageScope.NamedStorageSql + ") " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "LEFT JOIN [ProductSlug] " +
@@ -4022,12 +4029,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [ProductImage].ProductID = [Analogue].ID " +
             "WHERE [ProductAnalogue].BaseProductID = @Id " +
             "AND [ProductAnalogue].Deleted = 0 " +
-            "AND [Storage].Locale = @Culture " +
-            "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].Deleted = 0 ";
-
-        sqlExpression +=
-            "AND " + EcommerceStorageScope.NamedStorageSql + " " +
             "ORDER BY [ProductAvailability].Amount DESC, [Analogue].Name, [Analogue].VendorCode ";
 
         _connection.Query(
