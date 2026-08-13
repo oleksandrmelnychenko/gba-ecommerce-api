@@ -51,7 +51,23 @@ public sealed class ElasticsearchIndexService : IElasticsearchIndexService {
     public async Task<bool> IsHealthyAsync(CancellationToken ct = default) {
         try {
             HttpResponseMessage response = await _http.GetAsync("_cluster/health", ct);
-            return response.IsSuccessStatusCode;
+            if (!response.IsSuccessStatusCode) return false;
+
+            string responseBody = await response.Content.ReadAsStringAsync(ct);
+            using JsonDocument document = JsonDocument.Parse(responseBody);
+            JsonElement root = document.RootElement;
+            if (!root.TryGetProperty("status", out JsonElement statusElement)) {
+                return false;
+            }
+
+            string? status = statusElement.GetString();
+            bool timedOut = root.TryGetProperty(
+                                "timed_out",
+                                out JsonElement timedOutElement)
+                            && timedOutElement.ValueKind == JsonValueKind.True;
+            return !timedOut && status is "green" or "yellow";
+        } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+            throw;
         } catch {
             return false;
         }

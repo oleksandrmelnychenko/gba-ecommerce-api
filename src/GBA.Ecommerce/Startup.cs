@@ -195,7 +195,11 @@ public class Startup {
                 )),
                 HealthStatus.Unhealthy,
                 Array.Empty<string>(),
-                MainDatabaseHealthCheck.ProbeTimeout));
+                MainDatabaseHealthCheck.ProbeTimeout))
+            .AddCheck<SearchIndexHealthCheck>(
+                "search-index",
+                HealthStatus.Unhealthy,
+                Array.Empty<string>());
         services.AddRateLimiter(options => {
             options.RejectionStatusCode = 429;
             options.OnRejected = async (context, cancellationToken) => {
