@@ -9,6 +9,28 @@ using GBA.Search.Models;
 namespace GBA.Search.Sync;
 
 /// <summary>
+/// Reads the SQL product projection consumed by Elasticsearch synchronization.
+/// </summary>
+public interface IProductSyncRepository {
+    /// <summary>Returns every active product for a full index rebuild.</summary>
+    Task<List<ProductSyncData>> GetAllProductsAsync();
+
+    /// <summary>Returns product identifiers affected since the supplied watermark.</summary>
+    Task<List<long>> GetChangedProductIdsAsync(DateTime since);
+
+    /// <summary>Returns the current active projection for the supplied identifiers.</summary>
+    Task<List<ProductSyncData>> GetProductsByIdsAsync(
+        IReadOnlyCollection<long> ids);
+
+    /// <summary>Returns identifiers deleted since the supplied watermark.</summary>
+    Task<List<long>> GetDeletedProductIdsAsync(DateTime since);
+
+    /// <summary>Returns original-number search aliases for the supplied products.</summary>
+    Task<Dictionary<long, List<string>>> GetOriginalNumbersForProductsAsync(
+        IEnumerable<long> productIds);
+}
+
+/// <summary>
 /// Builds the Elasticsearch catalogue projection.
 ///
 /// <para>
@@ -19,7 +41,8 @@ namespace GBA.Search.Sync;
 /// figure; it is never used as the storefront's stock promise.
 /// </para>
 /// </summary>
-public sealed class ProductSyncRepository(Func<IDbConnection> connectionFactory) {
+public sealed class ProductSyncRepository(Func<IDbConnection> connectionFactory)
+    : IProductSyncRepository {
     internal const int SqlParameterBatchSize = 2000;
     internal const string DirectChangedProductIdsSql = @"
 SELECT p.ID FROM Product p WHERE p.Deleted = 0 AND p.Updated > @Since

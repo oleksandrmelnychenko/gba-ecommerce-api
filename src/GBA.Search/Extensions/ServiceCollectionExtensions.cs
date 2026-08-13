@@ -30,6 +30,9 @@ public static class ServiceCollectionExtensions {
 
         services.AddSingleton(connectionFactory);
         services.AddSingleton<ProductSyncRepository>();
+        services.AddSingleton<IProductSyncRepository>(sp =>
+            sp.GetRequiredService<ProductSyncRepository>());
+        services.AddTransient<SearchSyncHealthProbe>();
 
         services.AddHttpClient<IElasticsearchIndexService, ElasticsearchIndexService>()
             .ConfigureHttpClient((sp, client) => ConfigureElasticClient(client, configuration, 1));

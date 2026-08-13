@@ -54,27 +54,14 @@ public sealed class ProductSearchSyncBackgroundService : BackgroundService {
                 break;
             } catch (Exception ex) {
                 // Never let a failed iteration kill the loop.
-                LogLevel level = GetIterationFailureLogLevel(ex);
-                _log.Log(
-                    level,
+                _log.LogError(
                     ex,
-                    level == LogLevel.Warning
-                        ? "Product search sync iteration timed out or was canceled; retrying next interval"
-                        : "Product search sync iteration threw; retrying next interval");
+                    "Product search sync iteration threw; retrying next interval");
             }
 
             if (!await DelayAsync(interval, stoppingToken)) break;
         }
     }
-
-    /// <summary>
-    /// A cancellation not caused by host shutdown is normally an HTTP timeout from
-    /// Elasticsearch. It remains visible and will be retried, but is transient rather than an
-    /// unexpected service failure. The watermark is only advanced by a successful sync, so a
-    /// timed-out iteration cannot make a stale index look current.
-    /// </summary>
-    internal static LogLevel GetIterationFailureLogLevel(Exception exception) =>
-        exception is OperationCanceledException ? LogLevel.Warning : LogLevel.Error;
 
     private async Task RunOnceAsync(CancellationToken ct) {
         bool fullRebuildDue = IsFullRebuildDue(DateTime.UtcNow);

@@ -1,19 +1,19 @@
 using System;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using GBA.Common.ResponseBuilder.Contracts;
 using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
-using GBA.Search.Configuration;
 using GBA.Search.Elasticsearch;
 using GBA.Search.Models;
 using GBA.Search.Sync;
 using GBA.Common.IdentityConfiguration.Policies;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.OutputCaching;
 using Microsoft.AspNetCore.RateLimiting;
-using Microsoft.Extensions.Options;
 
 namespace GBA.Ecommerce.Controllers;
 
@@ -23,8 +23,7 @@ public sealed class ElasticsearchController(
     IElasticsearchIndexService indexService,
     IElasticsearchSyncService syncService,
     IElasticsearchProductSearchService searchService,
-    ISearchSyncStateStore syncStateStore,
-    IOptions<SyncSettings> syncSettings,
+    SearchSyncHealthProbe searchSyncHealthProbe,
     IOutputCacheStore outputCacheStore,
     IResponseFactory responseFactory) : WebApiControllerBase(responseFactory) {
     private const int _defaultSearchLimit = 20;
@@ -35,18 +34,22 @@ public sealed class ElasticsearchController(
     [Route("health")]
     [AllowAnonymous]
     public async Task<IActionResult> HealthAsync(CancellationToken ct) {
-        bool healthy = await indexService.IsHealthyAsync(ct);
-        DateTime watermark = await syncStateStore.GetWatermarkAsync(ct);
-
-        bool hasWatermark = watermark != DateTime.MinValue;
-        double? lagSeconds = hasWatermark ? Math.Round((DateTime.UtcNow - watermark).TotalSeconds) : null;
-
-        return Ok(SuccessResponseBody(new {
-            healthy,
-            lastSyncUtc = hasWatermark ? watermark : (DateTime?)null,
-            lagSeconds,
-            stale = lagSeconds.HasValue && lagSeconds > syncSettings.Value.LagWarningSeconds
-        }));
+        SearchSyncHealthSnapshot snapshot =
+            await searchSyncHealthProbe.GetSnapshotAsync(ct);
+        object body = new {
+            healthy = snapshot.Healthy,
+            indexExists = snapshot.IndexExists,
+            ready = snapshot.Ready,
+            lastSyncUtc = snapshot.LastSyncUtc,
+            lagSeconds = snapshot.LagSeconds,
+            stale = snapshot.Stale,
+            error = snapshot.Error
+        };
+        return snapshot.Ready
+            ? Ok(SuccessResponseBody(body))
+            : ServiceUnavailableResponse(
+                snapshot.Error ?? "Elasticsearch product index is unavailable.",
+                body);
     }
 
     [HttpPost]
@@ -69,16 +72,22 @@ public sealed class ElasticsearchController(
     [Route("sync/full")]
     public async Task<IActionResult> FullSyncAsync(CancellationToken ct) {
         SyncResult result = await syncService.FullRebuildAsync(ct);
-        await outputCacheStore.EvictByTagAsync("products", ct);
-        return Ok(SuccessResponseBody(result));
+        return result.Success
+            ? Ok(SuccessResponseBody(result))
+            : ServiceUnavailableResponse(
+                "Elasticsearch full synchronization failed.",
+                result);
     }
 
     [HttpPost]
     [Route("sync/incremental")]
     public async Task<IActionResult> IncrementalSyncAsync(CancellationToken ct) {
         SyncResult result = await syncService.IncrementalSyncAsync(ct);
-        await outputCacheStore.EvictByTagAsync("products", ct);
-        return Ok(SuccessResponseBody(result));
+        return result.Success
+            ? Ok(SuccessResponseBody(result))
+            : ServiceUnavailableResponse(
+                "Elasticsearch incremental synchronization failed.",
+                result);
     }
 
     [HttpGet]
@@ -109,5 +118,15 @@ public sealed class ElasticsearchController(
         string locale = RouteData.Values["culture"]?.ToString() ?? "uk";
         ElasticsearchDebugResult result = await searchService.SearchDebugAsync(query, locale, limit, offset, ct);
         return Ok(SuccessResponseBody(result));
+    }
+
+    private IActionResult ServiceUnavailableResponse(
+        string message,
+        object body) {
+        IWebResponse response = ErrorResponseBody(
+            message,
+            HttpStatusCode.ServiceUnavailable);
+        response.Body = body;
+        return StatusCode(StatusCodes.Status503ServiceUnavailable, response);
     }
 }
