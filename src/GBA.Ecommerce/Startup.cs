@@ -87,6 +87,7 @@ using GBA.Services.Services.Transporters;
 using GBA.Services.Services.Transporters.Contracts;
 using GBA.Services.Services.UserManagement;
 using GBA.Services.Services.UserManagement.Contracts;
+using GBA.Ecommerce.HealthChecks;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics;
@@ -98,6 +99,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -182,21 +184,18 @@ public class Startup {
         services.AddEcommerceInternalHttpClient(Configuration);
         services.AddRequestDecompression();
         services.AddHealthChecks()
-            .AddCheck("db-main", () => {
-                try {
-                    using SqlConnection conn = new SqlConnection(Configuration.GetConnectionString(
+            .Add(new HealthCheckRegistration(
+                "db-main",
+                new MainDatabaseHealthCheck(Configuration.GetConnectionString(
 #if DEBUG
-                        ConnectionStringNames.Local
+                    ConnectionStringNames.Local
 #else
-                        ConnectionStringNames.Remote
+                    ConnectionStringNames.Remote
 #endif
-                    ));
-                    conn.Open();
-                    return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy();
-                } catch (Exception ex) {
-                    return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Unhealthy(ex.Message);
-                }
-            });
+                )),
+                HealthStatus.Unhealthy,
+                Array.Empty<string>(),
+                MainDatabaseHealthCheck.ProbeTimeout));
         services.AddRateLimiter(options => {
             options.RejectionStatusCode = 429;
             options.OnRejected = async (context, cancellationToken) => {
