@@ -22,10 +22,24 @@ internal sealed class SearchIndexHealthCheck(
             ["lagSeconds"] = snapshot.LagSeconds ?? -1
         };
 
-        return snapshot.Ready
-            ? HealthCheckResult.Healthy(data: data)
-            : HealthCheckResult.Unhealthy(
-                snapshot.Error ?? "Elasticsearch product projection is unavailable.",
-                data: data);
+        if (snapshot.Ready) {
+            return HealthCheckResult.Healthy(data: data);
+        }
+
+        string description = snapshot.Error ??
+                             "Elasticsearch product projection is unavailable.";
+
+        // An existing index with a previously successful watermark can continue serving
+        // searches while synchronization catches up. Keep that state visible as degraded
+        // without reporting a hard dependency outage. Missing state, index, or cluster
+        // availability remains unhealthy.
+        return snapshot is {
+            Healthy: true,
+            IndexExists: true,
+            LastSyncUtc: not null,
+            Stale: true
+        }
+            ? HealthCheckResult.Degraded(description, data: data)
+            : HealthCheckResult.Unhealthy(description, data: data);
     }
 }

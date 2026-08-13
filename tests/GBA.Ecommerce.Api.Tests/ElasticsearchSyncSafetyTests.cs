@@ -292,6 +292,67 @@ public sealed class ElasticsearchSyncSafetyTests {
     }
 
     [Fact]
+    public async Task SearchIndexHealthCheck_StaleSuccessfulSync_IsDegraded() {
+        SearchSyncHealthProbe probe = new(
+            new TestElasticsearchIndexService {
+                Healthy = true,
+                IndexExists = true
+            },
+            new TestSearchSyncStateStore {
+                Watermark = DateTime.UtcNow.AddMinutes(-10)
+            },
+            Options.Create(new SyncSettings { LagWarningSeconds = 60 }),
+            new CollectingLogger<SearchSyncHealthProbe>());
+        SearchIndexHealthCheck healthCheck = new(probe);
+
+        HealthCheckResult result = await healthCheck.CheckHealthAsync(
+            new HealthCheckContext());
+
+        Assert.Equal(HealthStatus.Degraded, result.Status);
+        Assert.Contains("sync is stale", result.Description);
+        Assert.Equal(true, result.Data["stale"]);
+    }
+
+    [Fact]
+    public async Task SearchIndexHealthCheck_FreshSuccessfulSync_IsHealthy() {
+        SearchSyncHealthProbe probe = new(
+            new TestElasticsearchIndexService {
+                Healthy = true,
+                IndexExists = true
+            },
+            new TestSearchSyncStateStore { Watermark = DateTime.UtcNow },
+            Options.Create(new SyncSettings { LagWarningSeconds = 60 }),
+            new CollectingLogger<SearchSyncHealthProbe>());
+        SearchIndexHealthCheck healthCheck = new(probe);
+
+        HealthCheckResult result = await healthCheck.CheckHealthAsync(
+            new HealthCheckContext());
+
+        Assert.Equal(HealthStatus.Healthy, result.Status);
+        Assert.Null(result.Description);
+        Assert.Equal(false, result.Data["stale"]);
+    }
+
+    [Fact]
+    public async Task SearchIndexHealthCheck_NoSuccessfulSync_IsUnhealthy() {
+        SearchSyncHealthProbe probe = new(
+            new TestElasticsearchIndexService {
+                Healthy = true,
+                IndexExists = true
+            },
+            new TestSearchSyncStateStore { Watermark = DateTime.MinValue },
+            Options.Create(new SyncSettings { LagWarningSeconds = 60 }),
+            new CollectingLogger<SearchSyncHealthProbe>());
+        SearchIndexHealthCheck healthCheck = new(probe);
+
+        HealthCheckResult result = await healthCheck.CheckHealthAsync(
+            new HealthCheckContext());
+
+        Assert.Equal(HealthStatus.Unhealthy, result.Status);
+        Assert.Contains("no successful watermark", result.Description);
+    }
+
+    [Fact]
     public void TimeoutRetryDelay_IsExponentialAndBounded() {
         Assert.Equal(
             TimeSpan.FromMilliseconds(100),
