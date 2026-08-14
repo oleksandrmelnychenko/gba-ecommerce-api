@@ -9,6 +9,7 @@ using GBA.Search.Elasticsearch;
 using GBA.Search.Models;
 using GBA.Search.Sync;
 using GBA.Common.IdentityConfiguration.Policies;
+using GBA.Common.Middleware;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -33,6 +34,7 @@ public sealed class ElasticsearchController(
     [HttpGet]
     [Route("health")]
     [AllowAnonymous]
+    [HealthCheckEndpoint]
     public async Task<IActionResult> HealthAsync(CancellationToken ct) {
         SearchSyncHealthSnapshot snapshot =
             await searchSyncHealthProbe.GetSnapshotAsync(ct);

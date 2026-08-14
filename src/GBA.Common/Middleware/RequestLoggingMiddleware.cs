@@ -37,7 +37,7 @@ public sealed class RequestLoggingMiddleware {
                 const string template =
                     "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {ElapsedMs:0.##} ms (user {UserNetId}) queryKeys={QueryKeys}";
 
-                if (statusCode >= 500) {
+                if (statusCode >= 500 && !IsExpectedHealthCheckResponse(context, statusCode)) {
                     logger.LogError(template, method, path, statusCode, elapsedMs, userNetId, queryKeys);
                 } else {
                     logger.LogWarning(template, method, path, statusCode, elapsedMs, userNetId, queryKeys);
@@ -48,5 +48,13 @@ public sealed class RequestLoggingMiddleware {
                     method, path, statusCode, elapsedMs, userNetId);
             }
         }
+    }
+
+    private static bool IsExpectedHealthCheckResponse(
+        HttpContext context,
+        int statusCode) {
+        return statusCode == StatusCodes.Status503ServiceUnavailable
+               && context.GetEndpoint()?.Metadata
+                   .GetMetadata<HealthCheckEndpointAttribute>() != null;
     }
 }
