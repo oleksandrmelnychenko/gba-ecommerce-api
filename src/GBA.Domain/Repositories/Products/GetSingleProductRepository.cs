@@ -1292,16 +1292,21 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             product.ProductAvailabilities.Any(availability => availability.Id.Equals(productAvailability.Id)))
             return;
 
+        // Search, cart, and checkout treat each positive warehouse row as
+        // independently sellable. A negative row from another warehouse must
+        // not cancel stock that can actually be reserved.
+        double sellableAmount = Math.Max(0d, productAvailability.Amount);
+
         if (storage.Locale.Equals("pl", StringComparison.OrdinalIgnoreCase)) {
             if (withVat)
-                product.AvailableQtyPlVAT += productAvailability.Amount;
+                product.AvailableQtyPlVAT += sellableAmount;
             else
-                product.AvailableQtyPl += productAvailability.Amount;
+                product.AvailableQtyPl += sellableAmount;
         } else {
             if (withVat)
-                product.AvailableQtyUkVAT += productAvailability.Amount;
+                product.AvailableQtyUkVAT += sellableAmount;
             else
-                product.AvailableQtyUk += productAvailability.Amount;
+                product.AvailableQtyUk += sellableAmount;
         }
 
         productAvailability.Storage = storage;

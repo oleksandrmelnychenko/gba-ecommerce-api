@@ -41,6 +41,26 @@ public sealed class AuthenticatedProductDetailAvailabilityTests {
     }
 
     [Fact]
+    public void Detail_does_not_let_a_negative_storage_row_cancel_sellable_stock() {
+        Product product = new();
+        Storage storage = new() { Locale = "uk" };
+
+        GetSingleProductRepository.IncludeAvailabilityFromJoinedStorage(
+            product,
+            new ProductAvailability { Id = 20, Amount = 3 },
+            storage,
+            withVat: false);
+        GetSingleProductRepository.IncludeAvailabilityFromJoinedStorage(
+            product,
+            new ProductAvailability { Id = 21, Amount = -3 },
+            storage,
+            withVat: false);
+
+        Assert.Equal(3, product.AvailableQtyUk);
+        Assert.Equal(2, product.ProductAvailabilities.Count);
+    }
+
+    [Fact]
     public void Detail_keeps_contract_stock_independent_from_the_storage_VAT_flag() {
         Product product = new();
         ProductAvailability availability = new() { Id = 19, Amount = 16 };
