@@ -342,13 +342,6 @@ public class Startup {
                 .Tag("exchange-rates")
                 .SetLocking(true));
 
-            options.AddPolicy("Static", builder => builder
-                .With(IsAnonymousGetRequest)
-                .Expire(TimeSpan.FromHours(24))
-                .SetVaryByRouteValue("culture")
-                .SetVaryByQuery("locale")
-                .Tag("static")
-                .SetLocking(true));
         });
 
         services.AddCors(options => {
