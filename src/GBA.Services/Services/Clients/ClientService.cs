@@ -137,13 +137,18 @@ public sealed class ClientService : IClientService {
 
     public Task<RetailClient> GetRetailClientByNetId(Guid netId) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-            IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
+            IRetailClientRepository retailClientRepository =
+                _retailClientRepositoriesFactory.NewRetailClientRepository(connection);
+            RetailClient client = retailClientRepository.GetByNetId(netId);
+            if (client == null)
+                throw new ArgumentException("A retail client could not be resolved.", nameof(netId));
 
-            RetailClient client = _retailClientRepositoriesFactory.NewRetailClientRepository(connection).GetByNetId(netId);
+            IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
             IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
 
             Storage storage = storageRepository
-                .GetWithHighestPriority();
+                .GetWithHighestPriority()
+                ?? throw new InvalidOperationException("Retail storage is not configured.");
             List<OrderItem> orderItems = JsonSerializer.Deserialize<List<OrderItem>>(client.ShoppingCartJson, _jsonSerializerOptions) ?? new List<OrderItem>();
             List<OrderItem> anyOrderItems = new();
 
@@ -152,7 +157,7 @@ public sealed class ClientService : IClientService {
             // OrderService.RemoveUnavailableProducts and GenerateNewRetailSale. Reading the cart
             // must not drop lines either: an out-of-stock line stays in the cart as a backorder
             // instead of silently disappearing.
-            foreach (OrderItem orderItem in orderItems.Where(i => i.IsNew() && i.Qty > 0)) {
+            foreach (OrderItem orderItem in GetPendingRetailOrderItems(orderItems)) {
                 ProductAvailability productAvailability =
                     productAvailabilityRepository.GetByProductAndStorageIds(orderItem.Product.Id, storage.Id);
 
@@ -167,20 +172,25 @@ public sealed class ClientService : IClientService {
 
     public Task<(RetailClient, string)> GetRetailClientByNetIdCheckOrderItems(Guid netId) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-            IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
+            IRetailClientRepository retailClientRepository =
+                _retailClientRepositoriesFactory.NewRetailClientRepository(connection);
+            RetailClient client = retailClientRepository.GetByNetId(netId);
+            if (client == null)
+                throw new ArgumentException("A retail client could not be resolved.", nameof(netId));
 
-            RetailClient client = _retailClientRepositoriesFactory.NewRetailClientRepository(connection).GetByNetId(netId);
+            IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
             IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
 
             Storage storage = storageRepository
-                .GetWithHighestPriority();
+                .GetWithHighestPriority()
+                ?? throw new InvalidOperationException("Retail storage is not configured.");
             List<OrderItem> orderItems = JsonSerializer.Deserialize<List<OrderItem>>(client.ShoppingCartJson, _jsonSerializerOptions) ?? new List<OrderItem>();
             List<OrderItem> anyOrderItems = new();
             List<OrderItem> notHaveOrderItems = new();
             string notHaveOrderItemsInfo = string.Empty;
 
 
-            foreach (OrderItem orderItem in orderItems.Where(i => i.IsNew() && i.Qty > 0)) {
+            foreach (OrderItem orderItem in GetPendingRetailOrderItems(orderItems)) {
                 ProductAvailability productAvailability =
                     productAvailabilityRepository.GetByProductAndStorageIds(orderItem.Product.Id, storage.Id);
                 if (productAvailability != null && !productAvailability.Amount.Equals(0))
@@ -193,9 +203,24 @@ public sealed class ClientService : IClientService {
 
             client.ShoppingCartJson = JsonSerializer.Serialize(anyOrderItems);
 
-            _retailClientRepositoriesFactory.NewRetailClientRepository(connection).Update(client);
+            retailClientRepository.Update(client);
 
             return Task.FromResult((client, notHaveOrderItemsInfo));
+    }
+
+    private static IEnumerable<OrderItem> GetPendingRetailOrderItems(IEnumerable<OrderItem> orderItems) {
+        foreach (OrderItem orderItem in orderItems) {
+            if (orderItem == null)
+                throw new InvalidOperationException("Retail shopping cart contains an unresolved product.");
+
+            if (!orderItem.IsNew() || orderItem.Qty <= 0)
+                continue;
+
+            if (orderItem.Product == null)
+                throw new InvalidOperationException("Retail shopping cart contains an unresolved product.");
+
+            yield return orderItem;
+        }
     }
 
     public async Task<RetailClient> AddRetailClient(RetailClient client) {
