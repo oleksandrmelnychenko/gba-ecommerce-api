@@ -17,6 +17,8 @@ using GBA.Domain.Entities.UserNotifications;
 namespace GBA.Domain.Entities.Sales;
 
 public sealed class Sale : EntityBase {
+    public const int CommentMaxLength = 450;
+
     public Sale() {
         SaleExchangeRates = new HashSet<SaleExchangeRate>();
 

@@ -97,6 +97,13 @@ public sealed class OrderService : IOrderService {
         _clientResourceAccessService = clientResourceAccessService;
     }
 
+    internal static void ValidateSaleComment(Sale sale) {
+        if (sale?.Comment?.Length > Sale.CommentMaxLength)
+            throw new ArgumentException(
+                $"Sale comment cannot exceed {Sale.CommentMaxLength} characters.",
+                nameof(sale));
+    }
+
     private decimal ResolveLiveProductExchangeRate(
         IDbConnection connection,
         Product product,
@@ -569,6 +576,8 @@ public sealed class OrderService : IOrderService {
     }
 
     public async Task<Sale> GenerateNewSaleWithInvoice(Sale sale, Guid clientNetId, bool isWorkplace) {
+        ValidateSaleComment(sale);
+
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
             IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
@@ -1027,6 +1036,8 @@ public sealed class OrderService : IOrderService {
     }
 
     public async Task<string> GenerateNewRetailSale(Sale sale, Guid retailClientNetId, bool fullPayment) {
+        ValidateSaleComment(sale);
+
         if (retailClientNetId == Guid.Empty)
             throw new ArgumentException("A valid retail client is required.");
         if (sale?.Order?.OrderItems == null || sale.Order.OrderItems.Count == 0 || sale.Order.OrderItems.Count > 100)
