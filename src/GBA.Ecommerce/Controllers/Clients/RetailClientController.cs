@@ -36,7 +36,8 @@ public sealed class RetailClientController(
     [HttpGet]
     [AssignActionRoute(RetailClientSegments.GET)]
     public async Task<IActionResult> GetRetailClientByNetId([FromQuery] Guid netId) {
-        if (netId.Equals(Guid.Empty)) throw new Exception("NetId cannot be empty");
+        if (netId.Equals(Guid.Empty))
+            throw new ArgumentException("NetId cannot be empty.", nameof(netId));
 
         return Ok(SuccessResponseBody(await clientService.GetRetailClientByNetId(netId)));
     }
@@ -44,7 +45,8 @@ public sealed class RetailClientController(
     [HttpGet]
     [AssignActionRoute(RetailClientSegments.GET_CHECK_ORDER_ITEM)]
     public async Task<IActionResult> GetRetailClientByNetIdCheckOrderItems([FromQuery] Guid netId) {
-        if (netId.Equals(Guid.Empty)) throw new Exception("NetId cannot be empty");
+        if (netId.Equals(Guid.Empty))
+            throw new ArgumentException("NetId cannot be empty.", nameof(netId));
 
         return Ok(SuccessResponseBody(await clientService.GetRetailClientByNetIdCheckOrderItems(netId)));
     }
