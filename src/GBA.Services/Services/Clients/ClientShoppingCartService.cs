@@ -43,6 +43,26 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         return orderItem;
     }
 
+    internal static (ClientAgreement ClientAgreement, Workplace Workplace) ResolveCartContext(
+        Guid actorNetId,
+        IClientAgreementRepository clientAgreementRepository,
+        IWorkplaceRepository workplaceRepository) {
+        ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(actorNetId);
+        Workplace workplace = null;
+
+        if (clientAgreement == null) {
+            workplace = workplaceRepository.GetByNetId(actorNetId);
+            clientAgreement = workplace == null
+                ? clientAgreementRepository.GetSelectedByClientNotSelectedNetId(actorNetId)
+                : clientAgreementRepository.GetSelectedByWorkplaceNetId(actorNetId);
+        }
+
+        if (clientAgreement?.Agreement?.Organization == null)
+            throw new ArgumentException("A valid client agreement is required.");
+
+        return (clientAgreement, workplace);
+    }
+
     private decimal ResolveLiveProductExchangeRate(
         IDbConnection connection,
         Product product,
@@ -179,14 +199,10 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
             IWorkplaceRepository workplaceRepository = _clientRepositoriesFactory.NewWorkplaceRepository(connection);
 
-            Workplace workplace = null;
-
-            ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(clientNetId);
-
-            if (clientAgreement == null) {
-                workplace = workplaceRepository.GetByNetId(clientNetId);
-                clientAgreement = clientAgreementRepository.GetSelectedByWorkplaceNetId(workplace.NetUid);
-            }
+            (ClientAgreement clientAgreement, Workplace workplace) = ResolveCartContext(
+                clientNetId,
+                clientAgreementRepository,
+                workplaceRepository);
 
             ApplyAuthoritativeProduct(connection, clientAgreement, orderItem);
 
