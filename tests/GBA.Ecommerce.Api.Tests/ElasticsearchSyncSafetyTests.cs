@@ -247,6 +247,38 @@ public sealed class ElasticsearchSyncSafetyTests {
     }
 
     [Fact]
+    public async Task ElasticsearchHealth_NoSuccessfulSync_RemainsNotReady() {
+        TestElasticsearchIndexService indexService = new() {
+            Healthy = true,
+            IndexExists = true
+        };
+        SearchSyncHealthProbe probe = new(
+            indexService,
+            new TestSearchSyncStateStore { Watermark = DateTime.MinValue },
+            Options.Create(new SyncSettings { LagWarningSeconds = 60 }),
+            new CollectingLogger<SearchSyncHealthProbe>());
+        ElasticsearchController controller = CreateController(
+            indexService,
+            Mock.Of<IElasticsearchSyncService>(),
+            probe);
+
+        ObjectResult result = Assert.IsType<ObjectResult>(
+            await controller.HealthAsync(CancellationToken.None));
+        IWebResponse envelope = Assert.IsAssignableFrom<IWebResponse>(result.Value);
+        using JsonDocument body = JsonDocument.Parse(JsonSerializer.Serialize(
+            envelope.Body,
+            new JsonSerializerOptions { PropertyNamingPolicy = null }));
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, result.StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, envelope.StatusCode);
+        Assert.False(body.RootElement.GetProperty("ready").GetBoolean());
+        Assert.True(body.RootElement.GetProperty("stale").GetBoolean());
+        Assert.Contains(
+            "no successful watermark",
+            body.RootElement.GetProperty("error").GetString());
+    }
+
+    [Fact]
     public async Task IncrementalSyncFailure_ReturnsConsistent503Envelope() {
         Mock<IElasticsearchSyncService> syncService = new();
         syncService
@@ -334,7 +366,7 @@ public sealed class ElasticsearchSyncSafetyTests {
     }
 
     [Fact]
-    public async Task SearchIndexHealthCheck_NoSuccessfulSync_IsUnhealthy() {
+    public async Task SearchIndexHealthCheck_NoSuccessfulSync_WithServingIndex_IsDegraded() {
         SearchSyncHealthProbe probe = new(
             new TestElasticsearchIndexService {
                 Healthy = true,
@@ -348,8 +380,12 @@ public sealed class ElasticsearchSyncSafetyTests {
         HealthCheckResult result = await healthCheck.CheckHealthAsync(
             new HealthCheckContext());
 
-        Assert.Equal(HealthStatus.Unhealthy, result.Status);
+        Assert.Equal(HealthStatus.Degraded, result.Status);
         Assert.Contains("no successful watermark", result.Description);
+        Assert.Equal(true, result.Data["healthy"]);
+        Assert.Equal(true, result.Data["indexExists"]);
+        Assert.Equal(false, result.Data["ready"]);
+        Assert.Equal(true, result.Data["stale"]);
     }
 
     [Fact]

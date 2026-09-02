@@ -29,14 +29,13 @@ internal sealed class SearchIndexHealthCheck(
         string description = snapshot.Error ??
                              "Elasticsearch product projection is unavailable.";
 
-        // An existing index with a previously successful watermark can continue serving
-        // searches while synchronization catches up. Keep that state visible as degraded
-        // without reporting a hard dependency outage. Missing state, index, or cluster
-        // availability remains unhealthy.
+        // An existing index can continue serving searches while synchronization catches
+        // up, even when its freshness is unknown because no watermark is available. Keep
+        // that state visible as degraded without reporting a hard dependency outage.
+        // A missing index or unavailable cluster remains unhealthy.
         return snapshot is {
             Healthy: true,
             IndexExists: true,
-            LastSyncUtc: not null,
             Stale: true
         }
             ? HealthCheckResult.Degraded(description, data: data)
