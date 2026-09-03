@@ -1,4 +1,5 @@
 using System;
+using System.Data.Common;
 using System.Threading;
 using System.Threading.Tasks;
 using GBA.Ecommerce.Hubs;
@@ -23,9 +24,11 @@ public sealed class RetailPricingContextMonitor(
     IHubContext<StorefrontHub> hubContext,
     ILogger<RetailPricingContextMonitor> logger) : BackgroundService {
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(3);
+    internal const int PersistentDatabaseFailureThreshold = 5;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
         string? previousCacheKey = null;
+        int consecutiveDatabaseFailures = 0;
 
         while (!stoppingToken.IsCancellationRequested) {
             try {
@@ -34,6 +37,7 @@ public sealed class RetailPricingContextMonitor(
                     scope.ServiceProvider.GetRequiredService<IProductService>();
                 ProductPricingContext context =
                     productService.GetPricingContext(Guid.Empty, false);
+                consecutiveDatabaseFailures = 0;
 
                 if (previousCacheKey != null
                     && !string.Equals(
@@ -60,6 +64,11 @@ public sealed class RetailPricingContextMonitor(
                 previousCacheKey = context.CacheKey;
             } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
                 break;
+            } catch (DbException exception) {
+                consecutiveDatabaseFailures = Math.Min(
+                    consecutiveDatabaseFailures + 1,
+                    PersistentDatabaseFailureThreshold);
+                LogDatabaseFailure(logger, exception, consecutiveDatabaseFailures);
             } catch (Exception exception) {
                 logger.LogError(
                     exception,
@@ -68,5 +77,22 @@ public sealed class RetailPricingContextMonitor(
 
             await Task.Delay(PollInterval, stoppingToken);
         }
+    }
+
+    internal static void LogDatabaseFailure(
+        ILogger logger,
+        DbException exception,
+        int consecutiveFailure) {
+        LogLevel level = consecutiveFailure < PersistentDatabaseFailureThreshold
+            ? LogLevel.Warning
+            : LogLevel.Error;
+
+        logger.Log(
+            level,
+            exception,
+            "Failed to monitor the storefront pricing context due to a database error " +
+            "({ConsecutiveFailure}/{ErrorThreshold}); retrying.",
+            consecutiveFailure,
+            PersistentDatabaseFailureThreshold);
     }
 }
