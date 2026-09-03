@@ -126,13 +126,23 @@ public sealed class ClientRepository : IClientRepository {
     }
 
     public Client GetClientNetIdByMobileNumber(string value) {
-        return _connection.Query<Client>(
-                "SELECT * FROM [Client] " +
-                "WHERE [Client].Deleted = 0 " +
-                "AND [Client].[MobileNumber] = @Value",
-                new { Value = value }
-            )
-            .FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        List<Client> matches = _connection.Query<Client>(
+                "SELECT TOP (2) [Client].* " +
+                "FROM [Client] " +
+                "WHERE [Client].[Deleted] = 0 " +
+                "AND ([Client].[MobileNumber] = @Value " +
+                "OR [Client].[ClientNumber] = @Value " +
+                "OR [Client].[SMSNumber] = @Value) " +
+                "ORDER BY [Client].[ID]",
+                new {Value = value.Trim()})
+            .ToList();
+
+        return matches.Count == 1
+            ? matches[0]
+            : null;
     }
 
 
