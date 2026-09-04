@@ -19,6 +19,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using NLog;
+using HttpBadHttpRequestException = Microsoft.AspNetCore.Http.BadHttpRequestException;
 
 namespace GBA.Ecommerce.Api.Tests;
 
@@ -135,8 +136,31 @@ public sealed class SecurityRegressionTests {
         Assert.DoesNotContain("sensitive-internal-message", root.GetRawText(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Oversized_request_body_preserves_413_and_returns_a_sanitized_response() {
+        DefaultHttpContext context = new();
+        context.Response.Body = new MemoryStream();
+        Exception exception = new HttpBadHttpRequestException(
+            "Request body too large. The max request body size is 65536 bytes.",
+            StatusCodes.Status413PayloadTooLarge);
+        ExceptionHandlerFeature feature = new() { Error = exception };
+
+        GlobalExceptionHandler handler = new();
+        await handler.HandleException(context, feature);
+
+        context.Response.Body.Position = 0;
+        using JsonDocument response = await JsonDocument.ParseAsync(context.Response.Body);
+        JsonElement root = response.RootElement;
+
+        Assert.Equal(StatusCodes.Status413PayloadTooLarge, context.Response.StatusCode);
+        Assert.Equal("The request is too large.", root.GetProperty(nameof(ErrorResponse.Message)).GetString());
+        Assert.DoesNotContain("65536", root.GetRawText(), StringComparison.Ordinal);
+        Assert.DoesNotContain(nameof(HttpBadHttpRequestException), root.GetRawText(), StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.BadRequest, "Warn")]
+    [InlineData(HttpStatusCode.RequestEntityTooLarge, "Warn")]
     [InlineData(HttpStatusCode.Forbidden, "Warn")]
     [InlineData(HttpStatusCode.InternalServerError, "Error")]
     public void Only_server_failures_are_logged_as_errors(

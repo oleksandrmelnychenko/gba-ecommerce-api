@@ -10,6 +10,7 @@ using GBA.Common.Exceptions.UserExceptions.Contracts;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using NLog;
+using HttpBadHttpRequestException = Microsoft.AspNetCore.Http.BadHttpRequestException;
 
 namespace GBA.Common.Exceptions.GlobalHandler;
 
@@ -45,8 +46,11 @@ public class GlobalExceptionHandler : IGlobalExceptionHandler {
         bool isRouteConstraint = exceptionHandler.Error is IRouteContraintException;
         bool isInvalidRequest = exceptionHandler.Error is ArgumentException or JsonException;
         bool isForbidden = exceptionHandler.Error is UnauthorizedAccessException;
+        bool isBadHttpRequest = TryGetBadHttpRequestStatusCode(exceptionHandler.Error, out HttpStatusCode badRequestStatusCode);
         HttpStatusCode statusCode = isRouteConstraint || isForbidden
             ? HttpStatusCode.Forbidden
+            : isBadHttpRequest
+                ? badRequestStatusCode
             : isInvalidRequest
                 ? HttpStatusCode.BadRequest
                 : HttpStatusCode.InternalServerError;
@@ -60,6 +64,10 @@ public class GlobalExceptionHandler : IGlobalExceptionHandler {
             ? routeException.GetUserMessageException
             : isForbidden
                 ? "Access is forbidden."
+            : isBadHttpRequest
+                ? statusCode == HttpStatusCode.RequestEntityTooLarge
+                    ? "The request is too large."
+                    : "The request is invalid."
             : isInvalidRequest
                 ? "The request is invalid."
                 : "An unexpected error occurred.";
@@ -84,6 +92,21 @@ public class GlobalExceptionHandler : IGlobalExceptionHandler {
         logEvent.Properties["UserNetId"] = context.GetUserNetId();
         logEvent.Properties["StatusCode"] = (int)statusCode;
         _logger.Log(logEvent);
+    }
+
+    private static bool TryGetBadHttpRequestStatusCode(Exception exception, out HttpStatusCode statusCode) {
+        int rawStatusCode = exception switch {
+            HttpBadHttpRequestException httpException => httpException.StatusCode,
+            _ => 0
+        };
+
+        if (rawStatusCode is >= StatusCodes.Status400BadRequest and < StatusCodes.Status500InternalServerError) {
+            statusCode = (HttpStatusCode)rawStatusCode;
+            return true;
+        }
+
+        statusCode = default;
+        return false;
     }
 
     private static LogLevel GetLogLevel(HttpStatusCode statusCode) {
