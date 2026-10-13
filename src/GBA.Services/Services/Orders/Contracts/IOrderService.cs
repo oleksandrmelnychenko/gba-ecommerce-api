@@ -10,7 +10,7 @@ using GBA.Domain.EntityHelpers.SalesModels.Models;
 namespace GBA.Services.Services.Orders.Contracts;
 
 public interface IOrderService {
-    Task<Sale> GenerateNewOrderAndSaleFromClientShoppingCart(Guid clientNetId, bool withVat);
+    Task<Sale> GenerateNewOrderAndSaleFromClientShoppingCart(Guid clientNetId, bool withVat, Guid operationNetUid);
 
     Task<Sale> GenerateNewSaleWithInvoice(
         Sale sale,

@@ -22,6 +22,7 @@ using GBA.Domain.Repositories.Products.Contracts;
 using GBA.Domain.Repositories.Sales.Contracts;
 using GBA.Domain.Repositories.Users.Contracts;
 using GBA.Services.Infrastructure;
+using GBA.Services.Infrastructure.SalesMutations;
 using GBA.Services.Services.Offers.Contracts;
 using Microsoft.Extensions.Http;
 
@@ -43,6 +44,8 @@ public sealed class OfferService : IOfferService {
     private readonly IUserRepositoriesFactory _userRepositoriesFactory;
 
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ISalesCreationLedgerStore _salesCreationLedgerStore;
+    private readonly TimeProvider _timeProvider;
 
     public OfferService(
         IClientRepositoriesFactory clientRepositoriesFactory,
@@ -50,7 +53,9 @@ public sealed class OfferService : IOfferService {
         IProductRepositoriesFactory productRepositoriesFactory,
         IUserRepositoriesFactory userRepositoriesFactory,
         IDbConnectionFactory connectionFactory,
-        IHttpClientFactory httpClientFactory) {
+        IHttpClientFactory httpClientFactory,
+        ISalesCreationLedgerStore salesCreationLedgerStore,
+        TimeProvider timeProvider) {
         _clientRepositoriesFactory = clientRepositoriesFactory;
 
         _saleRepositoriesFactory = saleRepositoriesFactory;
@@ -61,6 +66,8 @@ public sealed class OfferService : IOfferService {
 
         _connectionFactory = connectionFactory;
         _httpClientFactory = httpClientFactory;
+        _salesCreationLedgerStore = salesCreationLedgerStore;
+        _timeProvider = timeProvider;
     }
 
     public Task<ClientShoppingCart> GetOfferByNetId(Guid netId) {
@@ -115,224 +122,143 @@ public sealed class OfferService : IOfferService {
         return Task.FromResult(offers);
     }
 
-    public Task<Sale> GenerateNewOrderAndSaleFromOffer(ClientShoppingCart clientShoppingCart, Guid clientNetId, bool addCurrentCartItems) {
-        using IDbConnection connection = _connectionFactory.NewSqlConnection();
-            IClientShoppingCartRepository shoppingCartRepository = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection);
+    public async Task<Sale> GenerateNewOrderAndSaleFromOffer(ClientShoppingCart clientShoppingCart,
+        Guid clientNetId, bool addCurrentCartItems, Guid operationNetUid) {
+        if (clientShoppingCart == null || clientShoppingCart.NetUid == Guid.Empty || clientShoppingCart.OrderItems == null)
+            throw new ArgumentException("An offer identity and requested items are required.");
+        // Snapshot only inbound values here. Semantic rejection must follow ledger registration
+        // so a changed retry conflicts with its committed receipt before validation runs.
+        var requested = clientShoppingCart.OrderItems.Select(item => item == null ? null : new {
+            ProductId = item.Product?.Id > 0 ? item.Product.Id : item.ProductId,
+            DeclaredProductId = item.ProductId, NestedProductId = item.Product?.Id, item.Qty, item.Comment
+        }).OrderBy(item => item?.ProductId ?? 0).ToArray();
+        var request = LegacyCheckoutExecutor.Request(operationNetUid, clientNetId,
+            "offer-checkout-v1", addCurrentCartItems,
+            new { Offer = clientShoppingCart.NetUid, AddCartItems = addCurrentCartItems,
+                Items = requested.Select(item => item == null ? null : new {
+                    item.ProductId, item.DeclaredProductId, item.NestedProductId,
+                    Quantity = item.Qty.ToString("R", CultureInfo.InvariantCulture), item.Comment
+                }).ToArray() });
+        var productsToNotify = new HashSet<Guid>();
+        var executor = new LegacyCheckoutExecutor(_connectionFactory, _salesCreationLedgerStore, _timeProvider);
+        (Sale sale, bool replay) = await executor.ExecuteAsync(request, connection => {
+            foreach (var item in requested) {
+                if (item == null) throw new ArgumentException("An offer item is required.");
+                LegacyCheckoutPolicy.RequireQuantity(item.Qty);
+                if (item.ProductId <= 0 || item.DeclaredProductId > 0 && item.DeclaredProductId != item.ProductId)
+                    throw new ArgumentException("Offer product identities do not match.");
+            }
+            if (requested.Select(item => item.ProductId).Distinct().Count() != requested.Length
+                || requested.Length == 0 && !addCurrentCartItems)
+                throw new ArgumentException("Offer items must be distinct and nonempty.");
+            IClientShoppingCartRepository carts = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection);
+            ClientShoppingCart offer = carts.GetByNetId(clientShoppingCart.NetUid);
+            LegacyCheckoutPolicy.RequireCart(connection, offer, clientNetId, true);
+            ClientAgreement agreement = _clientRepositoriesFactory.NewClientAgreementRepository(connection)
+                .GetWithOrganizationById(offer.ClientAgreementId);
+            LegacyCheckoutPolicy.RequireAgreement(offer, agreement);
+            ClientShoppingCart cart = addCurrentCartItems
+                ? carts.GetByClientAgreementNetId(agreement.NetUid, offer.IsVatCart) : null;
+            if (cart != null) LegacyCheckoutPolicy.RequireCart(connection, cart, clientNetId, false);
+            if (requested.Length == 0 && (cart == null || cart.OrderItems.Count == 0))
+                throw new ArgumentException("You need to add products first.");
+            foreach (var item in requested)
+                if (offer.OrderItems.Count(source => source.ProductId == item.ProductId && !source.Deleted) != 1)
+                    throw new ArgumentException("A requested product is not an unambiguous item of this offer.");
 
-            ClientShoppingCart offer = shoppingCartRepository.GetByNetId(clientShoppingCart.NetUid);
-
-            if (offer == null)
-                throw new Exception(OfferResourceNames.OFFER_NOT_EXISTS);
-            if (offer.IsOfferProcessed)
-                throw new Exception(OfferResourceNames.OFFER_PROCESSED);
-
-            shoppingCartRepository.SetProcessedByNetId(clientShoppingCart.NetUid);
-
-            Order order = new() {
-                OrderSource = OrderSource.Offer,
-                OrderStatus = OrderStatus.NewOrderCart,
+            LegacyCheckoutPolicy.LockProducts(connection, requested.Select(item => item.ProductId));
+            var order = new Order {
+                OrderSource = OrderSource.Offer, OrderStatus = OrderStatus.NewOrderCart,
                 UserId = offer.CreatedById ?? _userRepositoriesFactory.NewUserRepository(connection).GetManagerOrGBAIdByClientNetId(clientNetId),
-                ClientAgreement = _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetActiveByRootClientNetId(clientNetId, offer.IsVatCart),
-                ClientShoppingCartId = offer.Id
+                ClientAgreement = agreement, ClientAgreementId = agreement.Id, ClientShoppingCartId = offer.Id
             };
-
-            order.ClientAgreementId = order.ClientAgreement.Id;
-
-            order.Id = _saleRepositoriesFactory
-                .NewOrderRepository(connection)
-                .Add(order);
-
-            IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
-            IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
-            IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
-
-            if (clientShoppingCart.OrderItems.Any()) {
-                List<OrderItem> offeredOrderItems = new();
-
-                foreach (OrderItem orderItem in clientShoppingCart.OrderItems) {
-                    orderItem.ClientShoppingCartId = null;
-                    orderItem.OrderId = order.Id;
-                    orderItem.ProductId = orderItem.Product.Id;
-                    orderItem.UserId = order.UserId;
-
-                    IEnumerable<ProductAvailability> productAvailabilities =
-                        productAvailabilityRepository
-                            .GetByProductAndOrganizationIds(
-                                orderItem.ProductId,
-                                order.ClientAgreement.Agreement.Organization.Id,
-                                offer.IsVatCart
-                            );
-
-                    if (productAvailabilities.Any()) {
-                        orderItem.OrderedQty = orderItem.Qty;
-
-                        if (productAvailabilities.Sum(a => a.Amount) < orderItem.Qty) orderItem.Qty = productAvailabilities.Sum(a => a.Amount);
-
-                        if (offer.OrderItems.Any(i => i.ProductId.Equals(orderItem.ProductId))) {
-                            OrderItem fromOfferItem = offer.OrderItems.First(i => i.ProductId.Equals(orderItem.ProductId));
-
-                            orderItem.FromOfferQty = fromOfferItem.Qty;
-
-                            orderItem.IsFromOffer = true;
-
-                            fromOfferItem.OfferProcessingStatus =
-                                orderItem.Qty >= fromOfferItem.Qty ? OfferProcessingStatus.FullyProcessed : OfferProcessingStatus.PartiallyProcessed;
-
-                            fromOfferItem.OrderedQty = orderItem.Qty;
-
-                            offeredOrderItems.Add(fromOfferItem);
-                        }
-
-                        orderItem.Id = orderItemRepository.Add(orderItem);
-
-                        double toDecreaseQty = orderItem.Qty;
-
-                        foreach (ProductAvailability productAvailability in productAvailabilities.Where(a => a.Amount > 0)) {
-                            if (toDecreaseQty.Equals(0d)) break;
-
-                            if (productAvailability.Amount >= toDecreaseQty) {
-                                productReservationRepository
-                                    .Add(new ProductReservation {
-                                        OrderItemId = orderItem.Id,
-                                        ProductAvailabilityId = productAvailability.Id,
-                                        Qty = toDecreaseQty
-                                    });
-
-                                productAvailability.Amount -= toDecreaseQty;
-
-                                toDecreaseQty = 0d;
-                            } else {
-                                productReservationRepository
-                                    .Add(new ProductReservation {
-                                        OrderItemId = orderItem.Id,
-                                        ProductAvailabilityId = productAvailability.Id,
-                                        Qty = productAvailability.Amount
-                                    });
-
-                                toDecreaseQty -= productAvailability.Amount;
-
-                                productAvailability.Amount = 0d;
-                            }
-
-                            productAvailabilityRepository.Update(productAvailability);
-                        }
-
-                        BackgroundSyncRunner.Run(async cancellationToken => {
-                            string saleSyncCrmUrl;
-
-                            if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                                EcommerceCrmConfig data = JsonSerializer.Deserialize<EcommerceCrmConfig>(
-                                    File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()),
-                                    _jsonSerializerOptions);
-
-                                saleSyncCrmUrl =
-                                    $"{data?.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                            } else {
-                                saleSyncCrmUrl =
-                                    $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
-                            }
-
-                            using HttpClient httpClient = _httpClientFactory.CreateClient();
-                            await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
-                        }, "Offer product availability sync");
-                    } else {
-                        orderItem.OrderedQty = orderItem.Qty;
-                        orderItem.IsFromOffer = true;
-
-                        orderItem.Id = orderItemRepository.Add(orderItem);
-                    }
+            order.Id = _saleRepositoriesFactory.NewOrderRepository(connection).Add(order);
+            IOrderItemRepository items = _saleRepositoriesFactory.NewOrderItemRepository(connection);
+            IProductReservationRepository reservations = _productRepositoriesFactory.NewProductReservationRepository(connection);
+            IProductAvailabilityRepository availability = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
+            var processedItems = new List<OrderItem>();
+            foreach (var item in requested) {
+                OrderItem source = offer.OrderItems.Single(value => value.ProductId == item.ProductId && !value.Deleted);
+                var available = availability.GetByProductAndOrganizationIds(item.ProductId,
+                    agreement.Agreement.Organization.Id, offer.IsVatCart).OrderBy(value => value.Id).ToArray();
+                if (available.Any(value => !double.IsFinite(value.Amount) || value.Amount < 0))
+                    throw new InvalidOperationException("Product availability is invalid.");
+                // Preserve the existing backorder case: no availability rows means an
+                // ordered item without a stock reservation, rather than invented stock.
+                double quantity = available.Length == 0 ? item.Qty : Math.Min(item.Qty, available.Sum(value => value.Amount));
+                if (!double.IsFinite(quantity) || quantity < 0)
+                    throw new InvalidOperationException("Product availability is invalid.");
+                var createdItem = new OrderItem {
+                    OrderId = order.Id, ProductId = item.ProductId, UserId = order.UserId,
+                    Qty = quantity, OrderedQty = item.Qty, Comment = item.Comment,
+                    FromOfferQty = source.Qty, IsFromOffer = true,
+                    PricePerItem = source.PricePerItem, ExchangeRateAmount = source.ExchangeRateAmount,
+                    Vat = source.Vat, AssignedSpecificationId = source.AssignedSpecificationId,
+                    IsValidForCurrentSale = source.IsValidForCurrentSale
+                };
+                createdItem.Id = items.Add(createdItem);
+                double remaining = quantity;
+                foreach (ProductAvailability row in available.Where(value => value.Amount > 0)) {
+                    if (remaining <= 0) break;
+                    double reserved = Math.Min(remaining, row.Amount);
+                    reservations.Add(new ProductReservation { OrderItemId = createdItem.Id,
+                        ProductAvailabilityId = row.Id, Qty = reserved });
+                    row.Amount -= reserved;
+                    availability.Update(row);
+                    remaining -= reserved;
                 }
-
-                orderItemRepository.SetOfferProcessingStatuses(offeredOrderItems);
-            } else {
-                offer.OfferProcessingStatus = OfferProcessingStatus.NotProcessed;
+                if (available.Length != 0 && remaining > 0.000000001d)
+                    throw new InvalidOperationException("Offer reservation is incomplete.");
+                source.OrderedQty = quantity;
+                source.OfferProcessingStatus = quantity >= source.Qty
+                    ? OfferProcessingStatus.FullyProcessed : OfferProcessingStatus.PartiallyProcessed;
+                processedItems.Add(source);
+                if (source.Product?.NetUid is Guid productNetUid && productNetUid != Guid.Empty)
+                    productsToNotify.Add(productNetUid);
             }
-
-            shoppingCartRepository.UpdateProcessingStatus(offer);
-
-            if (addCurrentCartItems) {
-                ClientShoppingCart currentCart = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection).GetByClientNetId(clientNetId, offer.IsVatCart);
-
-                if (currentCart != null && currentCart.OrderItems.Any())
-                    orderItemRepository
-                        .Update(
-                            currentCart
-                                .OrderItems
-                                .Select(item => {
-                                    item.ClientShoppingCartId = null;
-                                    item.OrderId = order.Id;
-
-                                    return item;
-                                })
-                        );
-            }
-
-            Sale sale = new() {
-                ClientAgreementId = order.ClientAgreementId,
-                OrderId = order.Id,
-                UserId = order.UserId,
-                IsVatSale = offer.IsVatCart,
-                BaseLifeCycleStatusId =
-                    _saleRepositoriesFactory
-                        .NewBaseLifeCycleStatusRepository(connection)
-                        .Add(
-                            new BaseLifeCycleStatus {
-                                SaleLifeCycleType = SaleLifeCycleType.New
-                            }
-                        ),
-                BaseSalePaymentStatusId =
-                    _saleRepositoriesFactory
-                        .NewBaseSalePaymentStatusRepository(connection)
-                        .Add(
-                            new BaseSalePaymentStatus {
-                                SalePaymentStatusType = SalePaymentStatusType.NotPaid
-                            }
-                        )
+            items.SetOfferProcessingStatuses(processedItems);
+            offer.OfferProcessingStatus = requested.Length == 0 ? OfferProcessingStatus.NotProcessed
+                : processedItems.All(item => item.OfferProcessingStatus == OfferProcessingStatus.FullyProcessed)
+                    && processedItems.Count == offer.OrderItems.Count
+                    ? OfferProcessingStatus.FullyProcessed : OfferProcessingStatus.PartiallyProcessed;
+            carts.UpdateProcessingStatus(offer);
+            carts.SetProcessedByNetId(offer.NetUid);
+            if (cart != null) LegacyCheckoutPolicy.MoveCartItems(connection, cart, order.Id);
+            var created = new Sale {
+                ClientAgreementId = agreement.Id, OrderId = order.Id, UserId = order.UserId, IsVatSale = offer.IsVatCart,
+                BaseLifeCycleStatusId = _saleRepositoriesFactory.NewBaseLifeCycleStatusRepository(connection)
+                    .Add(new BaseLifeCycleStatus { SaleLifeCycleType = SaleLifeCycleType.New }),
+                BaseSalePaymentStatusId = _saleRepositoriesFactory.NewBaseSalePaymentStatusRepository(connection)
+                    .Add(new BaseSalePaymentStatus { SalePaymentStatusType = SalePaymentStatusType.NotPaid }),
+                SaleNumberId = LegacyCheckoutPolicy.AddSaleNumber(connection,
+                    _saleRepositoriesFactory.NewSaleNumberRepository(connection), agreement)
             };
+            ISaleRepository sales = _saleRepositoriesFactory.NewSaleRepository(connection);
+            created.Id = sales.Add(created);
+            return sales.GetById(created.Id);
+        });
+        if (!replay) {
+            foreach (Guid product in productsToNotify) QueueCheckoutSync("products/sync/availability", product);
+            QueueCheckoutSync("sales/sync/new", sale.NetUid);
+        }
+        return sale;
+    }
 
-            ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
-
-            SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
-            SaleNumber saleNumber;
-
-            if (lastSaleNumber != null && DateTime.Now.Year.Equals(lastSaleNumber.Created.Year))
-                saleNumber = new SaleNumber {
-                    OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                    Value =
-                        $"{order.ClientAgreement.Agreement.Organization.Code}{string.Format("{0:D10}", Convert.ToInt32(lastSaleNumber.Value.Substring(order.ClientAgreement.Agreement.Organization.Code.Length, 10)) + 1)}"
-                };
-            else
-                saleNumber = new SaleNumber {
-                    OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                    Value = $"{order.ClientAgreement.Agreement.Organization.Code}{string.Format("{0:D10}", 1)}"
-                };
-
-            sale.SaleNumberId = saleNumberRepository.Add(saleNumber);
-
-            ISaleRepository saleRepository = _saleRepositoriesFactory.NewSaleRepository(connection);
-
-            sale.Id = saleRepository.Add(sale);
-
-            sale = saleRepository.GetById(sale.Id);
-
-            BackgroundSyncRunner.Run(async cancellationToken => {
-                string saleSyncCrmUrl;
-
-                if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                    EcommerceCrmConfig data = JsonSerializer.Deserialize<EcommerceCrmConfig>(
-                        File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()),
-                        _jsonSerializerOptions);
-
-                    saleSyncCrmUrl = $"{data?.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
-                } else {
-                    saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
-                }
-
-                using HttpClient httpClient = _httpClientFactory.CreateClient();
-                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
-            }, "Offer sale sync");
-
-            return Task.FromResult(sale);
+    private void QueueCheckoutSync(string path, Guid netUid) {
+        BackgroundSyncRunner.Run(async cancellationToken => {
+            string baseUrl = "http://93.183.224.42";
+            if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
+                EcommerceCrmConfig data = JsonSerializer.Deserialize<EcommerceCrmConfig>(
+                    File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()), _jsonSerializerOptions);
+#if DEBUG
+                baseUrl = data?.CrmServerUrl;
+#else
+                baseUrl = data?.CrmServerUrlRelease;
+#endif
+            }
+            using HttpClient client = _httpClientFactory.CreateClient();
+            await client.GetAsync($"{baseUrl}/api/v1/{CultureInfo.CurrentCulture}/{path}?netId={netUid}", cancellationToken);
+        }, "Offer checkout sync");
     }
 
     public Task<Order> DynamicallyCalculateTotalPrices(Order order) {

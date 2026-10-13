@@ -103,6 +103,8 @@ public sealed class SalesCreationLedgerSqlServerTests {
             Task first = Task.Run(async () => {
                 using IDbConnection connection = new SqlConnection(connectionString);
                 using TransactionScope transaction = CreateTransactionScope();
+                // Keep the same enlisted physical session for register and complete, including when pooling is disabled.
+                connection.Open();
                 SalesCreationLedgerRegistration registration =
                     await store.RegisterAsync(connection, request, _createdUtc, CancellationToken.None);
                 Assert.True(registration.WasInserted);
@@ -263,6 +265,8 @@ WHERE OperationNetUid IN @OperationNetUids;
         string responsePayload) {
         using IDbConnection connection = new SqlConnection(connectionString);
         using TransactionScope transaction = CreateTransactionScope();
+        // Keep the same enlisted physical session for register and complete, including when pooling is disabled.
+        connection.Open();
         SalesCreationLedgerRegistration registration = await store.RegisterAsync(
             connection,
             request,
@@ -284,6 +288,8 @@ WHERE OperationNetUid IN @OperationNetUids;
         SalesCreationRequest request) {
         using IDbConnection connection = new SqlConnection(connectionString);
         using TransactionScope transaction = CreateTransactionScope();
+        // Keep the same enlisted physical session for register and complete, including when pooling is disabled.
+        connection.Open();
         SalesCreationLedgerRegistration registration = await store.RegisterAsync(
             connection,
             request,

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
@@ -58,6 +58,7 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
                     "ON [ClientAgreement].ID = [ClientShoppingCart].ClientAgreementID " +
                     "LEFT JOIN [Agreement] " +
                     "ON [Agreement].[ID] = [ClientAgreement].[AgreementID] " +
+                    "LEFT JOIN [Organization] ON [Organization].ID = [Agreement].OrganizationID " +
                     "WHERE [ClientShoppingCart].NetUID = @NetId",
                     (cart, clientAgreement, agreement, organization) => {
                         if (clientAgreement != null) {
@@ -229,6 +230,7 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
             "WHERE [Client].NetUID = @NetId " +
             "AND [ClientShoppingCart].Deleted = 0 " +
             "AND [ClientShoppingCart].IsOffer = 0 " +
+            "AND [ClientShoppingCart].WorkplaceID IS NULL " +
             "AND [ClientShoppingCart].IsVatCart = @WithVat " +
             "ORDER BY CASE WHEN [OrderItem].ID IS NOT NULL THEN 0 ELSE 1 END" +
             ")",

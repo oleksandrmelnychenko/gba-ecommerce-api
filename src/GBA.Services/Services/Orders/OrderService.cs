@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Data;
@@ -214,6 +214,7 @@ public sealed class OrderService : IOrderService {
     private async Task ReserveSalesCreationAsync(
         IDbConnection connection,
         SalesCreationRequest request) {
+        CartMutationScope.AcquireLock(connection);
         SalesCreationLedgerRegistration registration =
             await _salesCreationLedgerStore.RegisterAsync(
                 connection,
@@ -349,123 +350,41 @@ SELECT @LockResult;
         }, operationName);
     }
 
-    public Task<Sale> GenerateNewOrderAndSaleFromClientShoppingCart(Guid clientNetId, bool withVat) {
-        using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        ClientShoppingCart clientShoppingCart =
-            _clientRepositoriesFactory.NewClientShoppingCartRepository(connection).GetByClientNetId(clientNetId, withVat);
-
-        if (clientShoppingCart == null || !clientShoppingCart.OrderItems.Any()) throw new Exception("You need to add products first.");
-
-        Order order = new() {
-            OrderSource = OrderSource.Shop,
-            OrderStatus = OrderStatus.NewOrderCart,
-            UserId = _userRepositoriesFactory.NewUserRepository(connection).GetManagerOrGBAIdByClientNetId(clientNetId),
-            ClientAgreement = _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetActiveByRootClientNetId(clientNetId, withVat)
-        };
-
-        order.ClientAgreementId = order.ClientAgreement.Id;
-        order.Id = _saleRepositoriesFactory
-            .NewOrderRepository(connection)
-            .Add(order);
-
-        _saleRepositoriesFactory
-            .NewOrderItemRepository(connection)
-            .Update(
-                clientShoppingCart
-                    .OrderItems
-                    .Select(item => {
-                        item.ClientShoppingCartId = null;
-                        item.OrderId = order.Id;
-
-                        return item;
-                    })
-            );
-
-        Sale sale = new() {
-            ClientAgreementId = order.ClientAgreementId,
-            OrderId = order.Id,
-            UserId = order.UserId,
-            IsVatSale = clientShoppingCart.IsVatCart,
-            BaseLifeCycleStatusId =
-                _saleRepositoriesFactory
-                    .NewBaseLifeCycleStatusRepository(connection)
-                    .Add(
-                        new BaseLifeCycleStatus {
-                            SaleLifeCycleType = SaleLifeCycleType.New
-                        }
-                    ),
-            BaseSalePaymentStatusId =
-                _saleRepositoriesFactory
-                    .NewBaseSalePaymentStatusRepository(connection)
-                    .Add(
-                        new BaseSalePaymentStatus {
-                            SalePaymentStatusType = SalePaymentStatusType.NotPaid
-                        }
-                    )
-        };
-
-        ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
-
-        SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
-        SaleNumber saleNumber;
-
-        string currentMonth = MonthCodesResourceNames.GetCurrentMonthCode();
-
-        try {
-            if (lastSaleNumber != null && DateTime.Now.Year.Equals(lastSaleNumber.Created.Year)) {
-                saleNumber = new SaleNumber {
-                    OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                    Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}"
-                };
-
-                saleNumber.Value +=
-                    string.Format("{0:D8}",
-                        Convert.ToInt32(
-                            lastSaleNumber.Value.Substring(
-                                lastSaleNumber.Organization.Code.Length + currentMonth.Length,
-                                lastSaleNumber.Value.Length - (lastSaleNumber.Organization.Code.Length + currentMonth.Length)))
-                        + 1);
-            } else {
-                saleNumber = new SaleNumber {
-                    OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                    Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
-                };
-            }
-        } catch (FormatException) {
-            saleNumber = new SaleNumber {
-                OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
+    public async Task<Sale> GenerateNewOrderAndSaleFromClientShoppingCart(Guid clientNetId, bool withVat, Guid operationNetUid) {
+        var request = LegacyCheckoutExecutor.Request(operationNetUid, clientNetId,
+            "cart-checkout-v1", withVat, new { WithVat = withVat });
+        var executor = new LegacyCheckoutExecutor(_connectionFactory, _salesCreationLedgerStore, _timeProvider);
+        (Sale sale, bool replay) = await executor.ExecuteAsync(request, connection => {
+            ClientShoppingCart cart = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection)
+                .GetByClientNetId(clientNetId, withVat);
+            LegacyCheckoutPolicy.RequireCart(connection, cart, clientNetId, false);
+            if (cart.IsVatCart != withVat || cart.OrderItems.Count == 0)
+                throw new ArgumentException("The requested shopping cart is empty or its VAT mode changed.");
+            ClientAgreement agreement = _clientRepositoriesFactory.NewClientAgreementRepository(connection)
+                .GetWithOrganizationById(cart.ClientAgreementId);
+            LegacyCheckoutPolicy.RequireAgreement(cart, agreement);
+            var order = new Order {
+                OrderSource = OrderSource.Shop, OrderStatus = OrderStatus.NewOrderCart,
+                UserId = _userRepositoriesFactory.NewUserRepository(connection).GetManagerOrGBAIdByClientNetId(clientNetId),
+                ClientAgreement = agreement, ClientAgreementId = agreement.Id
             };
-        }
-
-        sale.SaleNumberId = saleNumberRepository.Add(saleNumber);
-
-        ISaleRepository saleRepository = _saleRepositoriesFactory.NewSaleRepository(connection);
-
-        sale.Id = saleRepository.Add(sale);
-
-        sale = saleRepository.GetById(sale.Id);
-
-        BackgroundSyncRunner.Run(async cancellationToken => {
-            string saleSyncCrmUrl;
-
-            if (File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
-                EcommerceCrmConfig data = ReadEcommerceCrmConfig();
-
-#if DEBUG
-                saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
-#else
-                            saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
-#endif
-            } else {
-                saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
-            }
-
-            using HttpClient httpClient = _httpClientFactory.CreateClient();
-            await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
-        }, "Order sale sync");
-
-        return Task.FromResult(sale);
+            order.Id = _saleRepositoriesFactory.NewOrderRepository(connection).Add(order);
+            LegacyCheckoutPolicy.MoveCartItems(connection, cart, order.Id);
+            var created = new Sale {
+                ClientAgreementId = agreement.Id, OrderId = order.Id, UserId = order.UserId, IsVatSale = cart.IsVatCart,
+                BaseLifeCycleStatusId = _saleRepositoriesFactory.NewBaseLifeCycleStatusRepository(connection)
+                    .Add(new BaseLifeCycleStatus { SaleLifeCycleType = SaleLifeCycleType.New }),
+                BaseSalePaymentStatusId = _saleRepositoriesFactory.NewBaseSalePaymentStatusRepository(connection)
+                    .Add(new BaseSalePaymentStatus { SalePaymentStatusType = SalePaymentStatusType.NotPaid }),
+                SaleNumberId = LegacyCheckoutPolicy.AddSaleNumber(connection,
+                    _saleRepositoriesFactory.NewSaleNumberRepository(connection), agreement)
+            };
+            ISaleRepository repository = _saleRepositoriesFactory.NewSaleRepository(connection);
+            created.Id = repository.Add(created);
+            return repository.GetById(created.Id);
+        });
+        if (!replay) QueueSaleSync(sale.NetUid, "Order sale sync");
+        return sale;
     }
 
     public Task<Order> DynamicallyCalculateTotalPrices(Order order) {

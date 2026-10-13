@@ -11,7 +11,7 @@ public interface IOfferService {
 
     Task<List<ClientShoppingCart>> GetAllAvailableOffersByClientNetId(Guid netId);
 
-    Task<Sale> GenerateNewOrderAndSaleFromOffer(ClientShoppingCart clientShoppingCart, Guid clientNetId, bool addCurrentCartItems);
+    Task<Sale> GenerateNewOrderAndSaleFromOffer(ClientShoppingCart clientShoppingCart, Guid clientNetId, bool addCurrentCartItems, Guid operationNetUid);
 
     Task<Order> DynamicallyCalculateTotalPrices(Order order);
 }

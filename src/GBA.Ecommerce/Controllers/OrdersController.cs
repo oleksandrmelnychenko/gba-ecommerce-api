@@ -43,9 +43,19 @@ public sealed class OrdersController(
 
     [HttpGet]
     [AssignActionRoute(OrdersSegments.ADD_NEW)]
-    public async Task<IActionResult> GenerateOrderFromClientShoppingCartAsync([FromQuery] int withVat) {
+    public async Task<IActionResult> GenerateOrderFromClientShoppingCartAsync(
+        [FromQuery] int withVat,
+        [FromHeader(Name = SalesMutationRequestKey.HeaderName)] string? idempotencyKey) {
+        if (IsWorkplacePrincipal()) return UnsupportedDirectCheckoutPrincipal();
+        if (!ModelState.IsValid || withVat is not (0 or 1))
+            return BadRequest(ErrorResponseBody("withVat must be 0 or 1.", HttpStatusCode.BadRequest));
+        if (!SalesCreationRequestKey.TryParseHeader(idempotencyKey, out Guid operationNetUid))
+            return InvalidRequiredIdempotencyKey();
+
         Guid userNetId = GetUserNetId();
-        return Ok(SuccessResponseBody(await orderService.GenerateNewOrderAndSaleFromClientShoppingCart(userNetId, withVat.Equals(1))));
+        if (userNetId == Guid.Empty) return Unauthorized();
+        return await ExecuteDirectCheckoutAsync(operationNetUid, () =>
+            orderService.GenerateNewOrderAndSaleFromClientShoppingCart(userNetId, withVat == 1, operationNetUid));
     }
 
     [HttpPost]
@@ -204,13 +214,22 @@ public sealed class OrdersController(
 
     [HttpPost]
     [AssignActionRoute(OrdersSegments.ADD_NEW_FROM_OFFER)]
-    public async Task<IActionResult> GenerateOrderAndSaleFromOfferAsync([FromBody] ClientShoppingCart clientShoppingCart, [FromQuery] int addCartItems) {
+    public async Task<IActionResult> GenerateOrderAndSaleFromOfferAsync(
+        [FromBody] ClientShoppingCart clientShoppingCart,
+        [FromQuery] int addCartItems,
+        [FromHeader(Name = SalesMutationRequestKey.HeaderName)] string? idempotencyKey) {
+        if (IsWorkplacePrincipal()) return UnsupportedDirectCheckoutPrincipal();
+        if (!ModelState.IsValid || addCartItems is not (0 or 1))
+            return BadRequest(ErrorResponseBody("addCartItems must be 0 or 1.", HttpStatusCode.BadRequest));
+        if (!SalesCreationRequestKey.TryParseHeader(idempotencyKey, out Guid operationNetUid))
+            return InvalidRequiredIdempotencyKey();
+        if (clientShoppingCart == null || clientShoppingCart.NetUid == Guid.Empty)
+            return BadRequest(ErrorResponseBody("A non-empty offer UUID is required.", HttpStatusCode.BadRequest));
+
         Guid userNetId = GetUserNetId();
-        return Ok(
-            SuccessResponseBody(
-                await offerService.GenerateNewOrderAndSaleFromOffer(clientShoppingCart, userNetId, addCartItems == 1)
-            )
-        );
+        if (userNetId == Guid.Empty) return Unauthorized();
+        return await ExecuteDirectCheckoutAsync(operationNetUid, () =>
+            offerService.GenerateNewOrderAndSaleFromOffer(clientShoppingCart, userNetId, addCartItems == 1, operationNetUid));
     }
 
     [HttpPost]
@@ -243,6 +262,20 @@ public sealed class OrdersController(
         BadRequest(ErrorResponseBody(
             $"Provide a non-empty UUID in the {SalesMutationRequestKey.HeaderName} header or Sale.NetUid.",
             HttpStatusCode.BadRequest));
+
+    private IActionResult InvalidRequiredIdempotencyKey() =>
+        BadRequest(ErrorResponseBody(
+            $"Provide a non-empty UUID in the {SalesMutationRequestKey.HeaderName} header.",
+            HttpStatusCode.BadRequest));
+
+    private bool IsWorkplacePrincipal() =>
+        User.IsInRole(IdentityRoles.Workplace) ||
+        User.HasClaim("type", IdentityRoles.Workplace);
+
+    private IActionResult UnsupportedDirectCheckoutPrincipal() =>
+        StatusCode(StatusCodes.Status403Forbidden, ErrorResponseBody(
+            "Workplace accounts must use invoice checkout.",
+            HttpStatusCode.Forbidden));
 
     private IActionResult TtnUploadFailure(TtnUploadHttpException exception) {
         if (exception.StatusCode == HttpStatusCode.Conflict)
@@ -294,6 +327,18 @@ public sealed class OrdersController(
         return StatusCode(
             StatusCodes.Status503ServiceUnavailable,
             ErrorResponseBody(message, HttpStatusCode.ServiceUnavailable));
+    }
+
+    private async Task<IActionResult> ExecuteDirectCheckoutAsync(Guid operationNetUid, Func<Task<Sale>> createSale) {
+        try {
+            return await ExecuteSalesCreationAsync(createSale);
+        } catch (LegacyCheckoutRejectedException exception) {
+            var response = ErrorResponseBody(exception.Message, HttpStatusCode.BadRequest);
+            response.Body = new { CheckoutRejected = true, OperationNetUid = operationNetUid };
+            return BadRequest(response);
+        } catch (ArgumentException exception) {
+            return BadRequest(ErrorResponseBody(exception.Message, HttpStatusCode.BadRequest));
+        }
     }
 
     private async Task<IActionResult> ExecuteSalesCreationAsync<T>(Func<Task<T>> createSale) {

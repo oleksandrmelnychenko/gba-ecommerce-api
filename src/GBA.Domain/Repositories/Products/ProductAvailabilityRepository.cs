@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
@@ -12,6 +12,8 @@ namespace GBA.Domain.Repositories.Products;
 
 public sealed class ProductAvailabilityRepository : IProductAvailabilityRepository {
     private readonly IDbConnection _connection;
+    private static string MutationReadLock => System.Transactions.Transaction.Current == null
+        ? string.Empty : "WITH(UPDLOCK,HOLDLOCK) ";
 
     public ProductAvailabilityRepository(IDbConnection connection) {
         _connection = connection;
@@ -66,7 +68,7 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
     public IEnumerable<ProductAvailability> GetAllByProductAndStorageIds(long productId, List<long> storageIds) {
         return _connection.Query<ProductAvailability, Storage, ProductAvailability>(
             "SELECT * " +
-            "FROM [ProductAvailability] " +
+            "FROM [ProductAvailability] " + MutationReadLock +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "WHERE [ProductAvailability].Deleted = 0 " +
@@ -87,7 +89,7 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
             "SELECT [ProductAvailability].* " +
             ", 0 AS [IsReSaleAvailability] " +
             ", [Storage].* " +
-            "FROM [ProductAvailability] " +
+            "FROM [ProductAvailability] " + MutationReadLock +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "WHERE [ProductAvailability].ProductID = @ProductId " +
@@ -101,7 +103,7 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
                       "SELECT [ProductAvailability].* " +
                       ", 0 AS [IsReSaleAvailability] " +
                       ", [Storage].* " +
-                      "FROM [ProductAvailability] " +
+                      "FROM [ProductAvailability] " + MutationReadLock +
                       "LEFT JOIN [Storage] " +
                       "ON [Storage].ID = [ProductAvailability].StorageID " +
                       "WHERE [ProductAvailability].ProductID = @ProductId " +
@@ -116,7 +118,7 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
                       "SELECT [ProductAvailability].* " +
                       ", 1 AS [IsReSaleAvailability] " +
                       ", [Storage].* " +
-                      "FROM [ProductAvailability] " +
+                      "FROM [ProductAvailability] " + MutationReadLock +
                       "LEFT JOIN [Storage] " +
                       "ON [Storage].ID = [ProductAvailability].StorageID " +
                       "WHERE [ProductAvailability].ProductID = @ProductId " +
