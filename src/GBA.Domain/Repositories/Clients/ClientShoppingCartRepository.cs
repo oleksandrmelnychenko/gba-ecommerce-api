@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
@@ -52,13 +52,17 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
     public ClientShoppingCart GetByNetId(Guid netId) {
         ClientShoppingCart toReturn =
             _connection.Query<ClientShoppingCart, ClientAgreement, Agreement, Organization, ClientShoppingCart>(
+                    // the multi-map declares FOUR entities, so the SQL must produce four Id-split
+                    // segments — without the Organization join Dapper throws "splitOn column 'Id'
+                    // was not found" on every offer read
                     "SELECT * " +
                     "FROM [ClientShoppingCart] " +
                     "LEFT JOIN [ClientAgreement] " +
                     "ON [ClientAgreement].ID = [ClientShoppingCart].ClientAgreementID " +
                     "LEFT JOIN [Agreement] " +
                     "ON [Agreement].[ID] = [ClientAgreement].[AgreementID] " +
-                    "LEFT JOIN [Organization] ON [Organization].ID = [Agreement].OrganizationID " +
+                    "LEFT JOIN [Organization] " +
+                    "ON [Organization].[ID] = [Agreement].[OrganizationID] " +
                     "WHERE [ClientShoppingCart].NetUID = @NetId",
                     (cart, clientAgreement, agreement, organization) => {
                         if (clientAgreement != null) {
@@ -78,13 +82,16 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
         if (toReturn == null) return null;
 
         {
+            // OUTER APPLY, not a derived-table join: the price functions inside reference
+            // [OrderItem].[ID], which is only in scope for an APPLY (a plain LEFT JOIN subquery
+            // failed to bind it and broke every offer read).
             string sqlExpression =
                 "SELECT * " +
                 "FROM [ClientShoppingCart] " +
                 "LEFT JOIN [OrderItem] " +
                 "ON [OrderItem].ClientShoppingCartID = [ClientShoppingCart].ID " +
                 "AND [OrderItem].Deleted = 0 " +
-                "LEFT JOIN (" +
+                "OUTER APPLY (" +
                 "SELECT " +
                 "[Product].ID " +
                 ", [Product].Created " +
@@ -164,9 +171,9 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
                 "), 0) AS [AvailableQtyPlVAT] " +
                 ",dbo.GetCalculatedProductPriceWithSharesAndVat([Product].NetUID, @ClientAgreementNetId, @Culture, @WithVat, [OrderItem].[ID]) AS [CurrentPrice] " +
                 ",dbo.GetCalculatedProductLocalPriceWithSharesAndVat([Product].NetUID, @ClientAgreementNetId, @Culture, @WithVat, [OrderItem].[ID]) AS [CurrentLocalPrice] " +
-                "FROM [Product]" +
-                ") AS [Product]" +
-                "ON [OrderItem].ProductID = [Product].ID " +
+                "FROM [Product] " +
+                "WHERE [Product].ID = [OrderItem].ProductID" +
+                ") AS [Product] " +
                 "LEFT JOIN [views].[MeasureUnitView] AS [MeasureUnit] " +
                 "ON [MeasureUnit].ID = [Product].MeasureUnitID " +
                 "AND [MeasureUnit].CultureCode = @Culture " +
@@ -230,7 +237,6 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
             "WHERE [Client].NetUID = @NetId " +
             "AND [ClientShoppingCart].Deleted = 0 " +
             "AND [ClientShoppingCart].IsOffer = 0 " +
-            "AND [ClientShoppingCart].WorkplaceID IS NULL " +
             "AND [ClientShoppingCart].IsVatCart = @WithVat " +
             "ORDER BY CASE WHEN [OrderItem].ID IS NOT NULL THEN 0 ELSE 1 END" +
             ")",
@@ -361,13 +367,27 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
         );
     }
 
-    public void SetProcessedByNetId(Guid netId) {
+    public void SetViewedByNetId(Guid netId) {
         _connection.Execute(
             "UPDATE [ClientShoppingCart] " +
-            "SET IsOfferProcessed = 1 " +
-            "WHERE [ClientShoppingCart].NetUID = @NetId",
+            "SET ViewedAt = GETUTCDATE() " +
+            "WHERE [ClientShoppingCart].NetUID = @NetId " +
+            "AND [ClientShoppingCart].IsOffer = 1 " +
+            "AND [ClientShoppingCart].ViewedAt IS NULL",
             new { NetId = netId }
         );
+    }
+
+    public bool TrySetProcessedByNetId(Guid netId) {
+        return _connection.Execute(
+            "UPDATE [ClientShoppingCart] " +
+            "SET IsOfferProcessed = 1, Updated = GETUTCDATE() " +
+            "WHERE [ClientShoppingCart].NetUID = @NetId " +
+            "AND [ClientShoppingCart].IsOffer = 1 " +
+            "AND [ClientShoppingCart].IsOfferProcessed = 0 " +
+            "AND [ClientShoppingCart].Deleted = 0",
+            new { NetId = netId }
+        ) == 1;
     }
 
     public List<ClientShoppingCart> GetAllValidClientShoppingCarts() {

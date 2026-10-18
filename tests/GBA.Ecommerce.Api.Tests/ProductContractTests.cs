@@ -35,6 +35,42 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
     }
 
     [Fact]
+    public async Task Product_seo_index_is_anonymous_paged_and_contains_only_public_url_fields() {
+        using HttpResponseMessage response = await _client.GetAsync(
+            _config.ApiPath("products/seo/index?limit=2&offset=0"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
+        ApiAssertions.AssertSuccessEnvelope(envelope);
+        Assert.Equal(JsonValueKind.Object, envelope.Body.ValueKind);
+
+        Assert.True(ApiAssertions.RequiredInt32(envelope.Body, "TotalCount") >= 0);
+        Assert.Equal(0, ApiAssertions.RequiredInt32(envelope.Body, "Offset"));
+        Assert.Equal(2, ApiAssertions.RequiredInt32(envelope.Body, "Limit"));
+
+        JsonElement items = envelope.Body.GetProperty("Items");
+        Assert.Equal(JsonValueKind.Array, items.ValueKind);
+        Assert.True(items.GetArrayLength() <= 2);
+
+        foreach (JsonElement item in items.EnumerateArray()) {
+            ApiAssertions.RequiredGuid(item, "NetUid");
+            Assert.False(string.IsNullOrWhiteSpace(
+                ApiAssertions.RequiredString(item, "VendorCode")));
+            bool hasUkSlug = item.TryGetProperty("SlugUk", out JsonElement slugUk)
+                && slugUk.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(slugUk.GetString());
+            bool hasRuSlug = item.TryGetProperty("SlugRu", out JsonElement slugRu)
+                && slugRu.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(slugRu.GetString());
+            Assert.True(hasUkSlug || hasRuSlug);
+            Assert.True(item.TryGetProperty("Updated", out _));
+            Assert.False(item.TryGetProperty("CurrentPrice", out _));
+            Assert.False(item.TryGetProperty("AvailableQtyUk", out _));
+        }
+    }
+
+    [Fact]
     public async Task Product_search_negative_offset_clamps_safely_when_supported() {
         string url = SearchUrl(_config.SearchQuery, 1, -10);
         using HttpResponseMessage response = await _client.GetAsync(url);
@@ -70,6 +106,40 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
         ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
         ApiAssertions.AssertSuccessEnvelope(envelope);
         AssertProductContract(envelope.Body, netUid);
+        Assert.Equal(
+            ApiAssertions.RequiredString(searchProduct, "CurrencyCode"),
+            ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
+
+        AssertOpaqueProtectedPrice(searchProduct);
+        Assert.Equal(
+            JsonValueKind.Number,
+            envelope.Body.GetProperty("CurrentPrice").ValueKind);
+    }
+
+    [Fact]
+    public async Task Anonymous_product_search_matches_configured_retail_agreement_currency() {
+        JsonElement[] products = await GetSearchProductsAsync("SEM18487", 1, 0);
+        JsonElement searchProduct = Assert.Single(products);
+        Guid netUid = ApiAssertions.RequiredGuid(searchProduct, "NetUid");
+
+        string searchCurrencyCode = ApiAssertions.RequiredString(searchProduct, "CurrencyCode");
+        Assert.False(string.IsNullOrWhiteSpace(searchCurrencyCode));
+
+        using HttpResponseMessage response = await _client.GetAsync(
+            _config.ApiPath($"products/get?netId={netUid}&withVat=0"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
+        ApiAssertions.AssertSuccessEnvelope(envelope);
+        Assert.Equal(
+            searchCurrencyCode,
+            ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
+
+        AssertOpaqueProtectedPrice(searchProduct);
+        Assert.Equal(
+            JsonValueKind.Number,
+            envelope.Body.GetProperty("CurrentPrice").ValueKind);
     }
 
     [Fact]
@@ -93,6 +163,14 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
         ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
         ApiAssertions.AssertSuccessEnvelope(envelope);
         AssertProductContract(envelope.Body, netUid);
+        Assert.Equal(
+            ApiAssertions.RequiredString(searchProduct, "CurrencyCode"),
+            ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
+
+        AssertOpaqueProtectedPrice(searchProduct);
+        Assert.Equal(
+            JsonValueKind.Number,
+            envelope.Body.GetProperty("CurrentPrice").ValueKind);
     }
 
     [Fact]
@@ -193,5 +271,19 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
     private static void AssertNumberProperty(JsonElement element, string propertyName) {
         Assert.True(element.TryGetProperty(propertyName, out JsonElement property), $"Missing '{propertyName}' property.");
         Assert.Equal(JsonValueKind.Number, property.ValueKind);
+    }
+
+    private static void AssertOpaqueProtectedPrice(JsonElement product) {
+        string protectedPrice = ApiAssertions.RequiredString(product, "P");
+        Assert.True(
+            protectedPrice.Length >= 32,
+            "Protected retail price must remain opaque.");
+        Assert.DoesNotContain(",", protectedPrice, StringComparison.Ordinal);
+        Assert.False(product.TryGetProperty("CurrentPrice", out _));
+        Assert.False(product.TryGetProperty("CurrentLocalPrice", out _));
+
+        long timestamp = product.GetProperty("T").GetInt64();
+        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        Assert.InRange(timestamp, now - 300, now + 300);
     }
 }

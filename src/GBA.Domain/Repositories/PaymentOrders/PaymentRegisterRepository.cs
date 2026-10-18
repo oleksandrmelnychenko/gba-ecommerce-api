@@ -81,10 +81,14 @@ public sealed class PaymentRegisterRepository : IPaymentRegisterRepository {
 
     public PaymentRegister GetIsSelected() {
         return _connection.Query<PaymentRegister>(
-            "SELECT * FROM PaymentRegister " +
-            "WHERE IsSelected = 1 " +
-            "AND Deleted = 0 "
-        ).FirstOrDefault();
+            "SELECT TOP (2) * FROM [PaymentRegister] " +
+            "WHERE [IsSelected] = 1 " +
+            "AND [Type] = @Type " +
+            "AND [IsForRetail] = 1 " +
+            "AND [Deleted] = 0 " +
+            "ORDER BY [ID]",
+            new { Type = PaymentRegisterType.Card }
+        ).SingleOrDefault();
     }
 
     public PaymentRegister GetById(long id) {

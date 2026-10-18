@@ -13,6 +13,8 @@ public interface IDeliveryRecipientRepository {
 
     DeliveryRecipient GetByNetId(Guid netId);
 
+    DeliveryRecipient GetByClientIdAndContact(long clientId, string fullName, string mobilePhone);
+
     List<DeliveryRecipient> GetAll();
 
     List<DeliveryRecipient> GetAllRecipientsByClientNetId(Guid clientNetId);

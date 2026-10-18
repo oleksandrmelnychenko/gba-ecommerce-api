@@ -23,12 +23,16 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
-COPY --from=build /app/publish ./
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /app/logs /app/Data /app/Logs /app/Images \
+    && chown -R $APP_UID:$APP_UID /app
+COPY --from=build --chown=$APP_UID:$APP_UID /app/publish ./
 
 # app binds Kestrel to 0.0.0.0:62506 (see Program.cs)
 EXPOSE 62506
 ENV ASPNETCORE_ENVIRONMENT=Production \
     DOTNET_CLI_TELEMETRY_OPTOUT=1
+
+USER $APP_UID
 
 ENTRYPOINT ["dotnet", "GBA.Ecommerce.dll"]

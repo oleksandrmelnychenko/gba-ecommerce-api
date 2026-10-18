@@ -13,28 +13,23 @@ public interface IGetSingleProductRepository {
         Guid? clientAgreementNetId,
         bool withVat,
         long? currencyId,
-        long? organizationId,
-        string catalogSource);
+        long? organizationId);
 
     Product GetByNetId(Guid netId, Guid? clientAgreementNetId = null);
 
-    Product GetByNetIdForRetail(Guid netId, long organizationId, bool withVat);
+    Product GetByNetIdForRetail(Guid netId, long storageId, long organizationId, bool withVat);
 
     Product GetByNetId(Guid netId, Guid nonVatAgreementNetId, Guid? vatAgreementNetId);
 
     Product GetBySlug(string slug, Guid? clientAgreementNetId = null);
 
-    Product GetBySlug(
-        string slug,
-        Guid nonVatAgreementNetId,
-        Guid? vatAgreementNetId,
-        string catalogSource);
+    Guid? GetNetIdBySlug(string slug);
+
+    Product GetBySlug(string slug, Guid nonVatAgreementNetId, Guid? vatAgreementNetId);
 
     Product GetByNetIdWithAvailabilityByCurrentCulture(Guid netId, Guid? clientAgreementNetId = null);
 
     Product GetByNetIdWithoutIncludes(Guid netId);
-
-    Product GetByNetIdWithoutIncludes(Guid netId, string catalogSource);
 
     List<Product> GetAll();
 

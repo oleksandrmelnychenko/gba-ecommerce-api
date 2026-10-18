@@ -153,6 +153,8 @@ public static class ApplicationSegments {
 
     public const string SaleOffers = "sales/offers";
 
+    public const string PublicOffers = "offers/public";
+
     public const string SaleReservations = "sales/reservations";
 
     public const string SalePrediction = "sales/prediction";

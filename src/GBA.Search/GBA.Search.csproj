@@ -14,7 +14,7 @@
 
   <ItemGroup>
     <!-- Polly for Circuit Breaker -->
-    <PackageReference Include="Polly" Version="8.6.6" />
+    <PackageReference Include="Polly" Version="8.7.0" />
 
     <!-- Dapper for sync queries -->
     <PackageReference Include="Dapper" Version="2.1.79" />
@@ -26,6 +26,12 @@
   <ItemGroup>
     <ProjectReference Include="..\GBA.Domain\GBA.Domain.csproj" />
     <ProjectReference Include="..\GBA.Services\GBA.Services.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>GBA.Ecommerce.Api.Tests</_Parameter1>
+    </AssemblyAttribute>
   </ItemGroup>
 
 </Project>

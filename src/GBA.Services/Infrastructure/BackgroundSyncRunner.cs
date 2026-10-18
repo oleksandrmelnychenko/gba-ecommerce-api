@@ -1,12 +1,10 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Transactions;
 using NLog;
 
 namespace GBA.Services.Infrastructure;
 
-// Best-effort work only. Business mutations that must survive process restarts belong in a durable outbox.
 public static class BackgroundSyncRunner {
     private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
     private static readonly TimeSpan _defaultTimeout = TimeSpan.FromSeconds(15);
@@ -15,19 +13,6 @@ public static class BackgroundSyncRunner {
         Func<CancellationToken, Task> action,
         string operationName,
         TimeSpan? timeout = null) {
-        if (Transaction.Current is { } transaction) {
-            transaction.TransactionCompleted += (_, completed) => {
-                if (completed.Transaction?.TransactionInformation.Status == TransactionStatus.Committed)
-                    Start(action, operationName, timeout);
-            };
-            return;
-        }
-        Start(action, operationName, timeout);
-    }
-
-    private static void Start(Func<CancellationToken, Task> action, string operationName, TimeSpan? timeout) {
-        // Fire-and-forget work must not inherit a completed/disposed ambient transaction.
-        using var suppressed = new TransactionScope(TransactionScopeOption.Suppress, TransactionScopeAsyncFlowOption.Enabled);
         _ = Task.Run(async () => {
             using CancellationTokenSource timeoutCts = new(timeout ?? _defaultTimeout);
 

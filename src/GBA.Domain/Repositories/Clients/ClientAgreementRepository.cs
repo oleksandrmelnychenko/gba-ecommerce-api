@@ -17,7 +17,6 @@ using GBA.Domain.Entities.Sales;
 using GBA.Domain.Entities.Sales.LifeCycleStatuses;
 using GBA.Domain.Entities.Sales.PaymentStatuses;
 using GBA.Domain.Entities.Transporters;
-using GBA.Domain.EntityHelpers;
 using GBA.Domain.Repositories.Clients.Contracts;
 using GBA.Domain.TranslationEntities;
 
@@ -186,45 +185,41 @@ public sealed class ClientAgreementRepository : IClientAgreementRepository {
     }
 
     public ClientAgreement GetSelectedByClientNetId(Guid clientNetId) {
-        return _connection.Query<ClientAgreement, Agreement, Organization, ClientAgreement>(
-            "SELECT TOP(1) ClientAgreement.* " +
-            ",Agreement.* " +
-            ",Organization.* " +
-            "FROM ClientAgreement " +
-            "LEFT JOIN Client " +
-            "ON Client.ID = ClientAgreement.ClientID " +
-            "LEFT JOIN Agreement " +
-            "ON Agreement.ID = ClientAgreement.AgreementID " +
-            "LEFT JOIN Organization " +
-            "ON Agreement.OrganizationID = Organization.ID " +
-            "WHERE Client.NetUID = @ClientNetId " +
-            "AND ClientAgreement.Deleted = 0 " +
-            "AND [Agreement].IsSelected = 1 ",
-            (clientAgreement, agreement, organization) => {
-                agreement.Organization = organization;
-
-                clientAgreement.Agreement = agreement;
-
-                return clientAgreement;
-            },
-            new { ClientNetId = clientNetId }
-        ).SingleOrDefault();
+        return GetByClientContextNetId(clientNetId, selectedOnly: true);
     }
 
     public ClientAgreement GetSelectedByClientNotSelectedNetId(Guid clientNetId) {
+        return GetByClientContextNetId(clientNetId, selectedOnly: false);
+    }
+
+    private ClientAgreement GetByClientContextNetId(Guid clientNetId, bool selectedOnly) {
+        string selectedAgreementFilter = selectedOnly
+            ? "AND [Agreement].IsSelected = 1 "
+            : string.Empty;
+
         return _connection.Query<ClientAgreement, Agreement, Organization, ClientAgreement>(
-            "SELECT TOP(1) ClientAgreement.* " +
-            ",Agreement.* " +
-            ",Organization.* " +
-            "FROM ClientAgreement " +
-            "LEFT JOIN Client " +
-            "ON Client.ID = ClientAgreement.ClientID " +
-            "LEFT JOIN Agreement " +
-            "ON Agreement.ID = ClientAgreement.AgreementID " +
-            "LEFT JOIN Organization " +
-            "ON Agreement.OrganizationID = Organization.ID " +
-            "WHERE Client.NetUID = @ClientNetId " +
-            "AND ClientAgreement.Deleted = 0 ",
+            "SELECT TOP(1) [ClientAgreement].* " +
+            ",[Agreement].* " +
+            ",[Organization].* " +
+            "FROM [Client] AS [ActorClient] " +
+            "LEFT JOIN [ClientSubClient] AS [ClientOwnerLink] " +
+            "ON [ClientOwnerLink].SubClientID = [ActorClient].ID " +
+            "AND [ClientOwnerLink].Deleted = 0 " +
+            "INNER JOIN [Client] AS [AgreementClient] " +
+            "ON [AgreementClient].ID = COALESCE([ClientOwnerLink].RootClientID, [ActorClient].ID) " +
+            "INNER JOIN [ClientAgreement] " +
+            "ON [ClientAgreement].ClientID = [AgreementClient].ID " +
+            "INNER JOIN [Agreement] " +
+            "ON [Agreement].ID = [ClientAgreement].AgreementID " +
+            "LEFT JOIN [Organization] " +
+            "ON [Organization].ID = [Agreement].OrganizationID " +
+            "WHERE [ActorClient].NetUID = @ClientNetId " +
+            "AND [ActorClient].Deleted = 0 " +
+            "AND [AgreementClient].Deleted = 0 " +
+            "AND [ClientAgreement].Deleted = 0 " +
+            "AND [Agreement].ForReSale = 0 " +
+            selectedAgreementFilter +
+            "ORDER BY [ClientAgreement].ID ",
             (clientAgreement, agreement, organization) => {
                 agreement.Organization = organization;
 
@@ -263,46 +258,6 @@ public sealed class ClientAgreementRepository : IClientAgreementRepository {
                 return clientAgreement;
             },
             new { WorkplaceNetId = workplaceNetId }
-        ).SingleOrDefault();
-    }
-
-    public ClientAgreement GetSelectedForPricing(Guid clientOrWorkplaceNetId) {
-        return _connection.Query<ClientAgreement, Agreement, Organization, DateTime?, ClientAgreement>(
-            "SELECT TOP (1) [ClientAgreement].*, [Agreement].*, [Organization].*, " +
-            "CASE WHEN [Client].NetUID = @ClientOrWorkplaceNetId " +
-            "THEN [Agreement].Updated ELSE [WorkplaceClientAgreement].Updated END AS [PricingSelectionUpdated] " +
-            "FROM [ClientAgreement] " +
-            "INNER JOIN [Client] " +
-            "ON [Client].ID = [ClientAgreement].ClientID " +
-            "AND [Client].Deleted = 0 " +
-            "INNER JOIN [Agreement] " +
-            "ON [Agreement].ID = [ClientAgreement].AgreementID " +
-            "AND [Agreement].Deleted = 0 " +
-            "AND [Agreement].IsActive = 1 " +
-            "INNER JOIN [Organization] " +
-            "ON [Organization].ID = [Agreement].OrganizationID " +
-            "AND [Organization].Deleted = 0 " +
-            "LEFT JOIN [WorkplaceClientAgreement] " +
-            "ON [WorkplaceClientAgreement].ClientAgreementID = [ClientAgreement].ID " +
-            "AND [WorkplaceClientAgreement].Deleted = 0 " +
-            "LEFT JOIN [Workplace] " +
-            "ON [Workplace].ID = [WorkplaceClientAgreement].WorkplaceID " +
-            "AND [Workplace].Deleted = 0 " +
-            "WHERE [ClientAgreement].Deleted = 0 " +
-            "AND (([Client].NetUID = @ClientOrWorkplaceNetId AND [Agreement].IsSelected = 1) " +
-            "OR ([Workplace].NetUID = @ClientOrWorkplaceNetId AND [WorkplaceClientAgreement].IsSelected = 1)) " +
-            "ORDER BY CASE WHEN [Client].NetUID = @ClientOrWorkplaceNetId THEN 0 ELSE 1 END, " +
-            "[Agreement].Updated DESC, [Agreement].ID, [ClientAgreement].ID",
-            (clientAgreement, agreement, organization, pricingSelectionUpdated) => {
-                agreement.Organization = organization;
-                clientAgreement.Agreement = agreement;
-                // This pricing-only query exposes the selected relationship revision
-                // without widening the shared repository contract.
-                clientAgreement.Updated = pricingSelectionUpdated.GetValueOrDefault();
-                return clientAgreement;
-            },
-            new { ClientOrWorkplaceNetId = clientOrWorkplaceNetId },
-            splitOn: "ID,ID,PricingSelectionUpdated"
         ).SingleOrDefault();
     }
 
@@ -1492,10 +1447,11 @@ public sealed class ClientAgreementRepository : IClientAgreementRepository {
     }
 
     public ClientAgreement GetByClientNetIdWithOrWithoutVat(Guid netId, long organizationId, bool withVat) {
-        return _connection.Query<ClientAgreement, Agreement, Organization, ClientAgreement>(
+        return _connection.Query<ClientAgreement, Agreement, Organization, Currency, ClientAgreement>(
             "SELECT [ClientAgreement].* " +
             ", [Agreement].* " +
             ", [Organization].* " +
+            ", [Currency].* " +
             "FROM [ClientAgreement] " +
             "LEFT JOIN [Agreement] " +
             "ON [Agreement].ID = [ClientAgreement].AgreementID " +
@@ -1506,11 +1462,20 @@ public sealed class ClientAgreementRepository : IClientAgreementRepository {
             "LEFT JOIN Currency " +
             "ON [Currency].ID = [Agreement].CurrencyID " +
             "WHERE [Client].NetUID = @NetId " +
+            "AND [Client].Deleted = 0 " +
+            "AND [ClientAgreement].Deleted = 0 " +
             "AND [Agreement].WithVATAccounting = @WithVat " +
-            "AND [Agreement].OrganizationID = @OrganizationId ",
-            (clientAgreement, agreement, organization) => {
+            "AND [Agreement].OrganizationID = @OrganizationId " +
+            "AND [Agreement].Deleted = 0 " +
+            "AND [Agreement].IsActive = 1 " +
+            "AND [Currency].Deleted = 0 " +
+            "ORDER BY [Agreement].IsSelected DESC, [ClientAgreement].ID ",
+            (clientAgreement, agreement, organization, currency) => {
                 if (clientAgreement != null) {
-                    if (agreement != null) agreement.Organization = organization;
+                    if (agreement != null) {
+                        agreement.Organization = organization;
+                        agreement.Currency = currency;
+                    }
 
                     clientAgreement.Agreement = agreement;
                 }
@@ -1523,112 +1488,6 @@ public sealed class ClientAgreementRepository : IClientAgreementRepository {
                 WithVat = withVat
             }
         ).FirstOrDefault();
-    }
-
-    public ClientAgreement GetActiveForPricing(
-        Guid clientOrWorkplaceNetId,
-        Guid selectedClientAgreementNetId,
-        long organizationId,
-        bool withVat,
-        string sourceWorld) {
-        if (!ProductSourceIdentitySql.TryNormalizeSourceWorld(sourceWorld, out string normalizedSourceWorld))
-            return null;
-
-        bool priceSourceIsAmg = normalizedSourceWorld == ProductSourceIdentitySql.Amg;
-        string sourceFilter = priceSourceIsAmg
-            ? "AND [Organization].PriceSourceIsAmg = 1 " +
-              "AND (ISNULL(DATALENGTH([Agreement].SourceAmgID), 0) > 0 " +
-              "OR [Agreement].SourceAmgCode IS NOT NULL) " +
-              "AND ISNULL(DATALENGTH([Agreement].SourceFenixID), 0) = 0 " +
-              "AND [Agreement].SourceFenixCode IS NULL "
-            : "AND [Organization].PriceSourceIsAmg = 0 " +
-              "AND (ISNULL(DATALENGTH([Agreement].SourceFenixID), 0) > 0 " +
-              "OR [Agreement].SourceFenixCode IS NOT NULL) " +
-              "AND ISNULL(DATALENGTH([Agreement].SourceAmgID), 0) = 0 " +
-              "AND [Agreement].SourceAmgCode IS NULL ";
-
-        return _connection.Query<ClientAgreement, Agreement, Organization, ClientAgreement>(
-            "SELECT TOP (1) [ClientAgreement].*, [Agreement].*, [Organization].* " +
-            "FROM [ClientAgreement] " +
-            "INNER JOIN [Client] " +
-            "ON [Client].ID = [ClientAgreement].ClientID " +
-            "AND [Client].Deleted = 0 " +
-            "INNER JOIN [Agreement] " +
-            "ON [Agreement].ID = [ClientAgreement].AgreementID " +
-            "AND [Agreement].Deleted = 0 " +
-            "AND [Agreement].IsActive = 1 " +
-            "INNER JOIN [Organization] " +
-            "ON [Organization].ID = [Agreement].OrganizationID " +
-            "AND [Organization].Deleted = 0 " +
-            "LEFT JOIN [WorkplaceClientAgreement] " +
-            "ON [WorkplaceClientAgreement].ClientAgreementID = [ClientAgreement].ID " +
-            "AND [WorkplaceClientAgreement].Deleted = 0 " +
-            "LEFT JOIN [Workplace] " +
-            "ON [Workplace].ID = [WorkplaceClientAgreement].WorkplaceID " +
-            "AND [Workplace].Deleted = 0 " +
-            "WHERE [ClientAgreement].Deleted = 0 " +
-            "AND ([Client].NetUID = @ClientOrWorkplaceNetId " +
-            "OR [Workplace].NetUID = @ClientOrWorkplaceNetId) " +
-            "AND [Agreement].OrganizationID = @OrganizationId " +
-            "AND [Agreement].WithVATAccounting = @WithVat " +
-            sourceFilter +
-            "ORDER BY CASE WHEN [ClientAgreement].NetUID = @SelectedClientAgreementNetId THEN 0 ELSE 1 END, " +
-            "CASE WHEN ([Client].NetUID = @ClientOrWorkplaceNetId AND [Agreement].IsSelected = 1) " +
-            "OR ([Workplace].NetUID = @ClientOrWorkplaceNetId AND [WorkplaceClientAgreement].IsSelected = 1) " +
-            "THEN 0 ELSE 1 END, " +
-            "[Agreement].Updated DESC, [Agreement].ID, [ClientAgreement].ID",
-            (clientAgreement, agreement, organization) => {
-                agreement.Organization = organization;
-                clientAgreement.Agreement = agreement;
-                return clientAgreement;
-            },
-            new {
-                ClientOrWorkplaceNetId = clientOrWorkplaceNetId,
-                SelectedClientAgreementNetId = selectedClientAgreementNetId,
-                OrganizationId = organizationId,
-                WithVat = withVat
-            }
-        ).SingleOrDefault();
-    }
-
-    public ClientAgreement GetActiveRetailFenixByOrganizationId(long organizationId, bool withVat) {
-        return _connection.Query<ClientAgreement, Agreement, Organization, ClientAgreement>(
-            "SELECT TOP (1) [ClientAgreement].*, [Agreement].*, [Organization].* " +
-            "FROM [ClientAgreement] " +
-            "INNER JOIN [Client] " +
-            "ON [Client].ID = [ClientAgreement].ClientID " +
-            "AND [Client].Deleted = 0 " +
-            "AND [Client].IsActive = 1 " +
-            "AND [Client].IsForRetail = 1 " +
-            "INNER JOIN [Agreement] " +
-            "ON [Agreement].ID = [ClientAgreement].AgreementID " +
-            "AND [Agreement].Deleted = 0 " +
-            "AND [Agreement].IsActive = 1 " +
-            "INNER JOIN [Organization] " +
-            "ON [Organization].ID = [Agreement].OrganizationID " +
-            "AND [Organization].Deleted = 0 " +
-            "AND [Organization].PriceSourceIsAmg = 0 " +
-            "INNER JOIN [Pricing] " +
-            "ON [Pricing].ID = [Agreement].PricingID " +
-            "AND [Pricing].Deleted = 0 " +
-            "INNER JOIN [Currency] " +
-            "ON [Currency].ID = [Agreement].CurrencyID " +
-            "AND [Currency].Deleted = 0 " +
-            "WHERE [ClientAgreement].Deleted = 0 " +
-            "AND [Agreement].OrganizationID = @OrganizationId " +
-            "AND [Agreement].WithVATAccounting = @WithVat " +
-            "AND (ISNULL(DATALENGTH([Agreement].SourceFenixID), 0) > 0 OR [Agreement].SourceFenixCode IS NOT NULL) " +
-            "AND ISNULL(DATALENGTH([Agreement].SourceAmgID), 0) = 0 " +
-            "AND [Agreement].SourceAmgCode IS NULL " +
-            "ORDER BY CASE WHEN [Agreement].IsSelected = 1 THEN 0 ELSE 1 END, " +
-            "[Agreement].Updated DESC, [Agreement].ID, [ClientAgreement].ID",
-            (clientAgreement, agreement, organization) => {
-                agreement.Organization = organization;
-                clientAgreement.Agreement = agreement;
-                return clientAgreement;
-            },
-            new { OrganizationId = organizationId, WithVat = withVat }
-        ).SingleOrDefault();
     }
 
     public ClientAgreement GetWithClientInfoByAgreementNetId(Guid netId) {

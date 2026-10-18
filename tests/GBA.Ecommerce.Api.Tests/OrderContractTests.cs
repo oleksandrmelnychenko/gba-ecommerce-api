@@ -14,23 +14,19 @@ public sealed class OrderContractTests(EcommerceApiFixture fixture) : IClassFixt
     private readonly ApiTestConfig _config = fixture.Config;
 
     [Fact]
-    public async Task Order_calculate_handles_multiple_items_and_overlord_quantities() {
+    public async Task Order_calculate_never_prices_an_order_from_the_request_body() {
+        // /orders/calculate is anonymous. It re-resolves every line from the database, so a body
+        // that names no real product cannot be priced at all - and the prices it carries must
+        // never reach the totals.
         var payload = new {
             OrderItems = new[] {
                 new {
                     Qty = 2,
                     OverLordQty = 3,
                     Product = new {
+                        NetUid = Guid.Empty,
                         CurrentPrice = 10.25m,
                         CurrentLocalPrice = 410.50m
-                    }
-                },
-                new {
-                    Qty = 1,
-                    OverLordQty = 1,
-                    Product = new {
-                        CurrentPrice = 2.50m,
-                        CurrentLocalPrice = 100.25m
                     }
                 }
             }
@@ -38,44 +34,24 @@ public sealed class OrderContractTests(EcommerceApiFixture fixture) : IClassFixt
 
         using HttpResponseMessage response = await _client.PostAsJsonAsync(_config.ApiPath("orders/calculate"), payload);
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
-        ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
-        ApiAssertions.AssertSuccessEnvelope(envelope);
-
-        Assert.Equal(23.00m, ApiAssertions.RequiredDecimal(envelope.Body, "TotalAmount"));
-        Assert.Equal(921.25m, ApiAssertions.RequiredDecimal(envelope.Body, "TotalAmountLocal"));
-        Assert.Equal(33.25m, ApiAssertions.RequiredDecimal(envelope.Body, "OverLordTotalAmount"));
-        Assert.Equal(1331.75m, ApiAssertions.RequiredDecimal(envelope.Body, "OverLordTotalAmountLocal"));
-
-        Assert.True(envelope.Body.TryGetProperty("OrderItems", out JsonElement items));
-        Assert.Equal(2, items.GetArrayLength());
-        Assert.Equal(20.50m, ApiAssertions.RequiredDecimal(items[0], "TotalAmount"));
-        Assert.Equal(30.75m, ApiAssertions.RequiredDecimal(items[0], "OverLordTotalAmount"));
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("20.50", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("921.25", body, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Order_calculate_accepts_empty_order_items_as_zero_totals() {
+    public async Task Order_calculate_rejects_an_empty_order() {
         using HttpResponseMessage response = await _client.PostAsJsonAsync(
             _config.ApiPath("orders/calculate"),
             new { OrderItems = Array.Empty<object>() });
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
-        ApiAssertions.AssertSuccessEnvelope(envelope);
-
-        Assert.Equal(0m, ApiAssertions.RequiredDecimal(envelope.Body, "TotalAmount"));
-        Assert.Equal(0m, ApiAssertions.RequiredDecimal(envelope.Body, "TotalAmountLocal"));
-        Assert.Equal(0m, ApiAssertions.RequiredDecimal(envelope.Body, "OverLordTotalAmount"));
-        Assert.Equal(0m, ApiAssertions.RequiredDecimal(envelope.Body, "OverLordTotalAmountLocal"));
-
-        Assert.True(envelope.Body.TryGetProperty("OrderItems", out JsonElement items));
-        Assert.Empty(items.EnumerateArray());
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]
-    public async Task Offer_calculate_endpoint_accepts_order_payload_shape() {
+    public async Task Offer_calculate_requires_bearer_token_for_order_payload() {
         using HttpResponseMessage response = await _client.PostAsJsonAsync(
             _config.ApiPath("orders/calculate/offer"),
             new {
@@ -91,19 +67,15 @@ public sealed class OrderContractTests(EcommerceApiFixture fixture) : IClassFixt
                 }
             });
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
-        ApiAssertions.AssertSuccessEnvelope(envelope);
-
-        Assert.True(envelope.Body.TryGetProperty("OrderItems", out JsonElement items));
-        Assert.Single(items.EnumerateArray());
-        Assert.True(envelope.Body.TryGetProperty("TotalAmount", out JsonElement totalAmount));
-        Assert.Equal(JsonValueKind.Number, totalAmount.ValueKind);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Contains(
+            "Bearer",
+            response.Headers.WwwAuthenticate.ToString(),
+            StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Offer_calculate_uses_changed_qty_and_rounds_totals_without_creating_sale() {
+    public async Task Offer_calculate_rejects_unauthenticated_pricing_requests() {
         using HttpResponseMessage response = await _client.PostAsJsonAsync(
             _config.ApiPath("orders/calculate/offer"),
             new {
@@ -119,18 +91,11 @@ public sealed class OrderContractTests(EcommerceApiFixture fixture) : IClassFixt
                 }
             });
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
-        ApiAssertions.AssertSuccessEnvelope(envelope);
-
-        Assert.Equal(22.50m, ApiAssertions.RequiredDecimal(envelope.Body, "TotalAmount"));
-        Assert.Equal(900.02m, ApiAssertions.RequiredDecimal(envelope.Body, "TotalAmountLocal"));
-
-        Assert.True(envelope.Body.TryGetProperty("OrderItems", out JsonElement items));
-        JsonElement item = Assert.Single(items.EnumerateArray());
-        Assert.Equal(22.50m, ApiAssertions.RequiredDecimal(item, "TotalAmount"));
-        Assert.Equal(900.02m, ApiAssertions.RequiredDecimal(item, "TotalAmountLocal"));
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Contains(
+            "Bearer",
+            response.Headers.WwwAuthenticate.ToString(),
+            StringComparison.Ordinal);
     }
 
     [Theory]

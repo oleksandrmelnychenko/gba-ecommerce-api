@@ -9,7 +9,6 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using GBA.Domain.EntityHelpers;
 using GBA.Search.Models;
 using GBA.Search.Services;
 using GBA.Search.Sync;
@@ -24,15 +23,11 @@ public interface IElasticsearchProductSearchService : IProductSearchService {
 }
 
 public sealed class ElasticsearchProductSearchService : IElasticsearchProductSearchService {
-    public const int MaxQueryLength = 256;
-    public const int MaxResultWindow = 10_000;
-    public const int MaxPageSize = 1_000;
-    private const int DefaultPageSize = 20;
+    private const int MaxSearchTerms = 16;
+    private const int MaxNgramSearchTermLength = 15;
 
     private readonly HttpClient _http;
     private readonly ElasticsearchSettings _settings;
-    private readonly ISearchServingGenerationResolver _servingGenerationResolver;
-    private readonly IElasticsearchIndexService _indexService;
     private readonly SearchTextProcessor _textProcessor;
     private readonly ILogger<ElasticsearchProductSearchService> _log;
 
@@ -41,6 +36,9 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
     };
 
     private static readonly Regex SpecialCharsRegex = new(@"[+\-=&|><!(){}\[\]^""~*?:\\/]", RegexOptions.Compiled);
+    private static readonly Regex DimensionSeparatorRegex = new(
+        @"\d\s*[xх×]\s*\d",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static readonly string[] SourceFields = {
         "id", "netUid", "vendorCode", "vendorCodeClean", "name", "nameUA",
@@ -49,51 +47,32 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         "mainOriginalNumberClean", "originalNumbers", "originalNumbersClean",
         "size", "sizeClean", "packingStandard", "orderStandard", "ucgfea",
         "volume", "top", "weight", "hasAnalogue", "hasComponent", "hasImage",
-        "image", "measureUnitId", "isForWeb", "isForSale", "isForZeroSale", "slugId",
-        "slugNetUid", "slugUrl", "slugLocale",
-        "productSourceFenix", "productSourceAmg", "isCanonicalFenix",
-        "isCanonicalAmg"
+        "image", "measureUnitId", "available", "availableQtyUk",
+        "availableQtyUkVat", "availableQtyPl", "availableQtyPlVat",
+        "availableQty", "isForWeb", "isForSale", "isForZeroSale", "slugId",
+        "slugNetUid", "slugUrl", "slugLocale", "retailPrice", "retailPriceVat",
+        "retailCurrencyCode", "updatedAt"
     };
 
     public ElasticsearchProductSearchService(
         HttpClient httpClient,
         IOptions<ElasticsearchSettings> settings,
-        ISearchServingGenerationResolver servingGenerationResolver,
-        IElasticsearchIndexService indexService,
         SearchTextProcessor textProcessor,
         ILogger<ElasticsearchProductSearchService> logger) {
-        _http = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        _settings = (settings ?? throw new ArgumentNullException(nameof(settings))).Value;
-        SearchSyncStorage.ValidateBaseIndexName(_settings.IndexName);
-        _servingGenerationResolver = servingGenerationResolver
-            ?? throw new ArgumentNullException(nameof(servingGenerationResolver));
-        _indexService = indexService ?? throw new ArgumentNullException(nameof(indexService));
-        _textProcessor = textProcessor ?? throw new ArgumentNullException(nameof(textProcessor));
-        _log = logger ?? throw new ArgumentNullException(nameof(logger));
-    }
-
-    public Task<ProductSearchResult> SearchAsync(
-        string query, string locale = "uk", int limit = 20, int offset = 0, CancellationToken ct = default) {
-
-        // A context-free product query cannot prove catalog ownership.
-        return Task.FromResult(ProductSearchResult.Empty);
+        _http = httpClient;
+        _settings = settings.Value;
+        _textProcessor = textProcessor;
+        _log = logger;
     }
 
     public async Task<ProductSearchResult> SearchAsync(
-        string query,
-        ProductSearchCatalogContext catalogContext,
-        string locale = "uk",
-        int limit = 20,
-        int offset = 0,
-        CancellationToken ct = default) {
+        string query, string locale = "uk", int limit = 20, int offset = 0, CancellationToken ct = default) {
 
-        if (!IsSafeQuery(query) || catalogContext?.IsValid != true)
+        if (string.IsNullOrWhiteSpace(query))
             return ProductSearchResult.Empty;
 
-        (limit, offset) = NormalizeWindow(limit, offset);
-
-        object esQuery = BuildSearchQuery(query, locale, limit, offset, catalogContext);
-        SearchResult result = await ExecuteSearchAsync(esQuery, ct, catalogContext);
+        object esQuery = BuildSearchQuery(query, locale, limit, offset);
+        SearchResult result = await ExecuteSearchAsync(esQuery, ct);
 
         return new ProductSearchResult {
             ProductIds = result.Ids,
@@ -103,27 +82,14 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         };
     }
 
-    public Task<ProductSearchResultWithDocs> SearchWithDocsAsync(
+    public async Task<ProductSearchResultWithDocs> SearchWithDocsAsync(
         string query, string locale = "uk", int limit = 20, int offset = 0, CancellationToken ct = default) {
 
-        return Task.FromResult(ProductSearchResultWithDocs.Empty);
-    }
-
-    public async Task<ProductSearchResultWithDocs> SearchWithDocsAsync(
-        string query,
-        ProductSearchCatalogContext catalogContext,
-        string locale = "uk",
-        int limit = 20,
-        int offset = 0,
-        CancellationToken ct = default) {
-
-        if (!IsSafeQuery(query) || catalogContext?.IsValid != true)
+        if (string.IsNullOrWhiteSpace(query))
             return ProductSearchResultWithDocs.Empty;
 
-        (limit, offset) = NormalizeWindow(limit, offset);
-
-        object esQuery = BuildSearchQuery(query, locale, limit, offset, catalogContext);
-        SearchResultWithDocs result = await ExecuteSearchWithDocsAsync(esQuery, catalogContext, ct);
+        object esQuery = BuildSearchQuery(query, locale, limit, offset);
+        SearchResultWithDocs result = await ExecuteSearchWithDocsAsync(esQuery, ct);
 
         return new ProductSearchResultWithDocs {
             Documents = result.Documents,
@@ -133,8 +99,14 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         };
     }
 
-    public Task<bool> IsHealthyAsync(CancellationToken ct = default) =>
-        _indexService.IsHealthyAsync(ct);
+    public async Task<bool> IsHealthyAsync(CancellationToken ct = default) {
+        try {
+            HttpResponseMessage response = await _http.GetAsync("_cluster/health", ct);
+            return response.IsSuccessStatusCode;
+        } catch {
+            return false;
+        }
+    }
 
     public async Task<ElasticsearchDebugResult> SearchDebugAsync(
         string query, string locale = "uk", int limit = 20, int offset = 0, CancellationToken ct = default) {
@@ -144,14 +116,14 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             Locale = locale
         };
 
-        if (!IsSafeQuery(query)) {
+        if (string.IsNullOrWhiteSpace(query)) {
             return debug;
         }
 
-        (limit, offset) = NormalizeWindow(limit, offset);
-
         string normalized = NumberNormalizer.NormalizeQuery(query);
-        string[] terms = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string[] terms = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Take(MaxSearchTerms)
+            .ToArray();
 
         debug.NormalizedQuery = normalized;
         debug.Terms = terms.ToList();
@@ -168,38 +140,23 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         return debug;
     }
 
-    private static bool IsSafeQuery(string? query) {
-        return !string.IsNullOrWhiteSpace(query) && query.Length <= MaxQueryLength;
-    }
-
-    private static int NormalizeLimit(int limit) {
-        return limit <= 0 ? DefaultPageSize : Math.Min(limit, MaxPageSize);
-    }
-
-    private static (int Limit, int Offset) NormalizeWindow(int limit, int offset) {
-        int boundedOffset = Math.Clamp(offset, 0, MaxResultWindow - 1);
-        int boundedLimit = Math.Min(NormalizeLimit(limit), MaxResultWindow - boundedOffset);
-        return (boundedLimit, boundedOffset);
-    }
-
-    private object BuildSearchQuery(
-        string query,
-        string locale,
-        int limit,
-        int offset,
-        ProductSearchCatalogContext? catalogContext = null) {
+    private object BuildSearchQuery(string query, string locale, int limit, int offset) {
         string normalized = NumberNormalizer.NormalizeQuery(query);
         string normalizedLower = normalized.ToLowerInvariant();
+        // Every term is repeated across the searchable fields and ranking filters.
+        // Keep the generated bool query comfortably below Elasticsearch's clause limit.
         string[] terms = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Select(t => EscapeElasticsearchQuery(t.ToLowerInvariant()))
+            .Take(MaxSearchTerms)
             .ToArray();
         // Keep original terms for size field (preserves "=" and other special chars)
         string[] originalTerms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries)
             .Select(t => t.ToLowerInvariant())
+            .Take(MaxSearchTerms)
             .ToArray();
 
         if (terms.Length == 0)
-            return BuildMatchAllQuery(limit, offset, catalogContext);
+            return BuildMatchAllQuery(limit, offset);
 
         // Build must clauses - each term must match somewhere (AND logic between terms)
         List<object> mustClauses = new List<object>();
@@ -211,12 +168,13 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         // Build scoring functions to match SQL V1 ranking:
         // SQL V1 ORDER BY:
         // 1. MainOriginalNumberExact DESC
-        // 2. HundredPercentMatch DESC (exact on SearchNameUA/VendorCode/MainOriginalNumber)
-        // 3. OriginalNumber_Match DESC
-        // 4. SearchVendorCode_Match DESC
-        // 5. (OriginalNumber OR SearchName OR SearchNameUA) DESC
-        // 6. (SearchDescription OR SearchDescriptionUA) DESC
-        // 7. SearchSize_Match DESC
+        // 2. Available DESC
+        // 3. HundredPercentMatch DESC (exact on SearchNameUA/VendorCode/MainOriginalNumber)
+        // 4. OriginalNumber_Match DESC
+        // 5. SearchVendorCode_Match DESC
+        // 6. (OriginalNumber OR SearchName OR SearchNameUA) DESC
+        // 7. (SearchDescription OR SearchDescriptionUA) DESC
+        // 8. SearchSize_Match DESC
         List<object> functions = new List<object>();
 
         // Analyze terms to determine scoring strategy
@@ -225,9 +183,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             c == 'і' || c == 'ї' || c == 'є' || c == 'ґ'));
 
         // Detect dimension-like queries (d=45, 15x5, M14x1.5)
-        bool isDimensionQuery = originalTerms.Any(t =>
-            t.Contains('=') || t.Contains('x') || t.Contains('X') ||
-            (t.Length <= 6 && t.Any(char.IsDigit) && !t.All(char.IsDigit)));
+        bool isDimensionQuery = originalTerms.Any(IsDimensionSearchTerm);
 
         // 1. Exact match on MainOriginalNumber
         // Lower weight for dimension queries - we don't want "d=45" to boost products with "D45" as their main number
@@ -237,7 +193,13 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             weight = mainOriginalNumberWeight
         });
 
-        // 2. Exact match on SearchNameUA (for Cyrillic queries)
+        // 2. Available (products in stock)
+        functions.Add(new {
+            filter = new { term = new { available = true } },
+            weight = 50000
+        });
+
+        // 3. Exact match on SearchNameUA (for Cyrillic queries)
         if (hasCyrillicTerms) {
             functions.Add(new {
                 filter = new { term = new Dictionary<string, object> { ["searchNameUA"] = normalizedLower.Replace(" ", "") } },
@@ -267,93 +229,95 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
                 (c >= 'а' && c <= 'я') || (c >= 'А' && c <= 'Я') ||
                 c == 'і' || c == 'ї' || c == 'є' || c == 'ґ' ||
                 c == 'І' || c == 'Ї' || c == 'Є' || c == 'Ґ');
-            bool hasDigits = term.Any(char.IsDigit);
-
             if (isCyrillic) {
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{primarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{primarySearchName}.ngram", termLower),
                     weight = 3000
                 });
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{secondarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{secondarySearchName}.ngram", termLower),
                     weight = 2500
                 });
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{primaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{primaryDesc}.ngram", termLower),
                     weight = 500
                 });
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{secondaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{secondaryDesc}.ngram", termLower),
                     weight = 400
                 });
             } else {
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { ["vendorCodeClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery("vendorCodeClean.ngram", termLower),
                     weight = 5000
                 });
                 functions.Add(new {
                     filter = new {
                         @bool = new {
                             should = new object[] {
-                                new { match = new Dictionary<string, object> { ["mainOriginalNumberClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
-                                new { match = new Dictionary<string, object> { ["originalNumbersClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } }
+                                BuildNgramMatchQuery("mainOriginalNumberClean.ngram", termLower),
+                                BuildNgramMatchQuery("originalNumbersClean.ngram", termLower)
                             }
                         }
                     },
                     weight = 3000
                 });
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{primarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{primarySearchName}.ngram", termLower),
                     weight = 1500
                 });
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{secondarySearchName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{secondarySearchName}.ngram", termLower),
                     weight = 1200
                 });
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{primaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{primaryDesc}.ngram", termLower),
                     weight = 300
                 });
                 functions.Add(new {
-                    filter = new { match = new Dictionary<string, object> { [$"{secondaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } },
+                    filter = BuildNgramMatchQuery($"{secondaryDesc}.ngram", termLower),
                     weight = 200
                 });
             }
 
             // 8. Size match (for all terms)
             // Higher weight for dimension-like terms (e.g., "d=45", "15x5", "M14x1.5")
-            bool isDimensionTerm = term.Contains('=') || term.Contains('x') ||
-                (hasDigits && term.Length <= 10 && !isCyrillic);
+            bool isDimensionTerm = IsDimensionSearchTerm(originalTerm);
             // Very high weight for size when it looks like a dimension query - must beat originalNumbers (3000)
             int sizeWeight = isDimensionTerm ? 8000 : 100;
 
-            // Search original size field using originalTerm (preserves "=", "x" etc.)
-            string originalTermLowerForSize = originalTerm.ToLowerInvariant();
-            functions.Add(new {
-                filter = new { wildcard = new Dictionary<string, object> { ["size"] = new { value = $"*{originalTermLowerForSize}*", case_insensitive = true } } },
-                weight = sizeWeight
-            });
-            // Also search sizeClean with cleaned term
-            string termCleanForSize = Regex.Replace(termLower, @"[^a-z0-9а-яіїєґ]", "");
-            if (!string.IsNullOrEmpty(termCleanForSize)) {
+            if (isDimensionTerm) {
+                // Size substring matching is intentionally limited to dimension-shaped terms.
+                // Leading wildcards across every ordinary name/vendor query force Elasticsearch
+                // to scan the size terms dictionary and make every new search substantially slower.
+                string originalTermLowerForSize = originalTerm.ToLowerInvariant();
                 functions.Add(new {
-                    filter = new { wildcard = new Dictionary<string, object> { ["sizeClean"] = new { value = $"*{termCleanForSize}*" } } },
+                    filter = new { wildcard = new Dictionary<string, object> { ["size"] = new { value = $"*{originalTermLowerForSize}*", case_insensitive = true } } },
                     weight = sizeWeight
                 });
+
+                string termCleanForSize = Regex.Replace(termLower, @"[^a-z0-9а-яіїєґ]", "");
+                if (!string.IsNullOrEmpty(termCleanForSize)) {
+                    functions.Add(new {
+                        filter = new { wildcard = new Dictionary<string, object> { ["sizeClean"] = new { value = $"*{termCleanForSize}*" } } },
+                        weight = sizeWeight
+                    });
+                }
             }
         }
 
-        Dictionary<string, object> request = new() {
-            ["from"] = offset,
-            ["size"] = limit,
-            ["track_total_hits"] = true,
-            ["_source"] = SourceFields,
-            ["query"] = new {
+        return new {
+            from = offset,
+            size = limit,
+            _source = SourceFields,
+            query = new {
                 function_score = new {
                     query = new {
                         @bool = new {
                             must = mustClauses,
-                            filter = BuildCatalogFilters(catalogContext)
+                            filter = new[] {
+                                new { term = new { isForWeb = true } }
+                            }
                         }
                     },
                     functions = functions,
@@ -361,50 +325,49 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
                     boost_mode = "replace"
                 }
             },
-            ["sort"] = new object[] {
+            sort = new object[] {
                 "_score",
                 new Dictionary<string, object> { ["nameUA.keyword"] = new { order = "asc" } },
                 new { id = new { order = "asc" } }
             }
         };
-        AddCanonicalSourceCollapse(request, catalogContext);
-        return request;
     }
 
-    private static object BuildTermMatchQuery(string term, string locale, string? originalTerm = null) {
+    private static object BuildTermMatchQuery(string term, string locale, string originalTerm = null) {
         // Each term can match in ANY of these fields (OR logic within term)
-        // Using wildcard for PATINDEX-like behavior (substring anywhere in field)
+        // N-gram fields provide PATINDEX-like substring matching without broad wildcards.
         List<object> shouldClauses = new List<object>();
 
         // Lowercase for case-insensitive matching
         string termLower = term.ToLowerInvariant();
         string originalTermLower = (originalTerm ?? term).ToLowerInvariant();
 
-        shouldClauses.Add(new { match = new Dictionary<string, object> { ["vendorCodeClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
+        shouldClauses.Add(BuildNgramMatchQuery("vendorCodeClean.ngram", termLower));
 
-        shouldClauses.Add(new { match = new Dictionary<string, object> { ["mainOriginalNumberClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
-        shouldClauses.Add(new { match = new Dictionary<string, object> { ["originalNumbersClean.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
+        shouldClauses.Add(BuildNgramMatchQuery("mainOriginalNumberClean.ngram", termLower));
+        shouldClauses.Add(BuildNgramMatchQuery("originalNumbersClean.ngram", termLower));
 
         (string primaryName, string secondaryName) = locale == "uk"
             ? ("searchNameUA", "searchName")
             : ("searchName", "searchNameUA");
-        shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{primaryName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
-        shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{secondaryName}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
+        shouldClauses.Add(BuildNgramMatchQuery($"{primaryName}.ngram", termLower));
+        shouldClauses.Add(BuildNgramMatchQuery($"{secondaryName}.ngram", termLower));
 
         (string primaryDesc, string secondaryDesc) = locale == "uk"
             ? ("searchDescriptionUA", "searchDescription")
             : ("searchDescription", "searchDescriptionUA");
-        shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{primaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
-        shouldClauses.Add(new { match = new Dictionary<string, object> { [$"{secondaryDesc}.ngram"] = new { query = termLower, minimum_should_match = "80%" } } });
+        shouldClauses.Add(BuildNgramMatchQuery($"{primaryDesc}.ngram", termLower));
+        shouldClauses.Add(BuildNgramMatchQuery($"{secondaryDesc}.ngram", termLower));
 
-        // Size - search both original (with special chars like "=") and clean version
-        // For dimension queries like "d=45", the original size field "D=45 h=104" is more relevant
-        // Use originalTermLower to preserve "=" and other special chars in size search
-        shouldClauses.Add(new { wildcard = new Dictionary<string, object> { ["size"] = new { value = $"*{originalTermLower}*", case_insensitive = true } } });
-        // Also search sizeClean for normalized matches (without special chars)
-        string termClean = Regex.Replace(termLower, @"[^a-z0-9а-яіїєґ]", "");
-        if (!string.IsNullOrEmpty(termClean)) {
-            shouldClauses.Add(new { wildcard = new Dictionary<string, object> { ["sizeClean"] = new { value = $"*{termClean}*" } } });
+        if (IsDimensionSearchTerm(originalTermLower)) {
+            // Preserve substring semantics for explicit dimensions without penalizing
+            // ordinary product-name, OEM, and vendor-code searches.
+            shouldClauses.Add(new { wildcard = new Dictionary<string, object> { ["size"] = new { value = $"*{originalTermLower}*", case_insensitive = true } } });
+
+            string termClean = Regex.Replace(termLower, @"[^a-z0-9а-яіїєґ]", "");
+            if (!string.IsNullOrEmpty(termClean)) {
+                shouldClauses.Add(new { wildcard = new Dictionary<string, object> { ["sizeClean"] = new { value = $"*{termClean}*" } } });
+            }
         }
 
         return new {
@@ -415,78 +378,59 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         };
     }
 
-    private static object BuildMatchAllQuery(
-        int limit,
-        int offset,
-        ProductSearchCatalogContext? catalogContext) {
-        Dictionary<string, object> request = new() {
-            ["from"] = offset,
-            ["size"] = limit,
-            ["track_total_hits"] = true,
-            ["_source"] = SourceFields,
-            ["query"] = new {
+    private static object BuildNgramMatchQuery(string field, string term) {
+        // The field's index analyzer emits every 3..15 character n-gram. Reusing it as
+        // the search analyzer multiplies each user term into many Lucene bool clauses,
+        // once for every searched field and scoring function. A keyword-style search
+        // analyzer keeps this to one clause and works with existing indices. Since the
+        // index stores n-grams only up to 15 characters, use a matching bounded token.
+        string searchTerm = term.Length <= MaxNgramSearchTermLength
+            ? term
+            : term[..MaxNgramSearchTermLength];
+
+        return new {
+            match = new Dictionary<string, object> {
+                [field] = new {
+                    query = searchTerm,
+                    analyzer = "lowercase_analyzer"
+                }
+            }
+        };
+    }
+
+    private static bool IsDimensionSearchTerm(string term) {
+        if (string.IsNullOrWhiteSpace(term) || !term.Any(char.IsDigit)) {
+            return false;
+        }
+
+        return term.Contains('=') || DimensionSeparatorRegex.IsMatch(term);
+    }
+
+    private static object BuildMatchAllQuery(int limit, int offset) {
+        return new {
+            from = offset,
+            size = limit,
+            _source = SourceFields,
+            query = new {
                 @bool = new {
-                    filter = BuildCatalogFilters(catalogContext)
+                    filter = new[] {
+                        new { term = new { isForWeb = true } }
+                    }
                 }
             },
-            ["sort"] = new object[] {
-                new Dictionary<string, object> { ["nameUA.keyword"] = new { order = "asc" } },
-                new { id = new { order = "asc" } }
+            sort = new object[] {
+                new { available = new { order = "desc" } },
+                new { availableQtyUk = new { order = "desc" } }
             }
         };
-        AddCanonicalSourceCollapse(request, catalogContext);
-        return request;
     }
 
-    private static void AddCanonicalSourceCollapse(
-        IDictionary<string, object> request,
-        ProductSearchCatalogContext? catalogContext) {
-        if (catalogContext == null) return;
-
-        request["collapse"] = new {
-            field = catalogContext.Source == ProductSourceIdentitySql.Amg
-                ? "productSourceAmg"
-                : "productSourceFenix"
-        };
-    }
-
-    private static object[] BuildCatalogFilters(ProductSearchCatalogContext? catalogContext) {
-        List<object> filters = [new { term = new { isForWeb = true } }];
-        if (catalogContext == null) return filters.ToArray();
-
-        string sourceSystem = catalogContext.Source;
-        string productSourceField = sourceSystem == ProductSourceIdentitySql.Amg
-            ? "productSourceAmg"
-            : "productSourceFenix";
-        string canonicalField = sourceSystem == ProductSourceIdentitySql.Amg
-            ? "isCanonicalAmg"
-            : "isCanonicalFenix";
-        filters.Add(new {
-            prefix = new Dictionary<string, object> {
-                [productSourceField] = $"{sourceSystem}:"
-            }
-        });
-        filters.Add(new {
-            term = new Dictionary<string, object> {
-                [canonicalField] = true
-            }
-        });
-
-        return filters.ToArray();
-    }
-
-    private async Task<SearchResult> ExecuteSearchAsync(
-        object query,
-        CancellationToken ct,
-        ProductSearchCatalogContext? catalogContext = null) {
+    private async Task<SearchResult> ExecuteSearchAsync(object query, CancellationToken ct) {
         byte[] json = JsonSerializer.SerializeToUtf8Bytes(query, JsonOptions);
         ByteArrayContent content = new ByteArrayContent(json);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
-        string? activeIndex = await ResolveActiveIndexAsync(catalogContext, ct);
-        if (activeIndex == null) return new SearchResult([], 0, 0);
-
-        HttpResponseMessage response = await _http.PostAsync($"{activeIndex}/_search", content, ct);
+        HttpResponseMessage response = await _http.PostAsync($"{_settings.IndexName}/_search", content, ct);
 
         if (!response.IsSuccessStatusCode) {
             string error = await response.Content.ReadAsStringAsync(ct);
@@ -499,30 +443,13 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         JsonElement root = doc.RootElement;
 
         int took = root.GetProperty("took").GetInt32();
-        JsonElement hitsRoot = root.GetProperty("hits");
-        if (!TryReadExactTotal(hitsRoot, out int total)) {
-            _log.LogError("Elasticsearch returned a non-exact or invalid total; failing search closed");
-            return new SearchResult([], 0, took);
-        }
-        JsonElement hits = hitsRoot.GetProperty("hits");
+        int total = root.GetProperty("hits").GetProperty("total").GetProperty("value").GetInt32();
+        JsonElement hits = root.GetProperty("hits").GetProperty("hits");
 
         List<long> ids = new List<long>();
         foreach (JsonElement hit in hits.EnumerateArray()) {
-            if (!hit.TryGetProperty("_source", out JsonElement source)) {
-                if (catalogContext != null) return new SearchResult([], 0, took);
-                continue;
-            }
-
-            if (catalogContext != null) {
-                ProductSearchDocument document = ParseDocument(source);
-                if (!ApplyCatalogContext(document, catalogContext)) {
-                    _log.LogWarning(
-                        "Elasticsearch returned product {ProductId} outside requested catalog context; failing search closed",
-                        document.Id);
-                    return new SearchResult([], 0, took);
-                }
-                ids.Add(document.Id);
-            } else if (source.TryGetProperty("id", out JsonElement idProp)) {
+            if (hit.TryGetProperty("_source", out JsonElement source) &&
+                source.TryGetProperty("id", out JsonElement idProp)) {
                 ids.Add(idProp.GetInt64());
             }
         }
@@ -530,18 +457,12 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         return new SearchResult(ids, total, took);
     }
 
-    private async Task<SearchResultWithDocs> ExecuteSearchWithDocsAsync(
-        object query,
-        ProductSearchCatalogContext catalogContext,
-        CancellationToken ct) {
+    private async Task<SearchResultWithDocs> ExecuteSearchWithDocsAsync(object query, CancellationToken ct) {
         byte[] json = JsonSerializer.SerializeToUtf8Bytes(query, JsonOptions);
         ByteArrayContent content = new ByteArrayContent(json);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
-        string? activeIndex = await ResolveActiveIndexAsync(catalogContext, ct);
-        if (activeIndex == null) return new SearchResultWithDocs([], 0, 0);
-
-        HttpResponseMessage response = await _http.PostAsync($"{activeIndex}/_search", content, ct);
+        HttpResponseMessage response = await _http.PostAsync($"{_settings.IndexName}/_search", content, ct);
 
         if (!response.IsSuccessStatusCode) {
             string error = await response.Content.ReadAsStringAsync(ct);
@@ -554,39 +475,18 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         JsonElement root = doc.RootElement;
 
         int took = root.GetProperty("took").GetInt32();
-        JsonElement hitsRoot = root.GetProperty("hits");
-        if (!TryReadExactTotal(hitsRoot, out int total)) {
-            _log.LogError("Elasticsearch returned a non-exact or invalid total; failing search closed");
-            return new SearchResultWithDocs([], 0, took);
-        }
-        JsonElement hits = hitsRoot.GetProperty("hits");
+        int total = root.GetProperty("hits").GetProperty("total").GetProperty("value").GetInt32();
+        JsonElement hits = root.GetProperty("hits").GetProperty("hits");
 
         List<ProductSearchDocument> documents = new List<ProductSearchDocument>();
         foreach (JsonElement hit in hits.EnumerateArray()) {
-            if (!hit.TryGetProperty("_source", out JsonElement source)) {
-                return new SearchResultWithDocs([], 0, took);
+            if (hit.TryGetProperty("_source", out JsonElement source)) {
+                ProductSearchDocument document = ParseDocument(source);
+                documents.Add(document);
             }
-
-            ProductSearchDocument document = ParseDocument(source);
-            if (!ApplyCatalogContext(document, catalogContext)) {
-                _log.LogWarning(
-                    "Elasticsearch returned product {ProductId} outside requested catalog context; failing search closed",
-                    document.Id);
-                return new SearchResultWithDocs([], 0, took);
-            }
-            documents.Add(document);
         }
 
         return new SearchResultWithDocs(documents, total, took);
-    }
-
-    private async Task<string?> ResolveActiveIndexAsync(
-        ProductSearchCatalogContext? catalogContext,
-        CancellationToken ct) {
-        SearchActiveGeneration generation =
-            await _servingGenerationResolver.GetRequiredGenerationAsync(ct);
-
-        return generation.IndexName;
     }
 
     private static ProductSearchDocument ParseDocument(JsonElement source) {
@@ -635,165 +535,11 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             SlugLocale = source.TryGetProperty("slugLocale", out JsonElement slugLocale) ? slugLocale.GetString() ?? "" : "",
             RetailPrice = source.TryGetProperty("retailPrice", out JsonElement rp) ? rp.GetDecimal() : 0,
             RetailPriceVat = source.TryGetProperty("retailPriceVat", out JsonElement rpv) ? rpv.GetDecimal() : 0,
-            RetailCurrencyCode = source.TryGetProperty("retailCurrencyCode", out JsonElement rcc) ? rcc.GetString() ?? "UAH" : "UAH",
-            RetailCurrencyCodeVat = source.TryGetProperty("retailCurrencyCodeVat", out JsonElement rccVat) ? rccVat.GetString() ?? "UAH" : "UAH",
-            IndexedProductPricingRevision = source.TryGetProperty("indexedProductPricingRevision", out JsonElement indexedProductPricingRevision)
-                ? indexedProductPricingRevision.GetString() ?? string.Empty
-                : string.Empty,
-            IndexedPricingHierarchyRevision = source.TryGetProperty("indexedPricingHierarchyRevision", out JsonElement indexedPricingHierarchyRevision)
-                ? indexedPricingHierarchyRevision.GetString() ?? string.Empty
-                : string.Empty,
-            IndexedDiscountRevision = source.TryGetProperty("indexedDiscountRevision", out JsonElement indexedDiscountRevision)
-                ? indexedDiscountRevision.GetString() ?? string.Empty
-                : string.Empty,
-            IndexedExchangeRateRevision = source.TryGetProperty("indexedExchangeRateRevision", out JsonElement indexedExchangeRateRevision)
-                ? indexedExchangeRateRevision.GetString() ?? string.Empty
-                : string.Empty,
-            CatalogOrganizationIdNonVat = source.TryGetProperty("catalogOrganizationIdNonVat", out JsonElement catalogOrganizationIdNonVat)
-                ? catalogOrganizationIdNonVat.GetInt64()
-                : 0,
-            CatalogOrganizationIdVat = source.TryGetProperty("catalogOrganizationIdVat", out JsonElement catalogOrganizationIdVat)
-                ? catalogOrganizationIdVat.GetInt64()
-                : 0,
-            CatalogAgreementSourceNonVat = source.TryGetProperty("catalogAgreementSourceNonVat", out JsonElement catalogAgreementSourceNonVat)
-                ? catalogAgreementSourceNonVat.GetString() ?? ""
-                : "",
-            CatalogAgreementSourceVat = source.TryGetProperty("catalogAgreementSourceVat", out JsonElement catalogAgreementSourceVat)
-                ? catalogAgreementSourceVat.GetString() ?? ""
-                : "",
-            ProductSourceFenix = source.TryGetProperty("productSourceFenix", out JsonElement productSourceFenix)
-                ? productSourceFenix.GetString() ?? ""
-                : "",
-            ProductSourceAmg = source.TryGetProperty("productSourceAmg", out JsonElement productSourceAmg)
-                ? productSourceAmg.GetString() ?? ""
-                : "",
-            IsCanonicalFenix = source.TryGetProperty("isCanonicalFenix", out JsonElement isCanonicalFenix)
-                && isCanonicalFenix.GetBoolean(),
-            IsCanonicalAmg = source.TryGetProperty("isCanonicalAmg", out JsonElement isCanonicalAmg)
-                && isCanonicalAmg.GetBoolean(),
-            CatalogScopes = ParseCatalogScopes(source),
-            CatalogSourceSystemNonVat = source.TryGetProperty("catalogSourceSystemNonVat", out JsonElement catalogSourceSystemNonVat)
-                ? catalogSourceSystemNonVat.GetString() ?? ""
-                : "",
-            CatalogSourceSystemVat = source.TryGetProperty("catalogSourceSystemVat", out JsonElement catalogSourceSystemVat)
-                ? catalogSourceSystemVat.GetString() ?? ""
-                : "",
-            CatalogAgreementNetUidNonVat = source.TryGetProperty("catalogAgreementNetUidNonVat", out JsonElement catalogAgreementNetUidNonVat)
-                ? catalogAgreementNetUidNonVat.GetString() ?? ""
-                : "",
-            CatalogAgreementNetUidVat = source.TryGetProperty("catalogAgreementNetUidVat", out JsonElement catalogAgreementNetUidVat)
-                ? catalogAgreementNetUidVat.GetString() ?? ""
-                : "",
-            CatalogPricingIdNonVat = source.TryGetProperty("catalogPricingIdNonVat", out JsonElement catalogPricingIdNonVat)
-                ? catalogPricingIdNonVat.GetInt64()
-                : 0,
-            CatalogPricingIdVat = source.TryGetProperty("catalogPricingIdVat", out JsonElement catalogPricingIdVat)
-                ? catalogPricingIdVat.GetInt64()
-                : 0,
-            CatalogCurrencyIdNonVat = source.TryGetProperty("catalogCurrencyIdNonVat", out JsonElement catalogCurrencyIdNonVat)
-                ? catalogCurrencyIdNonVat.GetInt64()
-                : 0,
-            CatalogCurrencyIdVat = source.TryGetProperty("catalogCurrencyIdVat", out JsonElement catalogCurrencyIdVat)
-                ? catalogCurrencyIdVat.GetInt64()
-                : 0,
-            HasNonVatCatalogAvailability = source.TryGetProperty("hasNonVatCatalogAvailability", out JsonElement hasNonVatCatalogAvailability)
-                                               && hasNonVatCatalogAvailability.GetBoolean(),
-            HasVatCatalogAvailability = source.TryGetProperty("hasVatCatalogAvailability", out JsonElement hasVatCatalogAvailability)
-                                            && hasVatCatalogAvailability.GetBoolean(),
-            HasNonVatCatalogSource = source.TryGetProperty("hasNonVatCatalogSource", out JsonElement hasNonVatCatalogSource)
-                                           && hasNonVatCatalogSource.GetBoolean(),
-            HasVatCatalogSource = source.TryGetProperty("hasVatCatalogSource", out JsonElement hasVatCatalogSource)
-                                        && hasVatCatalogSource.GetBoolean(),
+            RetailCurrencyCode = source.TryGetProperty("retailCurrencyCode", out JsonElement rcc) ? rcc.GetString() ?? "EUR" : "EUR",
             UpdatedAt = source.TryGetProperty("updatedAt", out JsonElement updatedAt) && updatedAt.TryGetDateTime(out DateTime dt)
                 ? new DateTimeOffset(dt).ToUnixTimeSeconds()
                 : 0
         };
-    }
-
-    private static bool ApplyCatalogContext(
-        ProductSearchDocument document,
-        ProductSearchCatalogContext catalogContext) {
-        if (document.Id <= 0) return false;
-
-        string requestedSourceSystem = catalogContext.Source;
-        string productSource = requestedSourceSystem == "amg"
-            ? document.ProductSourceAmg
-            : document.ProductSourceFenix;
-        bool isCanonical = requestedSourceSystem == "amg"
-            ? document.IsCanonicalAmg
-            : document.IsCanonicalFenix;
-        if (!isCanonical) return false;
-        if (!productSource.StartsWith(
-                requestedSourceSystem + ":",
-                StringComparison.Ordinal))
-            return false;
-
-        // Dynamic commercial data is never trusted from Elasticsearch. The controller hydrates
-        // the requested page from SQL, including a legitimate zero-stock result.
-        document.Available = false;
-        document.AvailableQty = 0;
-        document.AvailableQtyUk = 0;
-        document.AvailableQtyUkVat = 0;
-        document.AvailableQtyPl = 0;
-        document.AvailableQtyPlVat = 0;
-        document.RetailPrice = 0;
-        document.RetailPriceVat = 0;
-        return true;
-    }
-
-    private static List<ProductSearchCatalogScope> ParseCatalogScopes(JsonElement source) {
-        if (!source.TryGetProperty("catalogScopes", out JsonElement scopes)
-            || scopes.ValueKind != JsonValueKind.Array
-            || scopes.GetArrayLength() > 1024) {
-            return [];
-        }
-
-        List<ProductSearchCatalogScope> result = new(scopes.GetArrayLength());
-        foreach (JsonElement scope in scopes.EnumerateArray()) {
-            if (scope.ValueKind != JsonValueKind.Object
-                || !scope.TryGetProperty("organizationId", out JsonElement organizationId)
-                || !organizationId.TryGetInt64(out long parsedOrganizationId)
-                || !scope.TryGetProperty("sourceSystem", out JsonElement sourceSystem)
-                || sourceSystem.ValueKind != JsonValueKind.String
-                || !scope.TryGetProperty("withVat", out JsonElement withVat)
-                || withVat.ValueKind is not (JsonValueKind.True or JsonValueKind.False)
-                || !scope.TryGetProperty("availableQtyUk", out JsonElement availableQtyUk)
-                || !availableQtyUk.TryGetDouble(out double parsedAvailableQtyUk)
-                || !scope.TryGetProperty("availableQtyPl", out JsonElement availableQtyPl)
-                || !availableQtyPl.TryGetDouble(out double parsedAvailableQtyPl)
-                || !scope.TryGetProperty("availableQty", out JsonElement availableQty)
-                || !availableQty.TryGetDouble(out double parsedAvailableQty)) {
-                return [];
-            }
-
-            result.Add(new ProductSearchCatalogScope {
-                OrganizationId = parsedOrganizationId,
-                SourceSystem = sourceSystem.GetString() ?? string.Empty,
-                WithVat = withVat.GetBoolean(),
-                AvailableQtyUk = parsedAvailableQtyUk,
-                AvailableQtyPl = parsedAvailableQtyPl,
-                AvailableQty = parsedAvailableQty
-            });
-        }
-
-        return result;
-    }
-
-    private static bool TryReadExactTotal(JsonElement hitsRoot, out int total) {
-        total = 0;
-        if (!hitsRoot.TryGetProperty("total", out JsonElement totalElement)
-            || totalElement.ValueKind != JsonValueKind.Object
-            || !totalElement.TryGetProperty("relation", out JsonElement relation)
-            || relation.ValueKind != JsonValueKind.String
-            || !string.Equals(relation.GetString(), "eq", StringComparison.Ordinal)
-            || !totalElement.TryGetProperty("value", out JsonElement value)
-            || !value.TryGetInt32(out total)
-            || total < 0) {
-            total = 0;
-            return false;
-        }
-
-        return true;
     }
 
     private static List<string> ParseStringArray(JsonElement source, string propertyName) {

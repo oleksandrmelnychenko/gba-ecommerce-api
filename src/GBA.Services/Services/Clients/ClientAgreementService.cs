@@ -12,7 +12,7 @@ using GBA.Domain.Repositories.Organizations.Contracts;
 using GBA.Domain.Repositories.Pricings.Contracts;
 using GBA.Domain.Repositories.Storages.Contracts;
 using GBA.Services.Services.Clients.Contracts;
-using GBA.Services.Services.Products;
+using Microsoft.Extensions.Logging;
 
 namespace GBA.Services.Services.Clients;
 
@@ -23,8 +23,8 @@ public sealed class ClientAgreementService : IClientAgreementService {
     private readonly ICurrencyRepositoriesFactory _currencyRepositoriesFactory;
     private readonly IOrganizationRepositoriesFactory _organizationRepositoriesFactory;
     private readonly IPricingRepositoriesFactory _pricingRepositoriesFactory;
-    private readonly IPriceCacheService _priceCacheService;
     private readonly IStorageRepositoryFactory _storageRepositoryFactory;
+    private readonly ILogger<ClientAgreementService> _logger;
 
     public ClientAgreementService(
         IDbConnectionFactory connectionFactory,
@@ -34,7 +34,7 @@ public sealed class ClientAgreementService : IClientAgreementService {
         IPricingRepositoriesFactory pricingRepositoriesFactory,
         IAgreementRepositoriesFactory agreementRepositoriesFactory,
         IStorageRepositoryFactory storageRepositoryFactory,
-        IPriceCacheService priceCacheService) {
+        ILogger<ClientAgreementService> logger) {
         _connectionFactory = connectionFactory;
 
         _clientRepositoriesFactory = clientRepositoriesFactory;
@@ -47,7 +47,13 @@ public sealed class ClientAgreementService : IClientAgreementService {
 
         _agreementRepositoriesFactory = agreementRepositoriesFactory;
         _storageRepositoryFactory = storageRepositoryFactory;
-        _priceCacheService = priceCacheService;
+        _logger = logger;
+    }
+
+    public Task EnsureDefaultAgreementTemplateAvailable() {
+        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+        ResolveDefaultAgreementTemplate(connection);
+        return Task.CompletedTask;
     }
 
     public Task AddDefaultAgreementForClient(Client client, bool isLocalPayment) {
@@ -55,14 +61,7 @@ public sealed class ClientAgreementService : IClientAgreementService {
             IAgreementRepository agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
             //Agreement defaultAgreement = agreementRepository.GetDefaultByCulture();
 
-            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
-
-            ClientAgreement retailClientAgreement =
-                _clientRepositoriesFactory.NewClientAgreementRepository(connection)
-                    .GetByClientNetIdWithOrWithoutVat(
-                        _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
-                        storage.OrganizationId.Value,
-                        storage.ForVatProducts);
+            (Storage storage, ClientAgreement retailClientAgreement) = ResolveDefaultAgreementTemplate(connection);
 
             Agreement defaultAgreement = retailClientAgreement.Agreement;
             defaultAgreement.Id = 0;
@@ -137,33 +136,66 @@ public sealed class ClientAgreementService : IClientAgreementService {
         return Task.CompletedTask;
     }
 
+    private (Storage Storage, ClientAgreement ClientAgreement) ResolveDefaultAgreementTemplate(IDbConnection connection) {
+        Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
+            .GetWithHighestPriority();
+        if (storage?.OrganizationId == null) {
+            const string message = "Ecommerce retail storage and agreement template are not configured.";
+            _logger.LogError(message);
+            throw new DefaultAgreementTemplateUnavailableException(message);
+        }
+
+        Client retailClient = _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient();
+        if (retailClient == null) {
+            const string message = "Ecommerce retail template client is not configured.";
+            _logger.LogError(message);
+            throw new DefaultAgreementTemplateUnavailableException(message);
+        }
+
+        ClientAgreement retailClientAgreement =
+            _clientRepositoriesFactory.NewClientAgreementRepository(connection)
+                .GetByClientNetIdWithOrWithoutVat(
+                    retailClient.NetUid,
+                    storage.OrganizationId.Value,
+                    storage.ForVatProducts);
+        if (retailClientAgreement?.Agreement?.Organization == null) {
+            string message =
+                $"Ecommerce retail agreement template is missing for organization {storage.OrganizationId.Value} and VAT mode {storage.ForVatProducts}.";
+            _logger.LogError("{Message}", message);
+            throw new DefaultAgreementTemplateUnavailableException(message);
+        }
+
+        return (storage, retailClientAgreement);
+    }
+
     public Task<Client> UpdateSelectedClientAgreement(Guid clientNetId, Guid clientAgreementNetId) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
         IAgreementRepository agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
         IClientRepository clientRepository = _clientRepositoriesFactory.NewClientRepository(connection);
 
-            Client client = clientRepository.GetByNetId(clientNetId, true);
-            if (client != null) {
-                foreach (ClientAgreement clientAgreement in client.ClientAgreements) {
-                    clientAgreement.Agreement.IsSelected = clientAgreement.NetUid.Equals(clientAgreementNetId);
+        Guid rootClientNetId = clientRepository.GetRootNetIdBySubClientNetId(clientNetId);
+        Guid agreementOwnerNetId = rootClientNetId == Guid.Empty ? clientNetId : rootClientNetId;
+        Client client = clientRepository.GetByNetId(agreementOwnerNetId, true);
+        if (client != null) {
+            foreach (ClientAgreement clientAgreement in client.ClientAgreements) {
+                clientAgreement.Agreement.IsSelected = clientAgreement.NetUid.Equals(clientAgreementNetId);
 
-                    agreementRepository.Update(clientAgreement.Agreement);
-                }
-            } else {
-                IWorkplaceRepository workplaceRepository = _clientRepositoriesFactory.NewWorkplaceRepository(connection);
-
-                Workplace workplace = workplaceRepository.GetByNetIdWithClient(clientNetId);
-                client = workplace.MainClient;
-                client.CurrentWorkplace = workplace;
-
-                foreach (WorkplaceClientAgreement workplaceClientAgreement in workplace.WorkplaceClientAgreements) {
-                    workplaceClientAgreement.IsSelected = workplaceClientAgreement.ClientAgreement.NetUid.Equals(clientAgreementNetId);
-
-                    workplaceRepository.UpdateWorkplaceClientAgreement(workplaceClientAgreement);
-                }
+                agreementRepository.Update(clientAgreement.Agreement);
             }
+        } else {
+            IWorkplaceRepository workplaceRepository = _clientRepositoriesFactory.NewWorkplaceRepository(connection);
 
-        _priceCacheService.InvalidateForClient(clientNetId);
+            Workplace workplace = workplaceRepository.GetByNetIdWithClient(clientNetId);
+            client = workplace.MainClient;
+            client.CurrentWorkplace = workplace;
+
+            foreach (WorkplaceClientAgreement workplaceClientAgreement in workplace.WorkplaceClientAgreements) {
+                workplaceClientAgreement.IsSelected = workplaceClientAgreement.ClientAgreement.NetUid.Equals(clientAgreementNetId);
+
+                workplaceRepository.UpdateWorkplaceClientAgreement(workplaceClientAgreement);
+            }
+        }
+
         return Task.FromResult(client);
     }
 }

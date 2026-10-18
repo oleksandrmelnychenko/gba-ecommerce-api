@@ -7,6 +7,8 @@ public static class DeliveryRecipientAddressesSegments {
 
     public const string ECOMMERCE_GET_ALL_BY_RECIPIENT_NET_ID = "addresses/all/recipient";
 
+    public const string ECOMMERCE_ADD_NEW = "addresses/new";
+
     public const string GET_BY_NET_ID = "get";
 
     public const string UPDATE = "update";

@@ -16,9 +16,7 @@ public interface IStorageRepository {
 
     Storage GetByLocale(string locale, bool withDefective = false);
 
-    Storage GetWithHighestPriority();
-
-    Storage GetFenixRetailWithHighestPriority(bool withVat);
+    Storage GetWithHighestPriority(string retailCurrencyCode = null);
 
     List<Storage> GetAll();
 

@@ -65,7 +65,7 @@ public sealed class SaleMap : EntityBaseMap<Sale> {
 
         entity.Property(e => e.ExpiredDays).HasDefaultValueSql("0.00");
 
-        entity.Property(e => e.Comment).HasMaxLength(450);
+        entity.Property(e => e.Comment).HasMaxLength(Sale.CommentMaxLength);
 
         entity.Property(e => e.OneTimeDiscountComment).HasMaxLength(450);
 

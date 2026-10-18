@@ -22,14 +22,85 @@ using GBA.Domain.Repositories.Products.Contracts;
 namespace GBA.Domain.Repositories.Products;
 
 public sealed class GetMultipleProductsRepository : IGetMultipleProductsRepository {
-    private const string VendorCodePredicateSql = "[Product].VendorCode IN @VendorCodes ";
-
     private static readonly Regex SpecialCharactersReplace = new("[$&+,:;=?@#|/\\\\'\"’<>. ^*()%!\\-]", RegexOptions.Compiled);
 
     private readonly IDbConnection _connection;
 
     public GetMultipleProductsRepository(IDbConnection connection) {
         _connection = connection;
+    }
+
+    public SeoProductIndexPage GetSeoIndex(int limit, long offset) {
+        const string sql = """
+            SELECT COUNT_BIG(1)
+            FROM [Product]
+            WHERE [Product].[Deleted] = 0
+              AND [Product].[IsForWeb] = 1
+              AND EXISTS (
+                  SELECT 1
+                  FROM [ProductSlug]
+                  WHERE [ProductSlug].[ProductID] = [Product].[ID]
+                    AND [ProductSlug].[Deleted] = 0
+                    AND [ProductSlug].[Locale] IN ('uk', 'ru')
+                    AND NULLIF(LTRIM(RTRIM([ProductSlug].[Url])), '') IS NOT NULL
+              );
+
+            SELECT
+                [Product].[NetUID],
+                [Product].[VendorCode],
+                [SlugUk].[Url] AS [SlugUk],
+                [SlugRu].[Url] AS [SlugRu],
+                (
+                    SELECT MAX([UpdatedAt])
+                    FROM (VALUES
+                        ([Product].[Updated]),
+                        ([SlugUk].[Updated]),
+                        ([SlugRu].[Updated])
+                    ) AS [Updates]([UpdatedAt])
+                ) AS [Updated]
+            FROM [Product]
+            OUTER APPLY (
+                SELECT TOP (1)
+                    [ProductSlug].[Url],
+                    [ProductSlug].[Updated]
+                FROM [ProductSlug]
+                WHERE [ProductSlug].[ProductID] = [Product].[ID]
+                  AND [ProductSlug].[Deleted] = 0
+                  AND [ProductSlug].[Locale] = 'uk'
+                  AND NULLIF(LTRIM(RTRIM([ProductSlug].[Url])), '') IS NOT NULL
+                ORDER BY [ProductSlug].[Updated] DESC, [ProductSlug].[ID] DESC
+            ) AS [SlugUk]
+            OUTER APPLY (
+                SELECT TOP (1)
+                    [ProductSlug].[Url],
+                    [ProductSlug].[Updated]
+                FROM [ProductSlug]
+                WHERE [ProductSlug].[ProductID] = [Product].[ID]
+                  AND [ProductSlug].[Deleted] = 0
+                  AND [ProductSlug].[Locale] = 'ru'
+                  AND NULLIF(LTRIM(RTRIM([ProductSlug].[Url])), '') IS NOT NULL
+                ORDER BY [ProductSlug].[Updated] DESC, [ProductSlug].[ID] DESC
+            ) AS [SlugRu]
+            WHERE [Product].[Deleted] = 0
+              AND [Product].[IsForWeb] = 1
+              AND ([SlugUk].[Url] IS NOT NULL OR [SlugRu].[Url] IS NOT NULL)
+            ORDER BY [Product].[ID]
+            OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY;
+            """;
+
+        using SqlMapper.GridReader result = _connection.QueryMultiple(
+            sql,
+            new {
+                Limit = limit,
+                Offset = offset
+            });
+
+        return new SeoProductIndexPage {
+            TotalCount = result.ReadSingle<long>(),
+            Offset = offset,
+            Limit = limit,
+            Items = result.Read<SeoProductIndexItem>().ToList()
+        };
     }
 
     public List<OrderItem> GetAllOrderedProductsFiltered(
@@ -1967,7 +2038,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
     public List<FromSearchProduct> GetAllFromIdsInTempTable(
         string preDefinedQuery,
         Guid clientAgreementNetId,
-        string catalogSource,
         long? currencyId,
         long? organizationId,
         bool withVat = false,
@@ -2079,7 +2149,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
 
         var props = new {
             ClientAgreementNetId = clientAgreementNetId,
-            CatalogSource = catalogSource,
             Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
             WithVat = withVat,
             CurrencyId = currencyId,
@@ -2157,7 +2226,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND [ProductSlug].ProductID = [Product].ID" +
             ") " +
             "WHERE [SearchResult].ID IS NOT NULL " +
-            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]") + " " +
             "ORDER BY [SearchResult].RowNumber";
 
         _connection.Query(
@@ -2174,13 +2242,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
     public List<FromSearchProduct> GetAllFromIdsInTempTableForRetail(
         string preDefinedQuery,
         ClientAgreement clientAgreement) {
-        if (clientAgreement?.Agreement?.Organization == null) {
-            return [];
-        }
-
-        string sourceWorld = ProductSourceIdentitySql.FromOrganization(
-            clientAgreement.Agreement.Organization.PriceSourceIsAmg);
-
         // Use Dictionary for O(1) lookup instead of O(n) List.Any/First
         Dictionary<long, FromSearchProduct> productDict = new();
         HashSet<(long, long)> productAvailabilityIds = new();
@@ -2294,7 +2355,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
 
         var props = new {
             ClientAgreementNetId = clientAgreement.NetUid,
-            CatalogSource = sourceWorld,
             Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
             WithVat = clientAgreement.Agreement.WithVATAccounting,
             clientAgreement.Agreement.CurrencyId,
@@ -2371,7 +2431,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND [ProductSlug].ProductID = [Product].ID" +
             ") " +
             "WHERE [SearchResult].ID IS NOT NULL " +
-            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]") + " " +
             "ORDER BY [SearchResult].RowNumber";
 
         _connection.Query(
@@ -2389,8 +2448,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
         string preDefinedQuery,
         Guid nonVatAgreementNetId,
         Guid? vatAgreementNetId,
-        long? organizationId,
-        string catalogSource) {
+        long? organizationId) {
         // Use Dictionary for O(1) lookup instead of O(n) List.Any/First
         Dictionary<long, FromSearchProduct> productDict = new();
 
@@ -2440,8 +2498,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
         var props = new {
             NonVatAgreementNetId = nonVatAgreementNetId,
             VatAgreementNetId = vatAgreementNetId ?? Guid.Empty,
-            Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
-            CatalogSource = catalogSource
+            Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName
         };
 
         string sqlExpression =
@@ -2473,7 +2530,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             ", [Product].[Weight] " +
             ",dbo.GetCalculatedProductPriceWithSharesAndVat(Product.NetUID, @VatAgreementNetId, @Culture, 1, NULL) AS CurrentWithVatPrice " +
             ",dbo.GetCalculatedProductLocalPriceWithSharesAndVat(Product.NetUID, @VatAgreementNetId, @Culture, 1, NULL) AS CurrentLocalWithVatPrice " +
-            ",dbo.GetCalculatedProductPriceWithSharesAndVat(Product.NetUID, @NonVatAgreementNetId, @Culture, 0, NULL) AS CurrentPrice " +
+            ",dbo.GetCalculatedProductPriceWithSharesAndVatWith(Product.NetUID, @NonVatAgreementNetId, @Culture, 0, NULL) AS CurrentPrice " +
             ",dbo.GetCalculatedProductLocalPriceWithSharesAndVat(Product.NetUID, @NonVatAgreementNetId, @Culture, 0, NULL) AS CurrentLocalPrice " +
             ",[ProductAvailability].* " +
             ",[Storage].* " +
@@ -2495,7 +2552,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND [ProductSlug].ProductID = [Product].ID" +
             ") " +
             "WHERE [SearchResult].ID IS NOT NULL " +
-            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]") + " " +
             "AND [Storage].Locale = @Culture " +
             "AND [Storage].ForDefective = 0";
 
@@ -2511,121 +2567,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
         return productDict.Values.ToList();
     }
 
-    private CarBrandPricingScope GetCarBrandPricingScope(
-        Guid nonVatAgreementNetId,
-        Guid? vatAgreementNetId) {
-        List<Guid> agreementNetIds = new[] { nonVatAgreementNetId, vatAgreementNetId ?? Guid.Empty }
-            .Where(netId => netId != Guid.Empty)
-            .Distinct()
-            .ToList();
-
-        if (agreementNetIds.Count == 0) return null;
-
-        List<CarBrandPricingScopeRow> rows = _connection.Query<CarBrandPricingScopeRow>(
-            "SELECT [ClientAgreement].NetUID AS ClientAgreementNetId, " +
-            "[Agreement].OrganizationID AS OrganizationId, " +
-            "[Organization].PriceSourceIsAmg " +
-            "FROM [ClientAgreement] " +
-            "INNER JOIN [Agreement] " +
-            "ON [Agreement].ID = [ClientAgreement].AgreementID " +
-            "AND [Agreement].Deleted = 0 " +
-            "AND [Agreement].IsActive = 1 " +
-            "INNER JOIN [Organization] " +
-            "ON [Organization].ID = [Agreement].OrganizationID " +
-            "AND [Organization].Deleted = 0 " +
-            "WHERE [ClientAgreement].Deleted = 0 " +
-            "AND [ClientAgreement].NetUID IN @AgreementNetIds",
-            new { AgreementNetIds = agreementNetIds }
-        ).ToList();
-
-        if (rows.Count != agreementNetIds.Count
-            || rows.Any(row => row.OrganizationId <= 0))
-            return null;
-
-        foreach (CarBrandPricingScopeRow row in rows)
-            row.Source = ProductSourceIdentitySql.FromOrganization(row.PriceSourceIsAmg);
-
-        CarBrandPricingScopeRow nonVat = rows.SingleOrDefault(
-            row => row.ClientAgreementNetId == nonVatAgreementNetId);
-        CarBrandPricingScopeRow vat = vatAgreementNetId is { } vatNetId && vatNetId != Guid.Empty
-            ? rows.SingleOrDefault(row => row.ClientAgreementNetId == vatNetId)
-            : null;
-        if (nonVat == null
-            || (vatAgreementNetId is { } requestedVatNetId
-                && requestedVatNetId != Guid.Empty
-                && vat == null)
-            || rows.Any(row => row.OrganizationId != nonVat.OrganizationId
-                               || !string.Equals(row.Source, nonVat.Source, StringComparison.Ordinal)))
-            return null;
-
-        return new CarBrandPricingScope(
-            nonVat.OrganizationId,
-            nonVat.Source,
-            vat?.Source,
-            nonVat.Source);
-    }
-
-    private sealed class CarBrandPricingScopeRow {
-        public CarBrandPricingScopeRow() {
-        }
-
-        public Guid ClientAgreementNetId { get; set; }
-        public long OrganizationId { get; set; }
-        public bool PriceSourceIsAmg { get; set; }
-        public string Source { get; set; } = string.Empty;
-    }
-
-    private sealed class CarBrandPricingScope {
-        public CarBrandPricingScope(
-            long organizationId,
-            string nonVatSource,
-            string vatSource,
-            string catalogSource) {
-            OrganizationId = organizationId;
-            NonVatSource = nonVatSource;
-            VatSource = vatSource;
-            CatalogSource = catalogSource;
-        }
-
-        public long OrganizationId { get; }
-        public string NonVatSource { get; }
-        public string VatSource { get; }
-        public string CatalogSource { get; }
-    }
-
     public List<Product> GetAllProductsByCarBrandNetId(Guid carBrandNetId, Guid nonVatAgreementNetId, Guid? vatAgreementNetId, long limit, long offset) {
-        CarBrandPricingScope pricingScope = GetCarBrandPricingScope(nonVatAgreementNetId, vatAgreementNetId);
-        if (pricingScope == null) return new List<Product>();
-
-        return GetAllProductsByCarBrandNetId(
-            carBrandNetId,
-            nonVatAgreementNetId,
-            vatAgreementNetId,
-            pricingScope.OrganizationId,
-            pricingScope.NonVatSource,
-            pricingScope.VatSource,
-            limit,
-            offset);
-    }
-
-    public List<Product> GetAllProductsByCarBrandNetId(
-        Guid carBrandNetId,
-        Guid nonVatAgreementNetId,
-        Guid? vatAgreementNetId,
-        long organizationId,
-        string nonVatSource,
-        string vatSource,
-        long limit,
-        long offset) {
-        CarBrandPricingScope pricingScope = GetCarBrandPricingScope(
-            nonVatAgreementNetId,
-            vatAgreementNetId);
-        if (pricingScope == null
-            || pricingScope.OrganizationId != organizationId
-            || !string.Equals(pricingScope.NonVatSource, nonVatSource, StringComparison.Ordinal)
-            || !string.Equals(pricingScope.VatSource, vatSource, StringComparison.Ordinal))
-            return new List<Product>();
-
         List<Product> products = new();
 
         _connection.Query<Product, MeasureUnit, ProductSlug, Product>(
@@ -2633,18 +2575,20 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AS ( " +
             "SELECT [Product].ID " +
             ", ROW_NUMBER() OVER( " +
-            "ORDER BY CASE WHEN SUM(CASE WHEN [Storage].ID IS NOT NULL THEN [ProductAvailability].[Amount] ELSE 0 END) > 0 THEN 0 ELSE 1 END, [Product].NameUA, [Product].VendorCode " +
+            "ORDER BY CASE WHEN MAX([ProductAvailability].[Amount]) > 0 THEN 0 ELSE 1 END, [Product].NameUA, [Product].VendorCode " +
             ") AS [RowNumber] " +
             "FROM [Product] " +
             "LEFT JOIN  [ProductAvailability] " +
             "ON [ProductAvailability].ProductID = [Product].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
             "LEFT JOIN [Storage] " +
-            "ON [Storage].ID = [ProductAvailability].StorageID " +
-            "AND [Storage].Deleted = 0 " +
+            "ON [Storage].ID = 0 " +
             "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].OrganizationID = @OrganizationId " +
-            "AND [Storage].Locale = @Culture " +
+            (
+                vatAgreementNetId.HasValue
+                    ? "AND [Storage].ForVatProducts = 1 "
+                    : "AND [Storage].ForVatProducts = 0 "
+            ) +
             "LEFT JOIN [ProductCarBrand] " +
             "ON [ProductCarBrand].ProductID = [Product].ID " +
             "AND [ProductCarBrand].Deleted = 0 " +
@@ -2652,7 +2596,11 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [CarBrand].ID = [ProductCarBrand].CarBrandID " +
             "WHERE [Product].Deleted = 0 " +
             "AND [CarBrand].NetUID = @CarBrandNetUID " +
-            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]") + " " +
+            "AND ( " +
+            "[Storage].ID IS NULL " +
+            "OR " +
+            "[Storage].Locale = @Culture " +
+            ") " +
             "GROUP BY [Product].ID, [Product].NameUA, [Product].VendorCode " +
             ") " +
             "SELECT [Product].ID " +
@@ -2683,9 +2631,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "WHERE [ProductAvailability].ProductID = [Product].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
-            "AND [Storage].Deleted = 0 " +
             "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].OrganizationID = @OrganizationId " +
             "AND [Storage].Locale = N'uk' " +
             "AND [Storage].ForVatProducts = 0 " +
             "), 0) AS [AvailableQtyUk] " +
@@ -2696,9 +2642,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "WHERE [ProductAvailability].ProductID = [Product].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
-            "AND [Storage].Deleted = 0 " +
             "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].OrganizationID = @OrganizationId " +
             "AND [Storage].Locale = N'uk' " +
             "AND [Storage].ForVatProducts = 1 " +
             "), 0) AS [AvailableQtyUkVAT] " +
@@ -2709,9 +2653,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "WHERE [ProductAvailability].ProductID = [Product].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
-            "AND [Storage].Deleted = 0 " +
             "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].OrganizationID = @OrganizationId " +
             "AND [Storage].Locale = N'pl' " +
             "AND [Storage].ForVatProducts = 0 " +
             "), 0) AS [AvailableQtyPl] " +
@@ -2722,9 +2664,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "WHERE [ProductAvailability].ProductID = [Product].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
-            "AND [Storage].Deleted = 0 " +
             "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].OrganizationID = @OrganizationId " +
             "AND [Storage].Locale = N'pl' " +
             "AND [Storage].ForVatProducts = 1 " +
             "), 0) AS [AvailableQtyPlVAT] " +
@@ -2768,10 +2708,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 Offset = offset,
                 Limit = limit,
                 ClientAgreementNetId = nonVatAgreementNetId,
-                VatAgreementNetId = vatAgreementNetId ?? Guid.Empty,
-                CarBrandNetUID = carBrandNetId,
-                OrganizationId = organizationId,
-                CatalogSource = pricingScope.CatalogSource
+                NonVatAgreementNetId = vatAgreementNetId ?? Guid.Empty,
+                CarBrandNetUID = carBrandNetId
             }
         );
 
@@ -2779,38 +2717,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
     }
 
     public List<Product> GetAllProductsByCarBrandNetId(string carBrandAlias, Guid nonVatAgreementNetId, Guid? vatAgreementNetId, long limit, long offset) {
-        CarBrandPricingScope pricingScope = GetCarBrandPricingScope(nonVatAgreementNetId, vatAgreementNetId);
-        if (pricingScope == null) return new List<Product>();
-
-        return GetAllProductsByCarBrandNetId(
-            carBrandAlias,
-            nonVatAgreementNetId,
-            vatAgreementNetId,
-            pricingScope.OrganizationId,
-            pricingScope.NonVatSource,
-            pricingScope.VatSource,
-            limit,
-            offset);
-    }
-
-    public List<Product> GetAllProductsByCarBrandNetId(
-        string carBrandAlias,
-        Guid nonVatAgreementNetId,
-        Guid? vatAgreementNetId,
-        long organizationId,
-        string nonVatSource,
-        string vatSource,
-        long limit,
-        long offset) {
-        CarBrandPricingScope pricingScope = GetCarBrandPricingScope(
-            nonVatAgreementNetId,
-            vatAgreementNetId);
-        if (pricingScope == null
-            || pricingScope.OrganizationId != organizationId
-            || !string.Equals(pricingScope.NonVatSource, nonVatSource, StringComparison.Ordinal)
-            || !string.Equals(pricingScope.VatSource, vatSource, StringComparison.Ordinal))
-            return new List<Product>();
-
         List<Product> products = new();
 
         _connection.Query<Product, MeasureUnit, ProductSlug, Product>(
@@ -2818,18 +2724,20 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AS ( " +
             "SELECT [Product].ID " +
             ", ROW_NUMBER() OVER( " +
-            "ORDER BY CASE WHEN SUM(CASE WHEN [Storage].ID IS NOT NULL THEN [ProductAvailability].[Amount] ELSE 0 END) > 0 THEN 0 ELSE 1 END, [Product].NameUA, [Product].VendorCode " +
+            "ORDER BY CASE WHEN MAX([ProductAvailability].[Amount]) > 0 THEN 0 ELSE 1 END, [Product].NameUA, [Product].VendorCode " +
             ") AS [RowNumber] " +
             "FROM [Product] " +
             "LEFT JOIN  [ProductAvailability] " +
             "ON [ProductAvailability].ProductID = [Product].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
             "LEFT JOIN [Storage] " +
-            "ON [Storage].ID = [ProductAvailability].StorageID " +
-            "AND [Storage].Deleted = 0 " +
+            "ON [Storage].ID = 0 " +
             "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].OrganizationID = @OrganizationId " +
-            "AND [Storage].Locale = @Culture " +
+            (
+                vatAgreementNetId.HasValue
+                    ? "AND [Storage].ForVatProducts = 1 "
+                    : "AND [Storage].ForVatProducts = 0 "
+            ) +
             "LEFT JOIN [ProductCarBrand] " +
             "ON [ProductCarBrand].ProductID = [Product].ID " +
             "AND [ProductCarBrand].Deleted = 0 " +
@@ -2837,7 +2745,11 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [CarBrand].ID = [ProductCarBrand].CarBrandID " +
             "WHERE [Product].Deleted = 0 " +
             "AND [CarBrand].[Alias] = @CarBrandAlias " +
-            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]") + " " +
+            "AND ( " +
+            "[Storage].ID IS NULL " +
+            "OR " +
+            "[Storage].Locale = @Culture " +
+            ") " +
             "GROUP BY [Product].ID, [Product].NameUA, [Product].VendorCode " +
             ") " +
             "SELECT [Product].ID " +
@@ -2868,9 +2780,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "WHERE [ProductAvailability].ProductID = [Product].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
-            "AND [Storage].Deleted = 0 " +
             "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].OrganizationID = @OrganizationId " +
             "AND [Storage].Locale = N'uk' " +
             "AND [Storage].ForVatProducts = 0 " +
             "), 0) AS [AvailableQtyUk] " +
@@ -2881,9 +2791,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "WHERE [ProductAvailability].ProductID = [Product].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
-            "AND [Storage].Deleted = 0 " +
             "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].OrganizationID = @OrganizationId " +
             "AND [Storage].Locale = N'uk' " +
             "AND [Storage].ForVatProducts = 1 " +
             "), 0) AS [AvailableQtyUkVAT] " +
@@ -2894,9 +2802,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "WHERE [ProductAvailability].ProductID = [Product].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
-            "AND [Storage].Deleted = 0 " +
             "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].OrganizationID = @OrganizationId " +
             "AND [Storage].Locale = N'pl' " +
             "AND [Storage].ForVatProducts = 0 " +
             "), 0) AS [AvailableQtyPl] " +
@@ -2907,9 +2813,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "WHERE [ProductAvailability].ProductID = [Product].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
-            "AND [Storage].Deleted = 0 " +
             "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].OrganizationID = @OrganizationId " +
             "AND [Storage].Locale = N'pl' " +
             "AND [Storage].ForVatProducts = 1 " +
             "), 0) AS [AvailableQtyPlVAT] " +
@@ -2954,22 +2858,18 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 Limit = limit,
                 ClientAgreementNetId = nonVatAgreementNetId,
                 VatAgreementNetId = vatAgreementNetId ?? Guid.Empty,
-                CarBrandAlias = carBrandAlias,
-                OrganizationId = organizationId,
-                CatalogSource = pricingScope.CatalogSource
+                CarBrandAlias = carBrandAlias
             }
         );
 
         return products;
     }
 
-    public List<Product> GetAllByVendorCodes(
-        IReadOnlyCollection<string> vendorCodes,
+    public List<Product> GetAllFromIdsInPreDefinedQuery(
+        string preDefinedQuery,
         Guid nonVatAgreementNetId,
         Guid? vatAgreementNetId,
-        string catalogSource) {
-        if (vendorCodes == null || vendorCodes.Count == 0) return new List<Product>();
-
+        object queryParameters = null) {
         List<Product> products = new();
 
         Type[] types = {
@@ -2989,7 +2889,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 product.ProductSlug = productSlug;
                 product.CurrentLocalPrice = decimal.Round(product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
 
-                if (productAvailability != null && storage != null)
+                if (productAvailability != null)
                     if (!storage.ForDefective) {
                         if (storage.Locale.ToLower().Equals("pl")) {
                             if (storage.ForVatProducts)
@@ -3009,7 +2909,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                     }
 
                 products.Add(product);
-            } else if (productAvailability != null && storage != null) {
+            } else if (productAvailability != null) {
                 Product fromList = products.First(p => p.Id.Equals(product.Id));
 
                 if (storage.ForDefective) return product;
@@ -3034,13 +2934,10 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             return product;
         };
 
-        var props = new {
-            NonVatAgreementNetId = nonVatAgreementNetId,
-            VatAgreementNetId = vatAgreementNetId ?? Guid.Empty,
-            Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
-            CatalogSource = catalogSource,
-            VendorCodes = vendorCodes
-        };
+        DynamicParameters props = new(queryParameters);
+        props.Add("NonVatAgreementNetId", nonVatAgreementNetId);
+        props.Add("VatAgreementNetId", vatAgreementNetId ?? Guid.Empty);
+        props.Add("Culture", CultureInfo.CurrentCulture.TwoLetterISOLanguageName);
 
         string sqlExpression =
             "SELECT " +
@@ -3086,8 +2983,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND [ProductAvailability].Deleted = 0 " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
-            "AND [Storage].Locale = @Culture " +
-            "AND [Storage].ForDefective = 0 " +
             "LEFT JOIN [ProductSlug] " +
             "ON [ProductSlug].ID = (" +
             "SELECT TOP(1) ID " +
@@ -3096,8 +2991,11 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND [ProductSlug].[Locale] = @Culture " +
             "AND [ProductSlug].ProductID = [Product].ID" +
             ") " +
-            "WHERE " + VendorCodePredicateSql +
-            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]") + " ";
+            "WHERE [Product].ID IN (" +
+            preDefinedQuery +
+            ") " +
+            "AND [Storage].Locale = @Culture " +
+            "AND [Storage].ForDefective = 0 ";
 
         sqlExpression += "ORDER BY [ProductAvailability].[Amount] DESC, [Product].NameUA, [Product].VendorCode";
 
@@ -3134,7 +3032,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                     product.ProductSlug = productSlug;
                     product.CurrentLocalPrice = decimal.Round(product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
 
-                    if (productAvailability != null && storage != null)
+                    if (productAvailability != null)
                         if (!storage.ForDefective) {
                             if (storage.Locale.ToLower().Equals("pl")) {
                                 if (storage.ForVatProducts)
@@ -3156,7 +3054,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                     analogue.AnalogueProduct = product;
 
                     parent.AnalogueProducts.Add(analogue);
-                } else if (productAvailability != null && storage != null) {
+                } else if (productAvailability != null) {
                     analogue = parent.AnalogueProducts.First(a => a.Id.Equals(analogue.Id));
 
                     if (storage.ForDefective) return product;
@@ -3185,8 +3083,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 ProductIds = products.Where(p => p.HasAnalogue).Select(p => p.Id),
                 NonVatAgreementNetId = nonVatAgreementNetId,
                 VatAgreementNetId = vatAgreementNetId ?? Guid.Empty,
-                Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
-                CatalogSource = catalogSource
+                Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName
             };
 
             string analoguesSqlExpression =
@@ -3234,8 +3131,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 "AND [ProductAvailability].Deleted = 0 " +
                 "LEFT JOIN [Storage] " +
                 "ON [Storage].ID = [ProductAvailability].StorageID " +
-                "AND [Storage].Locale = @Culture " +
-                "AND [Storage].ForDefective = 0 " +
                 "LEFT JOIN [ProductAnalogue] " +
                 "ON [ProductAnalogue].AnalogueProductID = [Product].ID " +
                 "AND [ProductAnalogue].Deleted = 0 " +
@@ -3248,7 +3143,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 "AND [ProductSlug].ProductID = [Product].ID" +
                 ") " +
                 "WHERE [ProductAnalogue].BaseProductID IN @ProductIds " +
-                "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]");
+                "AND [Storage].Locale = @Culture " +
+                "AND [Storage].ForDefective = 0";
 
             analoguesSqlExpression += "ORDER BY [ProductAvailability].[Amount] DESC, [Product].NameUA, [Product].VendorCode";
 
@@ -3285,7 +3181,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 product.ProductSlug = productSlug;
                 product.CurrentLocalPrice = decimal.Round(product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
 
-                if (productAvailability != null && storage != null)
+                if (productAvailability != null)
                     if (!storage.ForDefective) {
                         if (storage.Locale.ToLower().Equals("pl")) {
                             if (storage.ForVatProducts)
@@ -3307,7 +3203,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 productSet.ComponentProduct = product;
 
                 parent.ComponentProducts.Add(productSet);
-            } else if (productAvailability != null && storage != null) {
+            } else if (productAvailability != null) {
                 productSet = parent.ComponentProducts.First(a => a.Id.Equals(productSet.Id));
 
                 if (storage.ForDefective) return product;
@@ -3336,8 +3232,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             ProductIds = products.Where(p => p.HasComponent).Select(p => p.Id),
             NonVatAgreementNetId = nonVatAgreementNetId,
             VatAgreementNetId = vatAgreementNetId ?? Guid.Empty,
-            Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
-            CatalogSource = catalogSource
+            Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName
         };
 
         string componentsSqlExpression =
@@ -3385,8 +3280,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND [ProductAvailability].Deleted = 0 " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
-            "AND [Storage].Locale = @Culture " +
-            "AND [Storage].ForDefective = 0 " +
             "LEFT JOIN [ProductSet] " +
             "ON [ProductSet].ComponentProductID = [Product].ID " +
             "AND [ProductSet].Deleted = 0 " +
@@ -3399,7 +3292,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND [ProductSlug].ProductID = [Product].ID" +
             ") " +
             "WHERE [ProductSet].BaseProductID IN @ProductIds " +
-            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Product]");
+            "AND [Storage].Locale = @Culture " +
+            "AND [Storage].ForDefective = 0";
 
         componentsSqlExpression += "ORDER BY [ProductAvailability].[Amount] DESC, [Product].NameUA, [Product].VendorCode";
 
@@ -4009,7 +3903,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
     public List<FromSearchProduct> GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPrices(
         long productId,
         Guid clientAgreementNetId,
-        string catalogSource,
         long? organizationId,
         long? currencyId,
         bool withVat) {
@@ -4043,7 +3936,176 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
 
                 analogues.Add(analogue);
 
-                if (productAvailability == null) return analogue;
+                if (productAvailability == null || storage == null) return analogue;
+
+                productAvailabilities.Add(productAvailability);
+
+                AddAvailabilityToRequestedBucket(
+                    analogue,
+                    productAvailability,
+                    storage,
+                    withVat);
+            } else {
+                analogue = analogues.First(a => a.Id.Equals(analogue.Id));
+
+                if (productAvailability == null || storage == null || storage.ForDefective)
+                    return analogue;
+
+                if (productAvailabilities.Any(p => p.Id.Equals(productAvailability.Id) && p.ProductId.Equals(analogue.Id))) return analogue;
+
+                productAvailabilities.Add(productAvailability);
+                AddAvailabilityToRequestedBucket(
+                    analogue,
+                    productAvailability,
+                    storage,
+                    withVat);
+            }
+
+            return analogue;
+        };
+
+        string sqlExpression =
+            "SELECT " +
+            "[Analogue].ID " +
+            ", [Analogue].Created " +
+            ", [Analogue].Deleted ";
+
+        sqlExpression += ProductSqlFragments.AnalogueCultureColumns;
+
+        sqlExpression +=
+            ", [Analogue].HasAnalogue " +
+            ", [Analogue].HasComponent " +
+            ", [Analogue].HasImage " +
+            ", [Analogue].[Image] " +
+            ", [Analogue].IsForSale " +
+            ", [Analogue].IsForWeb " +
+            ", [Analogue].IsForZeroSale " +
+            ", [Analogue].MainOriginalNumber " +
+            ", [Analogue].MeasureUnitID " +
+            ", [Analogue].NetUID " +
+            ", [Analogue].OrderStandard " +
+            ", [Analogue].PackingStandard " +
+            ", [Analogue].Standard " +
+            ", [Analogue].Size " +
+            ", [Analogue].[Top] " +
+            ", [Analogue].UCGFEA " +
+            ", [Analogue].Updated " +
+            ", [Analogue].VendorCode " +
+            ", [Analogue].Volume " +
+            ", [Analogue].[Weight] " +
+            ",dbo.GetCalculatedProductPriceWithSharesAndVat([Analogue].NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS CurrentPrice " +
+            ",dbo.GetCalculatedProductLocalPriceWithSharesAndVat([Analogue].NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS CurrentLocalPrice " +
+            ",[ProductAvailability].* " +
+            ",[Storage].* " +
+            ",[ProductSlug].* " +
+            ",[ProductImage].* " +
+            ", (SELECT Code FROM Currency " +
+            "WHERE ID = @CurrencyId " +
+            "AND Deleted = 0) AS CurrencyCode " +
+            "FROM [ProductAnalogue] " +
+            "LEFT JOIN [Product] AS [Analogue] " +
+            "ON [Analogue].ID = [ProductAnalogue].AnalogueProductID " +
+            "LEFT JOIN [ProductAvailability] " +
+            "ON [ProductAvailability].ProductID = [Analogue].ID " +
+            "AND [ProductAvailability].Deleted = 0 " +
+            "AND EXISTS (" +
+            "SELECT 1 FROM [Storage] " +
+            "WHERE [Storage].ID = [ProductAvailability].StorageID " +
+            "AND [Storage].Locale = @Culture " +
+            "AND [Storage].ForDefective = 0 " +
+            "AND [Storage].Deleted = 0 " +
+            "AND " + EcommerceStorageScope.NamedStorageSql + ") " +
+            "LEFT JOIN [Storage] " +
+            "ON [Storage].ID = [ProductAvailability].StorageID " +
+            "LEFT JOIN [ProductSlug] " +
+            "ON [ProductSlug].ID = ( " +
+            "SELECT TOP(1) ID " +
+            "FROM [ProductSlug] " +
+            "WHERE [ProductSlug].Deleted = 0 " +
+            "AND [ProductSlug].[Locale] = @Culture " +
+            "AND [ProductSlug].ProductID = [Analogue].ID " +
+            ") " +
+            "LEFT JOIN [ProductImage] " +
+            "ON [ProductImage].ProductID = [Analogue].ID " +
+            "WHERE [ProductAnalogue].BaseProductID = @Id " +
+            "AND [ProductAnalogue].Deleted = 0 " +
+            "ORDER BY [ProductAvailability].Amount DESC, [Analogue].Name, [Analogue].VendorCode ";
+
+        _connection.Query(
+            sqlExpression,
+            types,
+            mapper,
+            new {
+                Id = productId,
+                ClientAgreementNetId = clientAgreementNetId,
+                Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
+                CurrencyId = currencyId,
+                OrganizationId = organizationId,
+                WithVat = withVat
+            },
+            splitOn: "ID,CurrencyCode"
+        );
+
+        return analogues;
+    }
+
+    internal static void AddAvailabilityToRequestedBucket(
+        FromSearchProduct product,
+        ProductAvailability availability,
+        Storage storage,
+        bool withVat) {
+        bool isPolish = storage.Locale.Equals("pl", StringComparison.OrdinalIgnoreCase);
+        if (isPolish) {
+            if (withVat)
+                product.AvailableQtyPlVAT += availability.Amount;
+            else
+                product.AvailableQtyPl += availability.Amount;
+        } else {
+            if (withVat)
+                product.AvailableQtyUkVAT += availability.Amount;
+            else
+                product.AvailableQtyUk += availability.Amount;
+        }
+    }
+
+    public List<FromSearchProduct> GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPricesForRetail(
+        long productId,
+        Guid clientAgreementNetId,
+        long? organizationId,
+        long? currencyId,
+        bool withVat,
+        long? retailStorageId = null) {
+        List<FromSearchProduct> analogues = new();
+        List<ProductAvailability> productAvailabilities = new();
+
+        Type[] types = {
+            typeof(FromSearchProduct),
+            typeof(ProductAvailability),
+            typeof(Storage),
+            typeof(ProductSlug),
+            typeof(ProductImage),
+            typeof(string)
+        };
+
+        Func<object[], FromSearchProduct> mapper = objects => {
+            FromSearchProduct analogue = (FromSearchProduct)objects[0];
+            ProductAvailability productAvailability = (ProductAvailability)objects[1];
+            Storage storage = (Storage)objects[2];
+            ProductSlug productSlug = (ProductSlug)objects[3];
+            ProductImage image = (ProductImage)objects[4];
+            string currencyCode = (string)objects[5];
+
+            if (!analogues.Any(a => a.Id.Equals(analogue.Id))) {
+                analogue.ProductSlug = productSlug;
+                analogue.CurrentPrice = decimal.Round(analogue.CurrentPrice, 2, MidpointRounding.AwayFromZero);
+                analogue.CurrentLocalPrice = decimal.Round(analogue.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
+                analogue.CurrencyCode = currencyCode;
+
+                if (image != null && !image.Deleted) analogue.Image = image.ImageUrl;
+
+                analogues.Add(analogue);
+
+                if (productAvailability == null || storage == null) return analogue;
 
                 productAvailabilities.Add(productAvailability);
 
@@ -4054,7 +4116,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             } else {
                 analogue = analogues.First(a => a.Id.Equals(analogue.Id));
 
-                if (productAvailability == null || storage.ForDefective) return analogue;
+                if (productAvailability == null || storage == null || storage.ForDefective)
+                    return analogue;
 
                 if (productAvailabilities.Any(p => p.Id.Equals(productAvailability.Id) && p.ProductId.Equals(analogue.Id))) return analogue;
 
@@ -4112,6 +4175,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "LEFT JOIN [ProductAvailability] " +
             "ON [ProductAvailability].ProductID = [Analogue].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
+            "AND (@RetailStorageId IS NULL OR [ProductAvailability].StorageID = @RetailStorageId) " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "LEFT JOIN [ProductSlug] " +
@@ -4126,30 +4190,12 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [ProductImage].ProductID = [Analogue].ID " +
             "WHERE [ProductAnalogue].BaseProductID = @Id " +
             "AND [ProductAnalogue].Deleted = 0 " +
-            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Analogue]") + " " +
-            "AND [Storage].Locale = @Culture " +
-            "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].Deleted = 0 ";
-
-        if (withVat)
-            sqlExpression +=
-                "AND [Storage].OrganizationID = @OrganizationId " +
-                "ORDER BY [ProductAvailability].Amount DESC, [Analogue].Name, [Analogue].VendorCode ";
-        else
-            sqlExpression +=
-                "AND [Storage].ID IN " +
-                "(SELECT [Storage].ID FROM [Storage] " +
-                "WHERE [Storage].Locale = @Culture " +
-                "AND [Storage].Deleted = 0" +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].AvailableForReSale = 1" +
-                "UNION " +
-                "SELECT [Storage].ID FROM [Storage] " +
-                "WHERE [Storage].OrganizationID = @OrganizationId " +
-                "AND [Storage].Deleted = 0 " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].Locale = @Culture) " +
-                "ORDER BY [ProductAvailability].Amount DESC, [Analogue].Name, [Analogue].VendorCode ";
+            "AND [Analogue].Deleted = 0 " +
+            "AND [Analogue].IsForWeb = 1 " +
+            "AND (([Storage].ForEcommerce = 1 " +
+            "AND [Storage].Deleted = 0 " +
+            "AND [Storage].ForDefective = 0) OR [Storage].ID IS NULL) " +
+            "ORDER BY [ProductAvailability].Amount DESC, [Analogue].Name, [Analogue].VendorCode ";
 
         _connection.Query(
             sqlExpression,
@@ -4162,200 +4208,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 CurrencyId = currencyId,
                 OrganizationId = organizationId,
                 WithVat = withVat,
-                CatalogSource = catalogSource
-            },
-            splitOn: "ID,CurrencyCode"
-        );
-
-        return analogues;
-    }
-
-    public List<FromSearchProduct> GetAllAnaloguesByProductIdAndOrganizationIdWithCalculatedPricesForRetail(
-        long productId,
-        Guid clientAgreementNetId,
-        string catalogSource,
-        long? organizationId,
-        long? currencyId,
-        bool withVat) {
-        if (productId <= 0
-            || clientAgreementNetId == Guid.Empty
-            || !ProductSourceIdentitySql.TryNormalizeSourceWorld(catalogSource, out string sourceWorld)
-            || !organizationId.HasValue
-            || organizationId.Value <= 0)
-            return new List<FromSearchProduct>();
-
-        List<FromSearchProduct> analogues = new();
-        List<ProductAvailability> productAvailabilities = new();
-
-        Type[] types = {
-            typeof(FromSearchProduct),
-            typeof(ProductAvailability),
-            typeof(Storage),
-            typeof(ProductSlug),
-            typeof(ProductImage),
-            typeof(string)
-        };
-
-        Func<object[], FromSearchProduct> mapper = objects => {
-            FromSearchProduct analogue = (FromSearchProduct)objects[0];
-            ProductAvailability productAvailability = (ProductAvailability)objects[1];
-            Storage storage = (Storage)objects[2];
-            ProductSlug productSlug = (ProductSlug)objects[3];
-            ProductImage image = (ProductImage)objects[4];
-            string currencyCode = (string)objects[5];
-
-            if (!analogues.Any(a => a.Id.Equals(analogue.Id))) {
-                analogue.ProductSlug = productSlug;
-                analogue.CurrentPrice = decimal.Round(analogue.CurrentPrice, 2, MidpointRounding.AwayFromZero);
-                analogue.CurrentLocalPrice = decimal.Round(analogue.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
-                analogue.CurrencyCode = currencyCode;
-
-                if (image != null && !image.Deleted) analogue.Image = image.ImageUrl;
-
-                analogues.Add(analogue);
-
-                if (productAvailability == null) return analogue;
-
-                productAvailabilities.Add(productAvailability);
-
-                if (storage.Locale.ToLower().Equals("pl"))
-                    analogue.AvailableQtyPl += productAvailability.Amount;
-                else
-                    analogue.AvailableQtyUk += productAvailability.Amount;
-            } else {
-                analogue = analogues.First(a => a.Id.Equals(analogue.Id));
-
-                if (productAvailability == null || storage.ForDefective) return analogue;
-
-                if (productAvailabilities.Any(p => p.Id.Equals(productAvailability.Id) && p.ProductId.Equals(analogue.Id))) return analogue;
-
-                productAvailabilities.Add(productAvailability);
-                if (storage.Locale.ToLower().Equals("pl"))
-                    analogue.AvailableQtyPl += productAvailability.Amount;
-                else
-                    analogue.AvailableQtyUk += productAvailability.Amount;
-            }
-
-            return analogue;
-        };
-
-        string sqlExpression =
-            ";WITH [PricingContext] AS ( " +
-            "SELECT [Agreement].OrganizationID, " +
-            "[Agreement].CurrencyID, " +
-            "[Agreement].WithVATAccounting, " +
-            "CASE WHEN [Organization].PriceSourceIsAmg = 1 THEN 'amg' ELSE 'fenix' END AS [CatalogSource] " +
-            "FROM [ClientAgreement] " +
-            "INNER JOIN [Agreement] " +
-            "ON [Agreement].ID = [ClientAgreement].AgreementID " +
-            "AND [Agreement].Deleted = 0 " +
-            "AND [Agreement].IsActive = 1 " +
-            "INNER JOIN [Organization] " +
-            "ON [Organization].ID = [Agreement].OrganizationID " +
-            "AND [Organization].Deleted = 0 " +
-            "WHERE [ClientAgreement].NetUID = @ClientAgreementNetId " +
-            "AND [ClientAgreement].Deleted = 0 " +
-            "AND [Agreement].OrganizationID = @OrganizationId " +
-            "AND [Agreement].WithVATAccounting = @WithVat " +
-            "AND [Organization].PriceSourceIsAmg = @PriceSourceIsAmg " +
-            "AND (([Agreement].CurrencyID = @CurrencyId) " +
-            "OR ([Agreement].CurrencyID IS NULL AND @CurrencyId IS NULL)) " +
-            "AND ((([Agreement].SourceFenixID IS NOT NULL OR [Agreement].SourceFenixCode IS NOT NULL) " +
-            "AND [Agreement].SourceAmgID IS NULL AND [Agreement].SourceAmgCode IS NULL) " +
-            "OR (([Agreement].SourceAmgID IS NOT NULL OR [Agreement].SourceAmgCode IS NOT NULL) " +
-            "AND [Agreement].SourceFenixID IS NULL AND [Agreement].SourceFenixCode IS NULL)) " +
-            "), " +
-            "[ScopedProductAvailability] AS ( " +
-            "SELECT [ProductAvailability].* " +
-            "FROM [ProductAvailability] " +
-            "INNER JOIN [Storage] " +
-            "ON [Storage].ID = [ProductAvailability].StorageID " +
-            "AND [Storage].Deleted = 0 " +
-            "AND [Storage].ForEcommerce = 1 " +
-            "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].OrganizationID = @OrganizationId " +
-            "AND [Storage].ForVatProducts = @WithVat " +
-            "WHERE [ProductAvailability].Deleted = 0 " +
-            ") " +
-            "SELECT " +
-            "[Analogue].ID " +
-            ", [Analogue].Created " +
-            ", [Analogue].Deleted ";
-
-        sqlExpression += ProductSqlFragments.AnalogueCultureColumns;
-
-        sqlExpression +=
-            ", [Analogue].HasAnalogue " +
-            ", [Analogue].HasComponent " +
-            ", [Analogue].HasImage " +
-            ", [Analogue].[Image] " +
-            ", [Analogue].IsForSale " +
-            ", [Analogue].IsForWeb " +
-            ", [Analogue].IsForZeroSale " +
-            ", [Analogue].MainOriginalNumber " +
-            ", [Analogue].MeasureUnitID " +
-            ", [Analogue].NetUID " +
-            ", [Analogue].OrderStandard " +
-            ", [Analogue].PackingStandard " +
-            ", [Analogue].Standard " +
-            ", [Analogue].Size " +
-            ", [Analogue].[Top] " +
-            ", [Analogue].UCGFEA " +
-            ", [Analogue].Updated " +
-            ", [Analogue].VendorCode " +
-            ", [Analogue].Volume " +
-            ", [Analogue].[Weight] " +
-            ",dbo.GetCalculatedProductPriceWithSharesAndVat([Analogue].NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS CurrentPrice " +
-            ",dbo.GetCalculatedProductLocalPriceWithSharesAndVat([Analogue].NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS CurrentLocalPrice " +
-            ",[ProductAvailability].* " +
-            ",[Storage].* " +
-            ",[ProductSlug].* " +
-            ",[ProductImage].* " +
-            ", (SELECT Code FROM Currency " +
-            "WHERE ID = @CurrencyId " +
-            "AND Deleted = 0) AS CurrencyCode " +
-            "FROM [ProductAnalogue] " +
-            "CROSS JOIN [PricingContext] " +
-            "INNER JOIN [Product] AS [Analogue] " +
-            "ON [Analogue].ID = [ProductAnalogue].AnalogueProductID " +
-            "AND [Analogue].Deleted = 0 " +
-            "LEFT JOIN [ScopedProductAvailability] AS [ProductAvailability] " +
-            "ON [ProductAvailability].ProductID = [Analogue].ID " +
-            "LEFT JOIN [Storage] " +
-            "ON [Storage].ID = [ProductAvailability].StorageID " +
-            "AND [Storage].Deleted = 0 " +
-            "AND [Storage].ForEcommerce = 1 " +
-            "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].OrganizationID = @OrganizationId " +
-            "AND [Storage].ForVatProducts = @WithVat " +
-            "LEFT JOIN [ProductSlug] " +
-            "ON [ProductSlug].ID = ( " +
-            "SELECT TOP(1) ID " +
-            "FROM [ProductSlug] " +
-            "WHERE [ProductSlug].Deleted = 0 " +
-            "AND [ProductSlug].[Locale] = @Culture " +
-            "AND [ProductSlug].ProductID = [Analogue].ID " +
-            ") " +
-            "LEFT JOIN [ProductImage] " +
-            "ON [ProductImage].ProductID = [Analogue].ID " +
-            "WHERE [ProductAnalogue].BaseProductID = @Id " +
-            "AND [ProductAnalogue].Deleted = 0 " +
-            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Analogue]") + " " +
-            "ORDER BY [ProductAvailability].Amount DESC, [Analogue].Name, [Analogue].VendorCode ";
-
-        _connection.Query(
-            sqlExpression,
-            types,
-            mapper,
-            new {
-                Id = productId,
-                ClientAgreementNetId = clientAgreementNetId,
-                CatalogSource = sourceWorld,
-                PriceSourceIsAmg = sourceWorld == ProductSourceIdentitySql.Amg,
-                Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
-                CurrencyId = currencyId,
-                OrganizationId = organizationId,
-                WithVat = withVat
+                RetailStorageId = retailStorageId
             },
             splitOn: "ID,CurrencyCode"
         );
@@ -4502,7 +4355,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
         Guid nonVatAgreementNetId,
         Guid? vatAgreementNetId,
         long? organizationId,
-        string catalogSource) {
+        bool onlyEcommerceStorages = false) {
         List<FromSearchProduct> components = new();
 
         Type[] types = {
@@ -4527,7 +4380,11 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 component = components.First(a => a.Id.Equals(component.Id));
             }
 
-            if (productAvailability == null || !storage.OrganizationId.Equals(organizationId) || storage.ForDefective) return component;
+            if (productAvailability == null
+                || storage == null
+                || !storage.OrganizationId.Equals(organizationId)
+                || storage.ForDefective)
+                return component;
 
             if (storage.Locale.ToLower().Equals("pl")) {
                 if (storage.ForVatProducts)
@@ -4593,6 +4450,10 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND [ProductAvailability].Deleted = 0 " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
+            "AND [Storage].Deleted = 0 " +
+            "AND [Storage].ForDefective = 0 " +
+            "AND [Storage].OrganizationID = @OrganizationId " +
+            "AND (@OnlyEcommerceStorages = 0 OR [Storage].ForEcommerce = 1) " +
             "LEFT JOIN [ProductSlug] " +
             "ON [ProductSlug].ID = (" +
             "SELECT TOP(1) ID " +
@@ -4603,9 +4464,9 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             ") " +
             "WHERE [ProductSet].BaseProductID = @Id " +
             "AND [ProductSet].Deleted = 0 " +
-            "AND " + ProductSourceIdentitySql.CanonicalSourceWorldPredicate("[Component]") + " " +
-            "AND [Storage].Locale = @Culture " +
-            "AND [Storage].ForDefective = 0 " +
+            "AND [Component].Deleted = 0 " +
+            "AND [Component].IsForWeb = 1 " +
+            "AND ([Storage].Locale = @Culture OR [Storage].ID IS NULL) " +
             "ORDER BY [ProductAvailability].Amount DESC, [Component].Name, [Component].VendorCode";
 
         _connection.Query(
@@ -4617,7 +4478,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 NonVatAgreementNetId = nonVatAgreementNetId,
                 VatAgreementNetId = vatAgreementNetId ?? Guid.Empty,
                 Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
-                CatalogSource = catalogSource
+                OrganizationId = organizationId,
+                OnlyEcommerceStorages = onlyEcommerceStorages
             }
         );
 

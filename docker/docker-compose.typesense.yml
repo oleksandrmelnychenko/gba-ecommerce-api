@@ -6,14 +6,14 @@ services:
     container_name: gba-typesense
     restart: unless-stopped
     ports:
-      - "8108:8108"
+      - "127.0.0.1:8108:8108"
     volumes:
       - typesense-data:/data
     environment:
-      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY:-gba-search-secret-key}
+      - TYPESENSE_API_KEY=${TYPESENSE_API_KEY:?TYPESENSE_API_KEY is required}
       - TYPESENSE_DATA_DIR=/data
-      - TYPESENSE_ENABLE_CORS=true
-    command: ["--data-dir", "/data", "--api-key", "${TYPESENSE_API_KEY:-gba-search-secret-key}", "--enable-cors"]
+      - TYPESENSE_ENABLE_CORS=false
+    command: ["--data-dir", "/data", "--api-key", "${TYPESENSE_API_KEY:?TYPESENSE_API_KEY is required}"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8108/health"]
       interval: 30s
@@ -31,7 +31,7 @@ volumes:
 # 3. Logs:  docker-compose -f docker/docker-compose.typesense.yml logs -f
 #
 # Environment variables:
-# - TYPESENSE_API_KEY: API key for authentication (default: gba-search-secret-key)
+# - TYPESENSE_API_KEY: required high-entropy API key
 #
 # Health check: curl http://localhost:8108/health
 # Dashboard:    http://localhost:8108 (no built-in UI, use Typesense Dashboard separately)

@@ -16,8 +16,6 @@ public interface IProductService {
 
     Task<Product> GetByNetIdForRetail(Guid productNetId);
 
-    Task<Product> GetByNetIdForRetail(Guid productNetId, bool withVat);
-
     Task<List<FromSearchProduct>> GetAllFromSearch(string value, Guid currentClientNetId, long limit, long offset, bool withVat);
 
     Task<List<FromSearchProduct>> GetAllFromSearchV2(string value, Guid currentClientNetId, long limit, long offset, bool withVat);
@@ -26,11 +24,11 @@ public interface IProductService {
 
     Task<List<FromSearchProduct>> GetAllAnaloguesByProductNetIdForRetail(Guid productNetId);
 
-    Task<List<FromSearchProduct>> GetAllAnaloguesByProductNetIdForRetail(Guid productNetId, bool withVat);
-
     Task<List<FromSearchProduct>> GetAllComponentsByProductNetId(Guid productNetId, Guid currentClientNetId, bool withVat);
 
     Task<List<Product>> GetAllByVendorCodes(List<string> vendorCodes, Guid currentClientNetId, long limit, long offset, bool withVat);
+
+    Task<SeoProductIndexPage> GetSeoIndex(int limit, long offset);
 
     Task<List<OrderItem>> GetAllOrderedProductsFiltered(DateTime from, DateTime to, long limit, long offset, Guid clientNetId);
 
@@ -46,13 +44,26 @@ public interface IProductService {
     /// Gets only calculated prices for products (lightweight query for V3 search).
     /// Product data comes from Elasticsearch, this only calculates client-specific prices.
     /// </summary>
+    /// <summary>
+    /// The VAT mode the ecommerce surface actually trades in for this caller: the retail storage's
+    /// mode for anonymous shoppers, the selected agreement's mode when signed in. Resolved on the
+    /// server so prices and availability describe the same storage set checkout reserves from.
+    /// </summary>
+    bool GetEffectiveVatMode(Guid clientNetId);
+
+    /// <summary>
+    /// Resolves the current agreement-backed pricing context for cache partitioning and display.
+    /// </summary>
+    ProductPricingContext GetPricingContext(Guid clientNetId, bool requestedWithVat);
+
     Dictionary<long, ProductPriceInfo> GetPricesOnly(List<long> productIds, Guid currentClientNetId, bool withVat, string culture = "uk");
 
-    Dictionary<long, ProductPriceInfo> GetPricesOnly(List<long> productIds, ProductPricingContext pricingContext, string culture = "uk");
-
-    Dictionary<long, ProductCatalogAvailabilityInfo> GetCatalogAvailabilityOnly(
+    /// <summary>
+    /// Gets live free stock from the exact storage scope that cart reservation uses.
+    /// Elasticsearch is intentionally not the stock authority.
+    /// </summary>
+    Dictionary<long, double> GetSellableQuantities(
         List<long> productIds,
-        ProductPricingContext pricingContext);
-
-    ProductPricingContext GetPricingContext(Guid currentClientNetId, bool withVat);
+        Guid currentClientNetId,
+        string culture = "uk");
 }

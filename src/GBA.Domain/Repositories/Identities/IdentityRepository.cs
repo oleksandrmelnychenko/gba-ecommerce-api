@@ -107,7 +107,7 @@ public sealed class IdentityRepository : IIdentityRepository {
     public async Task<Tuple<ClaimsIdentity, UserIdentity>> AuthAndGetClaimsIdentityByUserId(string userId) {
         UserIdentity user = await _userManager.FindByIdAsync(userId);
 
-        if (user == null) return null;
+        if (user == null || !IsUserEnabled(user)) return null;
 
         IList<string> roles = await _userManager.GetRolesAsync(user);
         IList<Claim> claims = await _userManager.GetClaimsAsync(user);
@@ -126,10 +126,9 @@ public sealed class IdentityRepository : IIdentityRepository {
         };
 
         IdentityResult result = await _userManager.AddClaimsAsync(user, claims);
+        if (!result.Succeeded || string.IsNullOrEmpty(role)) return result;
 
-        if (!string.IsNullOrEmpty(role)) return await _userManager.AddToRoleAsync(user, role);
-
-        return result;
+        return await _userManager.AddToRoleAsync(user, role);
     }
 
     public async Task<IdentityResponse> CreateUser(UserIdentity user, string password, bool crmUser = true) {
@@ -289,6 +288,10 @@ public sealed class IdentityRepository : IIdentityRepository {
         if (users.Any())
             foreach (UserIdentity user in users)
                 await _userManager.SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue);
+    }
+
+    public async Task DeleteUser(UserIdentity user) {
+        if (user != null) await _userManager.DeleteAsync(user);
     }
 
     public async Task DeleteUserByNetId(string netId) {

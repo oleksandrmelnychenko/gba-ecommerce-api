@@ -21,7 +21,6 @@ using GBA.Domain.DataSourceAdapters.SQL.Contracts;
 using GBA.Domain.DbConnectionFactory;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.IdentityEntities;
-using GBA.Domain.EntityHelpers;
 using GBA.Domain.Repositories.Accounting;
 using GBA.Domain.Repositories.Accounting.Contracts;
 using GBA.Domain.Repositories.Agreements;
@@ -60,7 +59,6 @@ using GBA.Domain.Repositories.UserRoles;
 using GBA.Domain.Repositories.UserRoles.Contracts;
 using GBA.Domain.Repositories.Users;
 using GBA.Domain.Repositories.Users.Contracts;
-using GBA.Ecommerce.Hubs;
 using GBA.Services.Services.Clients;
 using GBA.Services.Services.Clients.Contracts;
 using GBA.Services.Services.DeliveryRecipients;
@@ -89,8 +87,7 @@ using GBA.Services.Services.Transporters;
 using GBA.Services.Services.Transporters.Contracts;
 using GBA.Services.Services.UserManagement;
 using GBA.Services.Services.UserManagement.Contracts;
-using GBA.Services.Infrastructure.SalesMutations;
-using GBA.Ecommerce.DependencyInjection;
+using GBA.Ecommerce.HealthChecks;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics;
@@ -102,6 +99,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -125,6 +123,8 @@ public class Startup {
     private const int _maxCachedSearchLimit = 100;
     private const int _maxCachedSearchOffset = 5000;
     private const int _maxCachedSearchTermLength = 128;
+
+    private static readonly string[] _callerDiscriminatorQueryKeys = { "clientNetId", "netId" };
 
     private readonly IWebHostEnvironment _environment;
 
@@ -153,14 +153,6 @@ public class Startup {
     public void ConfigureServices(IServiceCollection services) {
         ConfigureDbContext(services);
 
-        SalesMutationOutboxOptions salesMutationOutboxOptions =
-            Configuration.GetSection(SalesMutationOutboxOptions.SectionName)
-                .Get<SalesMutationOutboxOptions>() ?? new SalesMutationOutboxOptions();
-        salesMutationOutboxOptions.Validate();
-        services.AddSingleton(salesMutationOutboxOptions);
-        services.AddSalesMutationInternalAuthentication(Configuration);
-        services.AddSingleton<TimeProvider>(TimeProvider.System);
-
         services.AddResponseCompression(options => {
             options.EnableForHttps = true;
             options.Providers.Add<BrotliCompressionProvider>();
@@ -186,30 +178,28 @@ public class Startup {
         });
 
         services.AddMemoryCache();
-        services.AddHttpClient(SalesMutationOutboxDispatcher.HttpClientName)
-            .ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.HttpClientHandler {
-                AllowAutoRedirect = false
-            });
+        services.AddHttpClient(string.Empty, client => {
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
+        services.AddEcommerceInternalHttpClient(Configuration);
         services.AddRequestDecompression();
         services.AddHealthChecks()
-            .AddCheck("db-main", () => {
-                try {
-                    using SqlConnection conn = new SqlConnection(Configuration.GetConnectionString(
+            .Add(new HealthCheckRegistration(
+                "db-main",
+                new MainDatabaseHealthCheck(Configuration.GetConnectionString(
 #if DEBUG
-                        ConnectionStringNames.Local
+                    ConnectionStringNames.Local
 #else
-                        ConnectionStringNames.Remote
+                    ConnectionStringNames.Remote
 #endif
-                    ));
-                    conn.Open();
-                    return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy();
-                } catch (Exception ex) {
-                    return Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Unhealthy(ex.Message);
-                }
-            })
-            .AddCheck<PricingChangeTrackingHealthCheck>("pricing-cache-change-tracking")
-            .AddCheck<ElasticsearchReadinessHealthCheck>("elasticsearch-active-generation")
-            .AddCheck<SalesMutationOutboxHealthCheck>("sales-mutation-outbox");
+                )),
+                HealthStatus.Unhealthy,
+                Array.Empty<string>(),
+                MainDatabaseHealthCheck.ProbeTimeout))
+            .AddCheck<SearchIndexHealthCheck>(
+                "search-index",
+                HealthStatus.Unhealthy,
+                Array.Empty<string>());
         services.AddRateLimiter(options => {
             options.RejectionStatusCode = 429;
             options.OnRejected = async (context, cancellationToken) => {
@@ -255,6 +245,28 @@ public class Startup {
                         QueueLimit = 0
                     }));
 
+            options.AddPolicy("seo-index", context =>
+                RateLimitPartition.GetSlidingWindowLimiter(
+                    GetClientPartitionKey(context),
+                    _ => new SlidingWindowRateLimiterOptions {
+                        PermitLimit = 300,
+                        Window = TimeSpan.FromMinutes(1),
+                        SegmentsPerWindow = 6,
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = 0
+                    }));
+
+            options.AddPolicy("checkout", context =>
+                RateLimitPartition.GetSlidingWindowLimiter(
+                    GetClientPartitionKey(context),
+                    _ => new SlidingWindowRateLimiterOptions {
+                        PermitLimit = 20,
+                        Window = TimeSpan.FromMinutes(1),
+                        SegmentsPerWindow = 4,
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = 0
+                    }));
+
             options.AddPolicy("api", context =>
                 RateLimitPartition.GetSlidingWindowLimiter(
                     GetClientPartitionKey(context),
@@ -277,6 +289,7 @@ public class Startup {
             options.MaximumBodySize = 67108864;
             options.UseCaseSensitivePaths = false;
         });
+        services.AddSignalR();
 
         services.AddOutputCache(options => {
             options.SizeLimit = 256 * 1024 * 1024;
@@ -289,6 +302,13 @@ public class Startup {
                 .Expire(TimeSpan.FromMinutes(2))
                 .SetVaryByRouteValue("culture")
                 .SetVaryByQuery("value", "query", "limit", "offset", "withVat")
+                .Tag("products")
+                .SetLocking(true));
+
+            options.AddPolicy("ProductSeoIndex", builder => builder
+                .With(IsAnonymousGetRequest)
+                .Expire(TimeSpan.FromHours(24))
+                .SetVaryByQuery("limit", "offset")
                 .Tag("products")
                 .SetLocking(true));
 
@@ -322,13 +342,6 @@ public class Startup {
                 .Tag("exchange-rates")
                 .SetLocking(true));
 
-            options.AddPolicy("Static", builder => builder
-                .With(IsAnonymousGetRequest)
-                .Expire(TimeSpan.FromHours(24))
-                .SetVaryByRouteValue("culture")
-                .SetVaryByQuery("locale")
-                .Tag("static")
-                .SetLocking(true));
         });
 
         services.AddCors(options => {
@@ -337,8 +350,6 @@ public class Startup {
                 .AllowAnyMethod().AllowAnyHeader()
                 .AllowCredentials());
         });
-
-        services.AddSignalR();
 
         services.AddIdentity<UserIdentity, IdentityRole>(options => {
                 options.Password.RequireUppercase = true;
@@ -410,12 +421,6 @@ public class Startup {
         services.AddScoped<IRetailClientRepositoriesFactory, RetailClientRepositoriesFactory>();
 
         services.AddScoped<IDbConnectionFactory, DbConnectionFactory>();
-        services.AddScoped<ISalesCreationLedgerStore, SqlSalesCreationLedgerStore>();
-        services.AddScoped<ISalesMutationOutboxStore, SqlSalesMutationOutboxStore>();
-        services.AddScoped<ISalesMutationOutboxPublisher, SalesMutationOutboxPublisher>();
-        services.AddScoped<ISalesMutationOutboxDispatcher, SalesMutationOutboxDispatcher>();
-        services.AddHostedService<GBA.Ecommerce.Background.SalesMutationOutboxSchemaInitializer>();
-        services.AddHostedService<GBA.Ecommerce.Background.SalesMutationOutboxBackgroundService>();
 
         services.AddScoped<IRequestTokenService, RequestTokenService>();
         services.AddScoped<ISignUpService, SignUpService>();
@@ -427,12 +432,11 @@ public class Startup {
         services.AddSingleton<GBA.Common.Search.ISearchReindexSignal, GBA.Common.Search.SearchReindexSignal>();
         services.AddHostedService<GBA.Ecommerce.Background.ProductReindexBackgroundService>();
         services.AddScoped<IProductService, ProductService>();
-        services.AddScoped<IPricingDependencyRevisionProvider, SqlPricingDependencyRevisionProvider>();
-        services.AddScoped<IRetailCatalogSelectionProvider, SqlRetailCatalogSelectionProvider>();
         services.AddScoped<IClientAgreementService, ClientAgreementService>();
         services.AddScoped<IRegionService, RegionService>();
         services.AddScoped<IRegionCodeService, RegionCodeService>();
         services.AddScoped<IClientService, ClientService>();
+        services.AddScoped<IClientResourceAccessService, ClientResourceAccessService>();
         services.AddScoped<IExchageRateService, ExchageRateService>();
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<IGeoLocationService, GeoLocationService>();
@@ -450,6 +454,8 @@ public class Startup {
 
         // Price caching for logged-in users
         services.AddSingleton<IPriceCacheService, PriceCacheService>();
+        services.AddSingleton<GBA.Common.Search.ISearchCacheInvalidator, GBA.Ecommerce.Background.OutputCacheSearchInvalidator>();
+        services.AddHostedService<GBA.Ecommerce.Background.RetailPricingContextMonitor>();
 
         services.AddScoped<ISqlContextFactory, SqlContextFactory>();
         services.AddScoped<ISqlDbContext>(t => new SqlDbContext(t.GetRequiredService<ConcordContext>()));
@@ -510,8 +516,8 @@ public class Startup {
             }
         });
 
-        app.UseExceptionHandler(builder => {
-            builder.Run(async context => {
+        app.UseExceptionHandler(new ExceptionHandlerOptions {
+            ExceptionHandler = async context => {
                 IExceptionHandlerFeature? error = context.Features.Get<IExceptionHandlerFeature>();
                 if (error?.Error == null) {
                     context.Response.StatusCode = StatusCodes.Status500InternalServerError;
@@ -519,13 +525,18 @@ public class Startup {
                 }
                 IGlobalExceptionHandler globalExceptionHandler = globalExceptionFactory.New();
 
-                await globalExceptionHandler.HandleException(context, error, _environment.IsDevelopment());
-            });
+                await globalExceptionHandler.HandleException(context, error);
+            },
+            // GlobalExceptionHandler records handled failures at their final severity.
+            // Avoid the framework's duplicate ERROR for expected 4xx responses.
+            SuppressDiagnosticsCallback = diagnosticsContext =>
+                ShouldSuppressExceptionHandlerDiagnostics(
+                    diagnosticsContext.HttpContext.Response.StatusCode)
         });
 
         app.UseMiddleware<ReflectionTypeLoadExceptionLoggingMiddleware>();
 
-        if (_environment.IsDevelopment()) {
+        if (_environment.IsDevelopment() && Configuration.GetValue<bool>("Security:EnableSwagger")) {
             app.UseSwagger();
             app.UseSwaggerUI(options => {
                 options.SwaggerEndpoint("/swagger/v1/swagger.json", "v1");
@@ -535,9 +546,7 @@ public class Startup {
 
         app.UseEndpoints(endpoints => {
             endpoints.MapControllerRoute("default", "{controller=Home}/{action=Index}");
-            endpoints.MapHub<ProductsReservationHub>("/hubs/products/reservation");
-            endpoints.MapHub<SuppliesOrdersHub>("/hubs/supplies/orders");
-            endpoints.MapHub<StorefrontHub>("/hubs/storefront");
+            endpoints.MapHub<GBA.Ecommerce.Hubs.StorefrontHub>("/hubs/storefront");
             endpoints.MapHealthChecks("/health", new HealthCheckOptions {
                 ResponseWriter = async (context, report) => {
                     context.Response.ContentType = "application/json";
@@ -546,14 +555,18 @@ public class Startup {
                         checks = report.Entries.Select(e => new {
                             name = e.Key,
                             status = e.Value.Status.ToString(),
-                            duration = e.Value.Duration.TotalMilliseconds,
-                            data = e.Value.Data
+                            duration = e.Value.Duration.TotalMilliseconds
                         })
                     });
                     await context.Response.WriteAsync(result);
                 }
-            }).DisableRateLimiting();
+            });
         });
+    }
+
+    internal static bool ShouldSuppressExceptionHandlerDiagnostics(int statusCode) {
+        return statusCode >= StatusCodes.Status400BadRequest
+            && statusCode < StatusCodes.Status500InternalServerError;
     }
 
     private static bool IsAnonymousGetRequest(OutputCacheContext context) {
@@ -592,6 +605,25 @@ public class Startup {
                && parsed <= maxValue;
     }
 
+    /// <summary>
+    /// Rate-limit partition key. It has to identify the CALLER, not the hop in front of it.
+    ///
+    /// <para>
+    /// Every shopper request reaches this API through the storefront's Next.js proxy, which runs
+    /// in a container on the private network. When that proxy forwards no client-IP header, the
+    /// peer address is the same for all of them and the whole shop shares one bucket - so the
+    /// "checkout" policy meant 20 sign-ups plus orders plus payment uploads per minute for ALL
+    /// customers together, and the 21st shopper was rejected because of strangers. The proxy now
+    /// forwards X-Forwarded-For / X-Real-IP; this method keeps honouring those headers only when
+    /// the peer itself is private or loopback, i.e. the request genuinely came through our own
+    /// front end, so an internet caller cannot spoof its way into someone else's bucket.
+    /// </para>
+    /// <para>
+    /// If the header is still missing, fall back to whatever caller identity the request carries
+    /// before giving up on the peer address, so the failure mode is a per-shopper bucket rather
+    /// than one global bucket. The permit limits themselves are unchanged.
+    /// </para>
+    /// </summary>
     private static string GetClientPartitionKey(HttpContext context) {
         IPAddress? remoteIp = context.Connection.RemoteIpAddress;
 
@@ -603,9 +635,25 @@ public class Startup {
             if (!string.IsNullOrWhiteSpace(forwardedIp)) {
                 return forwardedIp;
             }
+
+            string? callerId = GetCallerDiscriminator(context);
+            if (!string.IsNullOrWhiteSpace(callerId)) {
+                return $"caller:{callerId}";
+            }
         }
 
         return remoteIp?.ToString() ?? "unknown";
+    }
+
+    private static string? GetCallerDiscriminator(HttpContext context) {
+        foreach (string key in _callerDiscriminatorQueryKeys) {
+            string? value = context.Request.Query[key].FirstOrDefault();
+            if (Guid.TryParse(value, out Guid parsed) && parsed != Guid.Empty) {
+                return parsed.ToString("N");
+            }
+        }
+
+        return null;
     }
 
     private static string? GetFirstHeaderIp(HttpContext context, string headerName) {
@@ -680,7 +728,6 @@ public class Startup {
                 sqlOptions.MaxBatchSize(50);
             });
             options.EnableDetailedErrors();
-            options.EnableSensitiveDataLogging();
 #else
             options.UseSqlServer(Configuration.GetConnectionString(ConnectionStringNames.RemoteIdentity), sqlOptions => {
                 sqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: null);

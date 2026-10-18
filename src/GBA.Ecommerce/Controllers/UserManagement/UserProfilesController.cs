@@ -14,6 +14,7 @@ namespace GBA.Ecommerce.Controllers.UserManagement;
 public sealed class UserProfilesController(
     IClientService clientService,
     IClientAgreementService clientAgreementService,
+    IClientResourceAccessService clientResourceAccessService,
     IResponseFactory responseFactory)
     : WebApiControllerBase(responseFactory) {
     [HttpGet]
@@ -21,14 +22,16 @@ public sealed class UserProfilesController(
     public async Task<IActionResult> GetClientByNetId([FromQuery] Guid netId) {
         Guid userNetId = GetUserNetId();
         Guid clientNetId = netId.Equals(Guid.Empty) ? userNetId : netId;
+        if (!clientResourceAccessService.CanAccessClient(userNetId, clientNetId)) return Forbid();
+
         return Ok(SuccessResponseBody(await clientService.GetByNetId(clientNetId)));
     }
 
     [HttpGet]
     [AssignActionRoute(UserProfilesSegments.GET_ROOT_BY_SUBCLIENT)]
     public async Task<IActionResult> GetRootClientBySubClientNetId([FromQuery] Guid netId) {
-        Guid clientNetId = netId.Equals(Guid.Empty) ? GetUserNetId() : netId;
-        return Ok(SuccessResponseBody(await clientService.GetRootClientBySubClientNerId(clientNetId)));
+        Guid userNetId = GetUserNetId();
+        return Ok(SuccessResponseBody(await clientService.GetRootClientBySubClientNerId(userNetId)));
     }
 
     [HttpGet]

@@ -111,24 +111,38 @@ public sealed class ClientRepository : IClientRepository {
 
     public Guid GetRootNetIdBySubClientNetId(Guid netId) {
         return _connection.Query<Guid>(
-            "SELECT RootClient.NetUID FROM Client AS RootClient " +
-            "LEFT JOIN ClientSubClient " +
-            "ON ClientSubClient.RootClientID = RootClient.ID " +
-            "LEFT JOIN Client AS SubClient " +
-            "ON SubClient.ID = ClientSubClient.SubClientID " +
-            "WHERE SubClient.NetUID = @NetId ",
+            "SELECT [RootClient].NetUID " +
+            "FROM [ClientSubClient] " +
+            "INNER JOIN [Client] AS [RootClient] " +
+            "ON [RootClient].ID = [ClientSubClient].RootClientID " +
+            "AND [RootClient].Deleted = 0 " +
+            "INNER JOIN [Client] AS [SubClient] " +
+            "ON [SubClient].ID = [ClientSubClient].SubClientID " +
+            "AND [SubClient].Deleted = 0 " +
+            "WHERE [ClientSubClient].Deleted = 0 " +
+            "AND [SubClient].NetUID = @NetId ",
             new { NetId = netId }
         ).FirstOrDefault();
     }
 
     public Client GetClientNetIdByMobileNumber(string value) {
-        return _connection.Query<Client>(
-                "SELECT * FROM [Client] " +
-                "WHERE [Client].Deleted = 0 " +
-                "AND [Client].[MobileNumber] = @Value",
-                new { Value = value }
-            )
-            .FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        List<Client> matches = _connection.Query<Client>(
+                "SELECT TOP (2) [Client].* " +
+                "FROM [Client] " +
+                "WHERE [Client].[Deleted] = 0 " +
+                "AND ([Client].[MobileNumber] = @Value " +
+                "OR [Client].[ClientNumber] = @Value " +
+                "OR [Client].[SMSNumber] = @Value) " +
+                "ORDER BY [Client].[ID]",
+                new {Value = value.Trim()})
+            .ToList();
+
+        return matches.Count == 1
+            ? matches[0]
+            : null;
     }
 
 

@@ -1,4 +1,4 @@
-using System.Globalization;
+using System;
 using System.Net;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -10,6 +10,7 @@ using GBA.Common.Exceptions.UserExceptions.Contracts;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using NLog;
+using HttpBadHttpRequestException = Microsoft.AspNetCore.Http.BadHttpRequestException;
 
 namespace GBA.Common.Exceptions.GlobalHandler;
 
@@ -35,32 +36,45 @@ public class GlobalExceptionHandler : IGlobalExceptionHandler {
     /// </summary>
     /// <param name="httpContext"></param>
     /// <param name="exceptionHandlerFeature"></param>
-    /// <param name="isDevelopmentMode"></param>
     /// <returns></returns>
-    public async Task HandleException(HttpContext httpContext, IExceptionHandlerFeature exceptionHandlerFeature, bool isDevelopmentMode) {
+    public async Task HandleException(HttpContext httpContext, IExceptionHandlerFeature exceptionHandlerFeature) {
         //Unhandler sever exceptions.
-        await HandleServerException(httpContext, exceptionHandlerFeature, isDevelopmentMode);
+        await HandleServerException(httpContext, exceptionHandlerFeature);
     }
 
-    private async Task HandleServerException(HttpContext context, IExceptionHandlerFeature exceptionHandler, bool isDevelopment) {
-        HttpStatusCode statusCode = exceptionHandler.Error is IRouteContraintException
+    private async Task HandleServerException(HttpContext context, IExceptionHandlerFeature exceptionHandler) {
+        bool isRouteConstraint = exceptionHandler.Error is IRouteContraintException;
+        bool isInvalidRequest = exceptionHandler.Error is ArgumentException or JsonException;
+        bool isForbidden = exceptionHandler.Error is UnauthorizedAccessException;
+        bool isBadHttpRequest = TryGetBadHttpRequestStatusCode(exceptionHandler.Error, out HttpStatusCode badRequestStatusCode);
+        HttpStatusCode statusCode = isRouteConstraint || isForbidden
             ? HttpStatusCode.Forbidden
-            : HttpStatusCode.BadRequest;
+            : isBadHttpRequest
+                ? badRequestStatusCode
+            : isInvalidRequest
+                ? HttpStatusCode.BadRequest
+                : HttpStatusCode.InternalServerError;
 
         string correlationId = context.GetCorrelationId();
 
-        string developerMessage = string.Format(CultureInfo.CurrentCulture,
-            $"{exceptionHandler.Error.Message}</br>{exceptionHandler.Error.InnerException}</br>{exceptionHandler.Error.StackTrace}");
-
         context.Response.StatusCode = (int)statusCode;
         context.Response.ContentType = "application/json";
+        context.Response.Headers.CacheControl = "no-store";
         string errorMessage = exceptionHandler.Error is IRouteContraintException routeException
             ? routeException.GetUserMessageException
-            : exceptionHandler.Error.Message;
+            : isForbidden
+                ? "Access is forbidden."
+            : isBadHttpRequest
+                ? statusCode == HttpStatusCode.RequestEntityTooLarge
+                    ? "The request is too large."
+                    : "The request is invalid."
+            : isInvalidRequest
+                ? "The request is invalid."
+                : "An unexpected error occurred.";
 
         ErrorResponse response = new() {
             Body = null,
-            Message = isDevelopment ? developerMessage : errorMessage,
+            Message = errorMessage,
             StatusCode = statusCode,
             CorrelationId = correlationId
         };
@@ -69,7 +83,7 @@ public class GlobalExceptionHandler : IGlobalExceptionHandler {
             PropertyNamingPolicy = null
         })).ConfigureAwait(false);
 
-        LogEventInfo logEvent = new(LogLevel.Error, _logger.Name, exceptionHandler.Error.Message) {
+        LogEventInfo logEvent = new(GetLogLevel(statusCode), _logger.Name, exceptionHandler.Error.Message) {
             Exception = exceptionHandler.Error
         };
         logEvent.Properties[LoggingDefaults.CorrelationIdProperty] = correlationId;
@@ -78,5 +92,26 @@ public class GlobalExceptionHandler : IGlobalExceptionHandler {
         logEvent.Properties["UserNetId"] = context.GetUserNetId();
         logEvent.Properties["StatusCode"] = (int)statusCode;
         _logger.Log(logEvent);
+    }
+
+    private static bool TryGetBadHttpRequestStatusCode(Exception exception, out HttpStatusCode statusCode) {
+        int rawStatusCode = exception switch {
+            HttpBadHttpRequestException httpException => httpException.StatusCode,
+            _ => 0
+        };
+
+        if (rawStatusCode is >= StatusCodes.Status400BadRequest and < StatusCodes.Status500InternalServerError) {
+            statusCode = (HttpStatusCode)rawStatusCode;
+            return true;
+        }
+
+        statusCode = default;
+        return false;
+    }
+
+    private static LogLevel GetLogLevel(HttpStatusCode statusCode) {
+        return (int)statusCode >= (int)HttpStatusCode.InternalServerError
+            ? LogLevel.Error
+            : LogLevel.Warn;
     }
 }

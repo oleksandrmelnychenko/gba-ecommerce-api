@@ -19,15 +19,21 @@
 
     <ItemGroup>
         <PackageReference Include="Google.OrTools" Version="9.15.6755"/>
-        <PackageReference Include="MailKit" Version="4.16.0"/>
-        <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.18.0"/>
+        <PackageReference Include="MailKit" Version="4.17.0"/>
+        <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.21.0"/>
         <PackageReference Include="SlugGenerator" Version="2.0.2"/>
-        <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.18.0"/>
+        <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.21.0"/>
     </ItemGroup>
 
     <ItemGroup>
         <ProjectReference Include="..\GBA.Common\GBA.Common.csproj"/>
         <ProjectReference Include="..\GBA.Domain\GBA.Domain.csproj"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+            <_Parameter1>GBA.Ecommerce.Api.Tests</_Parameter1>
+        </AssemblyAttribute>
     </ItemGroup>
 
 </Project>

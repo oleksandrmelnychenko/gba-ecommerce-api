@@ -9,6 +9,7 @@ using GBA.Common.IdentityConfiguration.Roles;
 using GBA.Common.ResponseBuilder.Contracts;
 using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
+using GBA.Domain.Entities;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.EntityHelpers;
 using GBA.Domain.Repositories.Products;
@@ -17,8 +18,10 @@ using GBA.Search.Models;
 using GBA.Search.Services;
 using GBA.Services.Services.Products;
 using GBA.Services.Services.Products.Contracts;
+using GBA.Services.Services.Clients.Contracts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OutputCaching;
 using Microsoft.AspNetCore.RateLimiting;
 
 namespace GBA.Ecommerce.Controllers;
@@ -27,134 +30,121 @@ namespace GBA.Ecommerce.Controllers;
 public sealed class ProductsController(
     IProductService productService,
     IElasticsearchProductSearchService esSearchService,
-    ISearchServingGenerationResolver servingGenerationResolver,
     IPriceCacheService priceCacheService,
+    IClientResourceAccessService clientResourceAccessService,
     IResponseFactory responseFactory) : WebApiControllerBase(responseFactory) {
     private const int _defaultSearchLimit = 20;
     private const int _maxSearchLimit = 100;
     private const int _maxSearchOffset = 5000;
-    private const int _liveHydrationCandidateBatchSize = 100;
-    private const int _maxLiveHydrationCandidates = 10_000;
+    private const int _defaultSeoIndexLimit = 1000;
+    private const int _maxSeoIndexLimit = 5000;
 
     [HttpGet]
     [AssignActionRoute(ProductsSegments.SEARCH)]
     [EnableRateLimiting("search")]
-    public Task<IActionResult> GetAllFromSearchAsync([FromQuery] string value, [FromQuery] long limit, [FromQuery] long offset, [FromQuery] int withVat = 0, CancellationToken cancellationToken = default) =>
-        SearchServingRequestGuard.ExecuteAsync(
-            servingGenerationResolver,
-            generation => SearchWithElasticsearchAsync(
-                value,
-                limit,
-                offset,
-                withVat,
-                generation,
-                cancellationToken),
-            cancellationToken);
+    public async Task<IActionResult> GetAllFromSearchAsync([FromQuery] string value, [FromQuery] long limit, [FromQuery] long offset, [FromQuery] int withVat = 0, CancellationToken cancellationToken = default) {
+        return await SearchWithElasticsearchAsync(value, limit, offset, withVat, cancellationToken);
+    }
 
-    private async Task<IActionResult> SearchWithElasticsearchAsync(
-        string value,
-        long limit,
-        long offset,
-        int withVat,
-        SearchActiveGeneration servingGeneration,
-        CancellationToken cancellationToken) {
-        _ = servingGeneration;
+    private async Task<IActionResult> SearchWithElasticsearchAsync(string value, long limit, long offset, int withVat, CancellationToken cancellationToken) {
         if (string.IsNullOrWhiteSpace(value))
             return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
 
         Guid userNetId = GetUserNetId();
         string locale = RouteData.Values["culture"]?.ToString() ?? "uk";
-        bool requestedWithVat = withVat.Equals(1);
-
-        ProductPricingContext pricingContext = productService.GetPricingContext(userNetId, requestedWithVat);
-        if (pricingContext == null || pricingContext.WithVat != requestedWithVat)
-            return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
-
-        PricingDependencyRevisions pricingRevisions = pricingContext.DependencyRevisions;
-        ProductSearchCatalogContext catalogContext = new(
-            pricingContext.OrganizationId,
-            pricingContext.Source,
-            pricingContext.WithVat,
-            pricingContext.ClientAgreementNetId,
-            pricingContext.PricingId.GetValueOrDefault(),
-            pricingContext.CurrencyId.GetValueOrDefault(),
-            UseIndexedRetailPrice: false,
-            pricingRevisions);
-        if (!catalogContext.IsValid)
-            return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
 
         int esLimit = limit <= 0 ? _defaultSearchLimit : (int)Math.Min(limit, _maxSearchLimit);
         int esOffset = offset < 0 ? 0 : (int)Math.Min(offset, _maxSearchOffset);
 
-        long timestamp = PriceObfuscator.GetTimestamp();
-        int requiredEligibleCount = checked(esOffset + esLimit);
-        int candidateOffset = 0;
-        int candidateTotal = int.MaxValue;
-        HashSet<long> seenProductIds = [];
-        List<(ProductSearchDocument Document, ProductPriceInfo Price)> eligible = [];
+        ProductSearchResultWithDocs searchResult = await esSearchService.SearchWithDocsAsync(value, locale, esLimit, esOffset, cancellationToken);
 
-        while (candidateOffset < candidateTotal
-               && candidateOffset < _maxLiveHydrationCandidates
-               && eligible.Count < requiredEligibleCount) {
-            int candidateLimit = Math.Min(
-                _liveHydrationCandidateBatchSize,
-                _maxLiveHydrationCandidates - candidateOffset);
-            ProductSearchResultWithDocs candidatePage = await esSearchService.SearchWithDocsAsync(
-                value,
-                catalogContext,
-                locale,
-                candidateLimit,
-                candidateOffset,
-                cancellationToken);
-            candidateTotal = candidatePage.TotalCount;
-            if (candidatePage.Documents.Count == 0) break;
-
-            List<ProductSearchDocument> uniqueDocuments = candidatePage.Documents
-                .Where(document => document.Id > 0 && seenProductIds.Add(document.Id))
-                .ToList();
-            List<long> productIds = uniqueDocuments.Select(document => document.Id).ToList();
-            Dictionary<long, ProductPriceInfo> prices = priceCacheService.GetPrices(
-                productIds,
-                userNetId,
-                pricingContext,
-                locale,
-                ids => productService.GetPricesOnly(ids, pricingContext, locale));
-
-            foreach (ProductSearchDocument document in uniqueDocuments) {
-                if (prices.TryGetValue(document.Id, out ProductPriceInfo? price)
-                    && price != null
-                    && price.Price > 0) {
-                    eligible.Add((document, price));
-                }
-            }
-
-            candidateOffset += candidatePage.Documents.Count;
-        }
-
-        bool exactRequestedPageIsKnown = eligible.Count >= requiredEligibleCount
-                                         || candidateOffset >= candidateTotal;
-        if (!exactRequestedPageIsKnown)
+        if (searchResult.Documents.Count == 0)
             return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
 
-        List<(ProductSearchDocument Document, ProductPriceInfo Price)> requestedPage = eligible
-            .Skip(esOffset)
-            .Take(esLimit)
-            .ToList();
-        Dictionary<long, ProductCatalogAvailabilityInfo> availability =
-            productService.GetCatalogAvailabilityOnly(
-                requestedPage.Select(item => item.Document.Id).ToList(),
-                pricingContext);
-        List<ProtectedSearchProduct> protectedProducts = requestedPage
-            .Select(item => DocToProtectedProduct(
-                item.Document,
-                item.Price,
-                availability.GetValueOrDefault(item.Document.Id),
-                requestedWithVat,
+        // Elasticsearch is the catalog/search projection, not the pricing authority.
+        // Resolve all prices in one SQL batch so anonymous retail prices use the active
+        // ecommerce storage/agreement (including its currency and VAT mode) exactly like
+        // the product details endpoint. The per-product cache keeps repeated searches fast.
+        List<long> productIds = searchResult.Documents.Select(d => d.Id).ToList();
+        ProductPricingContext pricingContext =
+            productService.GetPricingContext(userNetId, withVat.Equals(1));
+        Dictionary<long, ProductPriceInfo> prices = priceCacheService.GetPrices(
+            productIds,
+            userNetId,
+            withVat.Equals(1),
+            locale,
+            pricingContext.CacheKey,
+            ids => productService.GetPricesOnly(ids, userNetId, withVat.Equals(1), locale));
+
+        // Stock is more volatile than the search document. Always overlay it from SQL using the
+        // same storage scope cart reservation uses; otherwise a targeted re-index race can expose
+        // stock that checkout cannot reserve.
+        Dictionary<long, double> sellableQuantities =
+            productService.GetSellableQuantities(productIds, userNetId, locale);
+
+        string fallbackCurrencyCode = pricingContext.CurrencyCode;
+
+        long timestamp = PriceObfuscator.GetTimestamp();
+        List<ProtectedSearchProduct> protectedProducts = searchResult.Documents.Select(doc => {
+            prices.TryGetValue(doc.Id, out ProductPriceInfo? priceInfo);
+            sellableQuantities.TryGetValue(doc.Id, out double sellableQuantity);
+            ProductPriceInfo resolvedPrice = ResolveSearchPrice(
+                priceInfo,
+                pricingContext.CurrencyCode);
+            return DocToProtectedProduct(
+                doc,
+                resolvedPrice,
                 locale,
-                timestamp))
-            .ToList();
+                timestamp,
+                ResolveVisibleSearchQuantity(
+                    resolvedPrice,
+                    sellableQuantity,
+                    userNetId != Guid.Empty),
+                fallbackCurrencyCode);
+        }).ToList();
 
         return Ok(SuccessResponseBody(protectedProducts));
+    }
+
+    internal static ProductPriceInfo ResolveSearchPrice(
+        ProductPriceInfo? calculatedPrice,
+        string configuredCurrencyCode) {
+        return calculatedPrice ?? new ProductPriceInfo {
+            Price = 0,
+            LocalPrice = 0,
+            CurrencyCode = configuredCurrencyCode ?? string.Empty
+        };
+    }
+
+    internal static double ResolveVisibleSearchQuantity(
+        ProductPriceInfo? authoritativePrice,
+        double sellableQuantity,
+        bool isAuthenticated) {
+        return (isAuthenticated || authoritativePrice?.Price > 0m)
+               && double.IsFinite(sellableQuantity)
+            ? Math.Max(0d, sellableQuantity)
+            : 0d;
+    }
+
+    /// <summary>
+    /// Returns a stable, lightweight list of public product URLs for sitemap generation.
+    /// The response intentionally excludes prices, availability and client-specific data.
+    /// </summary>
+    [HttpGet]
+    [AllowAnonymous]
+    [AssignActionRoute(ProductsSegments.SEO_INDEX)]
+    [OutputCache(PolicyName = "ProductSeoIndex")]
+    [EnableRateLimiting("seo-index")]
+    public async Task<IActionResult> GetSeoIndex(
+        [FromQuery] int limit = _defaultSeoIndexLimit,
+        [FromQuery] long offset = 0) {
+        int safeLimit = limit <= 0
+            ? _defaultSeoIndexLimit
+            : Math.Min(limit, _maxSeoIndexLimit);
+        long safeOffset = Math.Max(offset, 0);
+
+        return Ok(SuccessResponseBody(
+            await productService.GetSeoIndex(safeLimit, safeOffset)));
     }
 
     [HttpGet]
@@ -165,7 +155,7 @@ public sealed class ProductsController(
         if (userNetId == Guid.Empty)
             return Ok(
                 SuccessResponseBody(
-                    await productService.GetAllAnaloguesByProductNetIdForRetail(netId, withVat.Equals(1))
+                    await productService.GetAllAnaloguesByProductNetIdForRetail(netId)
                 )
             );
 
@@ -200,8 +190,7 @@ public sealed class ProductsController(
     public async Task<IActionResult> GetProductByNetId([FromQuery] Guid netId, [FromQuery] int withVat = 0) {
         Guid userNetId = GetUserNetId();
 
-        if (userNetId == Guid.Empty)
-            return Ok(SuccessResponseBody(await productService.GetByNetIdForRetail(netId, withVat.Equals(1))));
+        if (userNetId == Guid.Empty) return Ok(SuccessResponseBody(await productService.GetByNetIdForRetail(netId)));
 
         return Ok(
             SuccessResponseBody(
@@ -255,18 +244,21 @@ public sealed class ProductsController(
     [AssignActionRoute(ProductsSegments.GET_ORDERED_PRODUCTS_HISTORY)]
     public async Task<IActionResult> GetOrderedProductsHistory([FromQuery] Guid netId) {
         if (netId.Equals(Guid.Empty)) return BadRequest(ErrorResponseBody("empty guid", HttpStatusCode.BadRequest));
+        if (!clientResourceAccessService.CanAccessClient(GetUserNetId(), netId)) return Forbid();
+
         return Ok(SuccessResponseBody(await productService.GetAllOrderedProductsHistoryByClientNetId(netId)));
     }
 
     private static ProtectedSearchProduct DocToProtectedProduct(
         ProductSearchDocument doc,
-        ProductPriceInfo priceInfo,
-        ProductCatalogAvailabilityInfo? availability,
-        bool withVat,
+        ProductPriceInfo? priceInfo,
         string locale,
-        long timestamp) {
-        decimal price = priceInfo.Price;
-        string currencyCode = priceInfo.CurrencyCode;
+        long timestamp,
+        double sellableQuantity,
+        string fallbackCurrencyCode) {
+        decimal price = priceInfo?.Price ?? 0;
+        decimal localPrice = priceInfo?.LocalPrice ?? 0;
+        string currencyCode = priceInfo?.CurrencyCode ?? fallbackCurrencyCode;
         bool isUk = locale == "uk";
 
         return new ProtectedSearchProduct {
@@ -281,11 +273,11 @@ public sealed class ProductsController(
             UCGFEA = doc.Ucgfea,
             Volume = doc.Volume,
             Top = doc.Top,
-            AvailableQtyUk = withVat ? 0 : availability?.AvailableQtyUk ?? 0,
+            AvailableQtyUk = sellableQuantity,
             AvailableQtyRoad = 0,
-            AvailableQtyUkVAT = withVat ? availability?.AvailableQtyUk ?? 0 : 0,
-            AvailableQtyPl = withVat ? 0 : availability?.AvailableQtyPl ?? 0,
-            AvailableQtyPlVAT = withVat ? availability?.AvailableQtyPl ?? 0 : 0,
+            AvailableQtyUkVAT = sellableQuantity,
+            AvailableQtyPl = doc.AvailableQtyPl,
+            AvailableQtyPlVAT = doc.AvailableQtyPlVat,
             Weight = doc.Weight,
             HasAnalogue = doc.HasAnalogue,
             HasComponent = doc.HasComponent,
@@ -297,7 +289,11 @@ public sealed class ProductsController(
             OriginalNumbers = doc.OriginalNumbers,
             Image = doc.Image,
             MeasureUnitId = doc.MeasureUnitId,
-            P = PriceObfuscator.EncodeMultiple([price, price, 0m, 0m], timestamp),
+            // Prices are encrypted with the shared price key and never shipped as cleartext. The
+            // slots are [current, local, currentWithVat, localWithVat]; this endpoint resolves the
+            // price in exactly one VAT mode (effectiveWithVat above), so the VAT slots carry the
+            // same VAT-resolved values instead of the hardcoded 0.00 the debug path emitted.
+            P = PriceObfuscator.EncodeMultiple(new[] { price, localPrice, price, localPrice }, timestamp),
             CurrencyCode = currencyCode,
             T = timestamp,
             ProductSlug = doc.SlugId > 0 ? new ProductSlug {

@@ -64,6 +64,8 @@ public sealed class AuthContractTests(EcommerceApiFixture fixture) : IClassFixtu
                 password = $"wrong-{Guid.NewGuid():N}"
             });
 
+        if (await AssertRateLimitEnvelopeAndReturnAsync(response)) return;
+
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
         ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);

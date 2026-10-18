@@ -1,5 +1,3 @@
-#nullable enable
-
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -10,28 +8,15 @@ using GBA.Domain.EntityHelpers.SalesModels.Models;
 namespace GBA.Services.Services.Orders.Contracts;
 
 public interface IOrderService {
-    Task<Sale> GenerateNewOrderAndSaleFromClientShoppingCart(Guid clientNetId, bool withVat, Guid operationNetUid);
+    Task<Sale> GenerateNewOrderAndSaleFromClientShoppingCart(Guid clientNetId, bool withVat);
 
-    Task<Sale> GenerateNewSaleWithInvoice(
-        Sale sale,
-        Guid clientNetId,
-        bool isWorkplace,
-        Guid operationNetUid,
-        byte[]? attachmentFingerprint = null);
+    Task<Sale> GenerateNewSaleWithInvoice(Sale sale, Guid clientNetId, bool isWorkplace);
 
-    Task<Order> DynamicallyCalculateTotalPrices(Order order);
+    Task<Order> DynamicallyCalculateTotalPrices(Order order, Guid clientNetId);
 
-    Task<string> GenerateNewQuickSaleWithInvoice(
-        Sale sale,
-        Guid retailClientNetId,
-        bool fullPayment,
-        Guid operationNetUid);
+    Task<string> GenerateNewQuickSaleWithInvoice(Sale sale, Guid retailClientNetId, bool fullPayment);
 
-    Task<string> GenerateNewRetailSale(
-        Sale sale,
-        Guid retailClientNetId,
-        bool fullPayment,
-        Guid operationNetUid);
+    Task<string> GenerateNewRetailSale(Sale sale, Guid retailClientNetId, bool fullPayment);
 
     Task<List<OrderItem>> RemoveUnavailableProducts(List<OrderItem> orderItems, long retailClientId);
 

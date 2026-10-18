@@ -1,8 +1,11 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 
 namespace GBA.Ecommerce.Hubs;
 
 /// <summary>
-/// Browser endpoint for storefront-wide pricing and stock context changes.
+/// Publishes storefront-wide configuration changes to connected shoppers.
 /// </summary>
-public sealed class StorefrontHub : Hub;
+[AllowAnonymous]
+public sealed class StorefrontHub : Hub {
+}

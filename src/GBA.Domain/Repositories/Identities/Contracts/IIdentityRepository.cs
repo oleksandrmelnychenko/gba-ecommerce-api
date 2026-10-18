@@ -37,5 +37,7 @@ public interface IIdentityRepository {
 
     Task DisableUser(Guid netId);
 
+    Task DeleteUser(UserIdentity user);
+
     Task DeleteUserByNetId(string netId);
 }

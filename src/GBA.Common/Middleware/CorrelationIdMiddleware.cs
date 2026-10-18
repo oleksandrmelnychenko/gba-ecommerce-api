@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using GBA.Common.Logging;
 using Microsoft.AspNetCore.Http;
@@ -13,6 +14,7 @@ namespace GBA.Common.Middleware;
 /// scope so that every log line emitted while handling the request carries it.
 /// </summary>
 public sealed class CorrelationIdMiddleware {
+    private const int _maxCorrelationIdLength = 64;
     private readonly RequestDelegate _next;
 
     public CorrelationIdMiddleware(RequestDelegate next) {
@@ -32,8 +34,12 @@ public sealed class CorrelationIdMiddleware {
 
     private static string ResolveCorrelationId(HttpContext context) {
         if (context.Request.Headers.TryGetValue(LoggingDefaults.CorrelationIdHeader, out StringValues inbound)) {
-            string candidate = inbound.ToString();
-            if (!string.IsNullOrWhiteSpace(candidate)) return candidate.Trim();
+            string candidate = inbound.ToString().Trim();
+            if (candidate.Length is > 0 and <= _maxCorrelationIdLength &&
+                candidate.All(character =>
+                    char.IsAsciiLetterOrDigit(character) ||
+                    character is '-' or '_' or '.'))
+                return candidate;
         }
 
         return Guid.NewGuid().ToString("N");

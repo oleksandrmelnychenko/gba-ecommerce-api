@@ -51,6 +51,8 @@ public static class ProductsSegments {
 
     public const string SEARCH = "search";
 
+    public const string SEO_INDEX = "seo/index";
+
     public const string SEARCH_V2 = "search/v2";
 
     public const string ADVANCED_SEARCH = "search/advanced";

@@ -7,6 +7,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
+using GBA.Common.Configuration;
 using GBA.Common.Exceptions.CustomExceptions;
 using GBA.Common.Helpers;
 using GBA.Common.ResourceNames.ECommerce;
@@ -25,7 +26,6 @@ using GBA.Domain.Repositories.Products.Contracts;
 using GBA.Domain.Repositories.Sales.Contracts;
 using GBA.Domain.Repositories.Storages.Contracts;
 using GBA.Services.Infrastructure;
-using GBA.Services.Infrastructure.SalesMutations;
 using GBA.Services.Services.Clients.Contracts;
 using Microsoft.Extensions.Http;
 using GBA.Common.Models;
@@ -39,6 +39,106 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
     private static OrderItem NormalizeOverLordQty(OrderItem orderItem) {
         if (orderItem.OverLordQty <= 0 && orderItem.Qty > 0) orderItem.OverLordQty = orderItem.Qty;
+
+        return orderItem;
+    }
+
+    internal static (ClientAgreement ClientAgreement, Workplace Workplace) ResolveCartContext(
+        Guid actorNetId,
+        IClientAgreementRepository clientAgreementRepository,
+        IWorkplaceRepository workplaceRepository) {
+        ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(actorNetId);
+        Workplace workplace = null;
+
+        if (clientAgreement == null) {
+            workplace = workplaceRepository.GetByNetId(actorNetId);
+            clientAgreement = workplace == null
+                ? clientAgreementRepository.GetSelectedByClientNotSelectedNetId(actorNetId)
+                : clientAgreementRepository.GetSelectedByWorkplaceNetId(actorNetId);
+        }
+
+        if (clientAgreement?.Agreement?.Organization == null)
+            throw new ArgumentException("A valid client agreement is required.");
+
+        return (clientAgreement, workplace);
+    }
+
+    private decimal ResolveLiveProductExchangeRate(
+        IDbConnection connection,
+        Product product,
+        ClientAgreement clientAgreement) {
+        long currencyId = clientAgreement?.Agreement?.CurrencyId ??
+            throw new InvalidOperationException("Client agreement currency is not configured.");
+        decimal exchangeRateAmount = _exchangeRateRepositoriesFactory
+            .NewExchangeRateRepository(connection)
+            .GetEuroExchangeRateByCurrentCultureFiltered(
+                product.NetUid,
+                clientAgreement.Agreement.WithVATAccounting,
+                false,
+                currencyId);
+
+        if (exchangeRateAmount <= 0m)
+            throw new InvalidOperationException(
+                $"A valid exchange rate is not configured for product {product.NetUid} and currency {currencyId}.");
+
+        return exchangeRateAmount;
+    }
+
+    private OrderItem ApplyAuthoritativeProduct(
+        IDbConnection connection,
+        ClientAgreement clientAgreement,
+        OrderItem orderItem) {
+        if (orderItem == null || !double.IsFinite(orderItem.Qty) ||
+            orderItem.Qty <= 0 || orderItem.Qty > 100000)
+            throw new ArgumentException("Order item quantity is invalid.");
+
+        IGetSingleProductRepository productRepository =
+            _productRepositoriesFactory.NewGetSingleProductRepository(connection);
+        Guid productNetId = orderItem.Product?.NetUid ?? Guid.Empty;
+        if (productNetId == Guid.Empty && orderItem.ProductId > 0)
+            productNetId = productRepository.GetById(orderItem.ProductId)?.NetUid ?? Guid.Empty;
+        if (productNetId == Guid.Empty)
+            throw new ArgumentException("A valid product is required.");
+
+        Product product = productRepository.GetProductByNetId(
+            productNetId,
+            clientAgreement.NetUid,
+            clientAgreement.Agreement.WithVATAccounting,
+            clientAgreement.Agreement.CurrencyId,
+            clientAgreement.Agreement.OrganizationId);
+        if (!EcommercePurchasability.IsPurchasable(product))
+            throw new ArgumentException(EcommercePurchasability.NotAvailableMessage);
+        if (!EcommercePurchasability.HasSellablePrice(product))
+            throw new ArgumentException(EcommercePurchasability.NotPricedMessage);
+
+        decimal exchangeRateAmount = ResolveLiveProductExchangeRate(
+            connection,
+            product,
+            clientAgreement);
+        product.CurrentLocalPrice = decimal.Round(
+            product.CurrentPrice * exchangeRateAmount, 2, MidpointRounding.AwayFromZero);
+
+        orderItem.Product = product;
+        orderItem.ProductId = product.Id;
+        orderItem.PricePerItem = product.CurrentPrice;
+        orderItem.ExchangeRateAmount = exchangeRateAmount;
+        orderItem.TotalAmount = decimal.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+        orderItem.TotalAmountLocal = decimal.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+        orderItem.OverLordQty = orderItem.Qty;
+        orderItem.OrderedQty = orderItem.Qty;
+        orderItem.OneTimeDiscount = 0;
+        orderItem.Discount = 0;
+        orderItem.DiscountAmount = 0;
+        orderItem.PricePerItemWithoutVat = 0;
+        orderItem.FromOfferQty = 0;
+        orderItem.IsFromOffer = false;
+        orderItem.IsFromReSale = false;
+        orderItem.AssignedSpecificationId = null;
+        orderItem.MisplacedSaleId = null;
+        orderItem.IsValidForCurrentSale = true;
+        orderItem.Vat = clientAgreement.Agreement.WithVATAccounting
+            ? Convert.ToDecimal(clientAgreement.Agreement.Organization?.VatRate?.Value ?? 0)
+            : 0;
 
         return orderItem;
     }
@@ -88,58 +188,35 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
     public Task<OrderItem> Add(OrderItem orderItem, Guid clientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        using var mutation = new CartMutationScope(connection);
             if (orderItem == null)
                 throw new Exception("OrderItem can not be empty.");
             if (!orderItem.IsNew())
                 throw new Exception("Existing OrderItem is not valid input for current request.");
             if (orderItem.ProductId.Equals(0) && orderItem.Product == null)
                 throw new Exception("Product need to be specified.");
-            LegacyCheckoutPolicy.RequireQuantity(orderItem.Qty);
-
-            if (orderItem.Product != null) orderItem.ProductId = orderItem.Product.Id;
-
-            mutation.AfterCommit<long>(_reindexSignal.Request, orderItem.ProductId);
+            if (orderItem.Qty.Equals(0)) throw new Exception("You need to specify Qty of product that will be added.");
 
             IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
             IWorkplaceRepository workplaceRepository = _clientRepositoriesFactory.NewWorkplaceRepository(connection);
 
-            Workplace workplace = null;
+            (ClientAgreement clientAgreement, Workplace workplace) = ResolveCartContext(
+                clientNetId,
+                clientAgreementRepository,
+                workplaceRepository);
 
-            ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(clientNetId);
-
-            if (clientAgreement == null) {
-                workplace = workplaceRepository.GetByNetId(clientNetId);
-                clientAgreement = clientAgreementRepository.GetSelectedByWorkplaceNetId(workplace.NetUid);
-            }
+            ApplyAuthoritativeProduct(connection, clientAgreement, orderItem);
 
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
 
-            IEnumerable<ProductAvailability> productAvailabilities;
-
-            if (clientAgreement.Agreement.WithVATAccounting) {
-                productAvailabilities =
-                    productAvailabilityRepository
-                        .GetByProductAndOrganizationIds(
-                            orderItem.ProductId,
-                            clientAgreement.Agreement.Organization.Id,
-                            clientAgreement.Agreement.WithVATAccounting
-                        );
-            } else {
-                List<Storage> allStorages = _storageRepositoryFactory.NewStorageRepository(connection).GetAllNonDefectiveByCurrentLocale().ToList();
-
-                List<Storage> storages = new(allStorages.Where(s => s.AvailableForReSale));
-                storages.AddRange(allStorages.Where(e => e.OrganizationId.Equals(clientAgreement.Agreement.OrganizationId)));
-
-                productAvailabilities = productAvailabilityRepository
-                    .GetAllByProductAndStorageIds(
-                        orderItem.ProductId,
-                        storages.Select(e => e.Id).ToList());
-            }
+            IEnumerable<ProductAvailability> productAvailabilities =
+                productAvailabilityRepository.GetForEcommercePurchase(
+                    orderItem.ProductId,
+                    clientAgreement.Agreement.Organization.Id,
+                    CultureInfo.CurrentCulture.TwoLetterISOLanguageName);
 
             if (!productAvailabilities.Any()) throw new Exception("Product is not available");
 
-            double qtyRemainderProducts = productAvailabilities.Sum(a => a.Amount);
+            double qtyRemainderProducts = productAvailabilities.Sum(a => Math.Max(0d, a.Amount));
 
             if (qtyRemainderProducts < orderItem.Qty)
                 throw new LocalizedException(
@@ -161,8 +238,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 if (clientShoppingCart.OrderItems.Any(i => i.ProductId.Equals(orderItem.ProductId))) {
                     OrderItem existingOrderItem = clientShoppingCart.OrderItems.First(i => i.ProductId.Equals(orderItem.ProductId));
 
-                    return mutation.Complete(Task.FromResult(
-                        UpdateExistingOrderItemInShoppingCart(
+                    OrderItem updatedItem = UpdateExistingOrderItemInShoppingCart(
                             orderItem,
                             connection,
                             productAvailabilityRepository,
@@ -171,14 +247,14 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                             existingOrderItem,
                             clientAgreement.Agreement.CurrencyId,
                             clientAgreement.NetUid
-                        )
-                    ));
+                        );
+                    _reindexSignal.Request(orderItem.ProductId);
+                    return Task.FromResult(updatedItem);
                 }
 
                 orderItem.ClientShoppingCartId = clientShoppingCart.Id;
 
-                return mutation.Complete(Task.FromResult(
-                    AddNewItemToShoppingCart(
+                OrderItem addedItem = AddNewItemToShoppingCart(
                         orderItem,
                         connection,
                         productAvailabilityRepository,
@@ -186,8 +262,9 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                         productAvailabilities,
                         clientAgreement?.Agreement.CurrencyId,
                         clientAgreement?.NetUid
-                    )
-                ));
+                    );
+                _reindexSignal.Request(orderItem.ProductId);
+                return Task.FromResult(addedItem);
             }
 
             clientShoppingCart = new ClientShoppingCart {
@@ -201,8 +278,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
             orderItem.ClientShoppingCartId = clientShoppingCart.Id;
 
-            return mutation.Complete(Task.FromResult(
-                AddNewItemToShoppingCart(
+            OrderItem createdItem = AddNewItemToShoppingCart(
                     orderItem,
                     connection,
                     productAvailabilityRepository,
@@ -210,50 +286,39 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                     productAvailabilities,
                     clientAgreement?.Agreement.CurrencyId,
                     clientAgreement?.NetUid
-                )
-            ));
+                );
+            _reindexSignal.Request(orderItem.ProductId);
+            return Task.FromResult(createdItem);
     }
 
     public Task<List<OrderItem>> Add(List<OrderItem> orderItems, Guid clientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        using var mutation = new CartMutationScope(connection);
             for (int item = 0; item < orderItems.Count; item++) {
                 if (orderItems[item] == null) continue;
                 if (!orderItems[item].IsNew()) continue;
-                LegacyCheckoutPolicy.RequireQuantity(orderItems[item].Qty);
                 if (orderItems[item].ProductId.Equals(0) && orderItems[item].Product == null) continue;
                 if (orderItems[item].Qty.Equals(0)) continue;
-
-                if (orderItems[item].Product != null) orderItems[item].ProductId = orderItems[item].Product.Id;
-
-                mutation.AfterCommit<long>(_reindexSignal.Request, orderItems[item].ProductId);
 
                 IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
                 ClientAgreement nonVatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(clientNetId, false);
                 ClientAgreement vatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(clientNetId, true);
+                ClientAgreement targetAgreement = withVat ? vatAgreement : nonVatAgreement;
+                ApplyAuthoritativeProduct(connection, targetAgreement, orderItems[item]);
 
                 IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
 
                 IEnumerable<ProductAvailability> productAvailabilities =
-                    withVat
-                        ? productAvailabilityRepository
-                            .GetByProductAndOrganizationIds(
-                                orderItems[item].ProductId,
-                                vatAgreement.Agreement.Organization.Id,
-                                true
-                            )
-                        : productAvailabilityRepository
-                            .GetByProductAndOrganizationIds(
-                                orderItems[item].ProductId,
-                                nonVatAgreement.Agreement.Organization.Id,
-                                false
-                            );
+                    productAvailabilityRepository.GetForEcommercePurchase(
+                        orderItems[item].ProductId,
+                        targetAgreement.Agreement.Organization.Id,
+                        CultureInfo.CurrentCulture.TwoLetterISOLanguageName);
 
                 if (!productAvailabilities.Any()) continue;
 
-                if (productAvailabilities.Sum(a => a.Amount) < orderItems[item].Qty)
-                    orderItems[item].Qty = productAvailabilities.Sum(a => a.Amount);
+                double sellableQuantity = productAvailabilities.Sum(a => Math.Max(0d, a.Amount));
+                if (sellableQuantity < orderItems[item].Qty)
+                    orderItems[item].Qty = sellableQuantity;
 
                 IClientShoppingCartRepository clientShoppingCartRepository = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection);
 
@@ -284,6 +349,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                             vatAgreement?.NetUid
                         );
 
+                        _reindexSignal.Request(orderItems[item].ProductId);
+
                         continue;
                     }
 
@@ -299,6 +366,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                         nonVatAgreement?.NetUid,
                         vatAgreement?.NetUid
                     );
+
+                    _reindexSignal.Request(orderItems[item].ProductId);
 
                     continue;
                 }
@@ -323,14 +392,14 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                     nonVatAgreement?.NetUid,
                     vatAgreement?.NetUid
                 );
+                _reindexSignal.Request(orderItems[item].ProductId);
             }
 
-            return mutation.Complete(Task.FromResult(orderItems.Select(NormalizeOverLordQty).ToList()));
+            return Task.FromResult(orderItems.Select(NormalizeOverLordQty).ToList());
     }
 
     public Task<OrderItem> Update(OrderItem orderItem, Guid clientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        using var mutation = new CartMutationScope(connection);
             IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
             IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
@@ -347,52 +416,55 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 throw new Exception("OrderItem can not be empty.");
             if (orderItem.IsNew())
                 throw new Exception("New OrderItem is not valid input for current request.");
-            CartMutationScope.RequireOwnedItem(connection, orderItem.Id, clientNetId, orderItem.ProductId);
-            if (!double.IsFinite(orderItem.Qty)) throw new ArgumentException("Cart quantity must be finite.");
+            if (!double.IsFinite(orderItem.Qty) || orderItem.Qty > 100000 ||
+                !double.IsFinite(orderItem.OverLordQty) || orderItem.OverLordQty > 100000)
+                throw new ArgumentException("Order item quantity is invalid.");
+
+            Workplace currentWorkplace = _clientRepositoriesFactory
+                .NewWorkplaceRepository(connection)
+                .GetByNetId(clientNetId);
+            ClientShoppingCart authorizedCart = _clientRepositoriesFactory
+                .NewClientShoppingCartRepository(connection)
+                .GetByClientAgreementNetId(
+                    selectedAgreement.NetUid,
+                    selectedAgreement.Agreement.WithVATAccounting,
+                    currentWorkplace?.Id);
+            OrderItem authorizedOrderItem = authorizedCart?.OrderItems
+                .SingleOrDefault(item => item.Id == orderItem.Id);
+            if (authorizedOrderItem == null)
+                throw new ArgumentException("Order item is not part of the current shopping cart.");
+
+            orderItem.ProductId = authorizedOrderItem.ProductId;
+            orderItem.Product = authorizedOrderItem.Product;
+            if (orderItem.OverLordQty <= 0) orderItem.OverLordQty = orderItem.Qty;
+
             if (orderItem.Qty <= 0)
-                return mutation.Complete(Task.FromResult(NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItem.Id, selectedAgreement.NetUid))));
+                return Task.FromResult(NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItem.Id, selectedAgreement.NetUid)));
 
             orderItemRepository.UpdateOverLoadQty(orderItem);
-
-            mutation.AfterCommit<long>(_reindexSignal.Request, orderItem.ProductId);
 
             OrderItem orderItemFromDb = orderItemRepository.GetById(orderItem.Id);
 
             if (orderItem.Qty.Equals(orderItemFromDb.Qty))
-                return mutation.Complete(Task.FromResult(NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItem.Id, selectedAgreement.NetUid))));
+                return Task.FromResult(NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItem.Id, selectedAgreement.NetUid)));
 
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
             IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
 
-            IEnumerable<ProductAvailability> productAvailabilities;
-
-            if (selectedAgreement.Agreement.WithVATAccounting) {
-                productAvailabilities =
-                    productAvailabilityRepository
-                        .GetByProductAndOrganizationIds(
-                            orderItem.ProductId,
-                            selectedAgreement.Agreement.Organization.Id,
-                            selectedAgreement.Agreement.WithVATAccounting
-                        );
-            } else {
-                List<Storage> allStorages = _storageRepositoryFactory.NewStorageRepository(connection).GetAllNonDefectiveByCurrentLocale().ToList();
-
-                List<Storage> storages = new(allStorages.Where(s => s.AvailableForReSale));
-                storages.AddRange(allStorages.Where(e => e.OrganizationId.Equals(selectedAgreement.Agreement.OrganizationId)));
-
-                productAvailabilities = productAvailabilityRepository
-                    .GetAllByProductAndStorageIds(
-                        orderItem.ProductId,
-                        storages.Select(e => e.Id).ToList());
-            }
+            IEnumerable<ProductAvailability> productAvailabilities =
+                productAvailabilityRepository.GetForEcommercePurchase(
+                    orderItem.ProductId,
+                    selectedAgreement.Agreement.Organization.Id,
+                    CultureInfo.CurrentCulture.TwoLetterISOLanguageName);
 
             double qtyDifference = orderItemFromDb.Qty - orderItem.Qty;
 
             if (qtyDifference < 0) {
-                if (productAvailabilities.Sum(a => a.Amount) < Math.Abs(qtyDifference)) {
-                    orderItem.Qty -= Math.Abs(qtyDifference) - productAvailabilities.Sum(a => a.Amount);
+                double sellableQuantity = productAvailabilities.Sum(a => Math.Max(0d, a.Amount));
+                if (sellableQuantity < Math.Abs(qtyDifference)) {
+                    orderItem.Qty -= Math.Abs(qtyDifference) - sellableQuantity;
 
-                    qtyDifference = 0 - productAvailabilities.Sum(a => a.Amount);
+                    qtyDifference = 0 - sellableQuantity;
                 }
 
                 double toDecreaseQty = Math.Abs(qtyDifference);
@@ -483,23 +555,34 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             orderItemRepository.UpdateQty(orderItem);
             orderItemRepository.UpdateOverLoadQty(orderItem);
 
-            return mutation.Complete(Task.FromResult(NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItem.Id, selectedAgreement.NetUid))));
+            _reindexSignal.Request(orderItem.ProductId);
+
+            return Task.FromResult(NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItem.Id, selectedAgreement.NetUid)));
     }
 
     public Task<List<OrderItem>> Update(List<OrderItem> orderItems, Guid clientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        using var mutation = new CartMutationScope(connection);
             for (int item = 0; item < orderItems.Count; item++) {
                 IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
                 IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
                 ClientAgreement nonVatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(clientNetId, false);
                 ClientAgreement vatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(clientNetId, true);
+                ClientAgreement targetAgreement = withVat ? vatAgreement : nonVatAgreement;
+                ClientShoppingCart authorizedCart = _clientRepositoriesFactory
+                    .NewClientShoppingCartRepository(connection)
+                    .GetByClientAgreementNetId(targetAgreement.NetUid, withVat);
 
                 if (orderItems[item] == null) continue;
                 if (orderItems[item].IsNew()) continue;
-                CartMutationScope.RequireOwnedItem(connection, orderItems[item].Id, clientNetId, orderItems[item].ProductId);
-                if (!double.IsFinite(orderItems[item].Qty)) throw new ArgumentException("Cart quantity must be finite.");
+                if (!double.IsFinite(orderItems[item].Qty) || orderItems[item].Qty > 100000)
+                    throw new ArgumentException("Order item quantity is invalid.");
+                OrderItem authorizedOrderItem = authorizedCart?.OrderItems
+                    .SingleOrDefault(cartItem => cartItem.Id == orderItems[item].Id);
+                if (authorizedOrderItem == null)
+                    throw new ArgumentException("Order item is not part of the current shopping cart.");
+                orderItems[item].ProductId = authorizedOrderItem.ProductId;
+                orderItems[item].Product = authorizedOrderItem.Product;
                 if (orderItems[item].Qty <= 0) {
                     orderItems[item] = NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItems[item].Id, nonVatAgreement?.NetUid, vatAgreement?.NetUid));
 
@@ -507,8 +590,6 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 }
 
                 OrderItem orderItemFromDb = orderItemRepository.GetById(orderItems[item].Id);
-
-                mutation.AfterCommit<long>(_reindexSignal.Request, orderItems[item].ProductId);
 
                 if (orderItems[item].Qty.Equals(orderItemFromDb.Qty)) {
                     orderItems[item] = NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItems[item].Id, nonVatAgreement?.NetUid, vatAgreement?.NetUid));
@@ -520,27 +601,19 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
 
                 IEnumerable<ProductAvailability> productAvailabilities =
-                    withVat
-                        ? productAvailabilityRepository
-                            .GetByProductAndOrganizationIds(
-                                orderItemFromDb.ProductId,
-                                vatAgreement.Agreement.Organization.Id,
-                                true
-                            )
-                        : productAvailabilityRepository
-                            .GetByProductAndOrganizationIds(
-                                orderItemFromDb.ProductId,
-                                nonVatAgreement.Agreement.Organization.Id,
-                                false
-                            );
+                    productAvailabilityRepository.GetForEcommercePurchase(
+                        orderItemFromDb.ProductId,
+                        targetAgreement.Agreement.Organization.Id,
+                        CultureInfo.CurrentCulture.TwoLetterISOLanguageName);
 
                 double qtyDifference = orderItemFromDb.Qty - orderItems[item].Qty;
 
                 if (qtyDifference < 0) {
-                    if (productAvailabilities.Sum(a => a.Amount) < Math.Abs(qtyDifference)) {
-                        orderItems[item].Qty -= Math.Abs(qtyDifference) - productAvailabilities.Sum(a => a.Amount);
+                    double sellableQuantity = productAvailabilities.Sum(a => Math.Max(0d, a.Amount));
+                    if (sellableQuantity < Math.Abs(qtyDifference)) {
+                        orderItems[item].Qty -= Math.Abs(qtyDifference) - sellableQuantity;
 
-                        qtyDifference = 0 - productAvailabilities.Sum(a => a.Amount);
+                        qtyDifference = 0 - sellableQuantity;
                     }
 
                     double toDecreaseQty = Math.Abs(qtyDifference);
@@ -630,10 +703,12 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
                 orderItemRepository.UpdateQty(orderItems[item]);
 
+                _reindexSignal.Request(orderItems[item].ProductId);
+
                 orderItems[item] = NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(orderItems[item].Id, nonVatAgreement?.NetUid, vatAgreement?.NetUid));
             }
 
-            return mutation.Complete(Task.FromResult(orderItems.Select(NormalizeOverLordQty).ToList()));
+            return Task.FromResult(orderItems.Select(NormalizeOverLordQty).ToList());
     }
 
     public Task<IEnumerable<OrderItem>> GetAllItemsFromCurrentShoppingCartByClientNetId(Guid netId, bool withVat) {
@@ -644,11 +719,12 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             ClientAgreement selectedAgreement = clientAgreementRepository.GetSelectedByClientNetId(netId) ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(netId);
             if (selectedAgreement == null) {
                 selectedAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(netId);
+                if (selectedAgreement?.Agreement == null)
+                    return Task.FromResult(Enumerable.Empty<OrderItem>());
+
                 selectedAgreement.Agreement.IsSelected = true;
                 agreementRepository.Update(selectedAgreement.Agreement);
             }
-
-            selectedAgreement = clientAgreementRepository.GetSelectedByClientNetId(netId) ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(netId);
 
             IEnumerable<OrderItem> orderItems = _saleRepositoriesFactory
                 .NewOrderItemRepository(connection)
@@ -665,7 +741,6 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
     public Task DeleteItemFromShoppingCartByNetId(Guid itemNetId, Guid clientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        using var mutation = new CartMutationScope(connection);
             IClientShoppingCartRepository clientShoppingCartRepository = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection);
             IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
@@ -681,13 +756,13 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             ClientShoppingCart clientShoppingCart =
                 clientShoppingCartRepository.GetByClientAgreementNetId(clientAgreement.NetUid, clientAgreement.Agreement.WithVATAccounting, workplace?.Id);
 
-            if (!clientShoppingCart.OrderItems.Any(i => i.NetUid.Equals(itemNetId))) return mutation.Complete(Task.CompletedTask);
+            if (!clientShoppingCart.OrderItems.Any(i => i.NetUid.Equals(itemNetId))) return Task.CompletedTask;
 
             IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
 
             OrderItem orderItem = orderItemRepository.GetByNetIdWithProduct(itemNetId);
 
-            if (orderItem == null) return mutation.Complete(Task.CompletedTask);
+            if (orderItem == null) return Task.CompletedTask;
 
             orderItemRepository.Remove(itemNetId);
 
@@ -708,7 +783,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 productReservationRepository.Delete(reservation.NetUid);
             }
 
-            mutation.AfterCommit<long>(_reindexSignal.Request, orderItem.ProductId);
+            _reindexSignal.Request(orderItem.ProductId);
 
             BackgroundSyncRunner.Run(async cancellationToken => {
                 string saleSyncCrmUrl;
@@ -721,20 +796,19 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                     saleSyncCrmUrl =
                         $"{data?.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
                 } else {
-                    saleSyncCrmUrl =
-                        $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+                    throw new InvalidOperationException("CRM endpoint is not configured.");
                 }
 
-                using HttpClient httpClient = _httpClientFactory.CreateClient();
-                await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                using HttpClient httpClient = _httpClientFactory.CreateClient(
+                    EcommerceInternalHttpClientDefaults.ClientName);
+                await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
             }, "Cart item delete availability sync");
 
-            return mutation.Complete(Task.CompletedTask);
+            return Task.CompletedTask;
     }
 
     public Task DeleteAllItemsFromShoppingCartByClientNetId(Guid clientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        using var mutation = new CartMutationScope(connection);
             IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
             ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(clientNetId);
@@ -746,7 +820,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 workplace = _clientRepositoriesFactory.NewWorkplaceRepository(connection).GetByNetId(clientNetId);
             }
 
-            if (clientAgreement == null) return mutation.Complete(Task.CompletedTask);
+            if (clientAgreement == null) return Task.CompletedTask;
 
             ClientShoppingCart clientShoppingCart = _clientRepositoriesFactory
                 .NewClientShoppingCartRepository(connection)
@@ -775,7 +849,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                         productReservationRepository.Delete(reservation.NetUid);
                     }
 
-                    mutation.AfterCommit<long>(_reindexSignal.Request, orderItem.ProductId);
+                    _reindexSignal.Request(orderItem.ProductId);
 
                     BackgroundSyncRunner.Run(async cancellationToken => {
                         string saleSyncCrmUrl;
@@ -788,22 +862,21 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                             saleSyncCrmUrl =
                                 $"{data?.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
                         } else {
-                            saleSyncCrmUrl =
-                                $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+                            throw new InvalidOperationException("CRM endpoint is not configured.");
                         }
 
-                        using HttpClient httpClient = _httpClientFactory.CreateClient();
-                        await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+                        using HttpClient httpClient = _httpClientFactory.CreateClient(
+                            EcommerceInternalHttpClientDefaults.ClientName);
+                        await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
                     }, "Cart clear availability sync");
                 }
             }
 
-        return mutation.Complete(Task.CompletedTask);
+        return Task.CompletedTask;
     }
 
     public Task<int> ReleaseExpiredCartsAsync() {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        using var mutation = new CartMutationScope(connection);
             IClientShoppingCartRepository clientShoppingCartRepository = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection);
             IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
             IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
@@ -828,7 +901,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                         releasedReservations++;
                     }
 
-                    mutation.AfterCommit<long>(_reindexSignal.Request, orderItem.ProductId);
+                    _reindexSignal.Request(orderItem.ProductId);
 
                     orderItemRepository.Remove(orderItem.NetUid);
                 }
@@ -836,7 +909,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 clientShoppingCartRepository.Remove(cart.NetUid);
             }
 
-            return mutation.Complete(Task.FromResult(releasedReservations));
+            return Task.FromResult(releasedReservations);
     }
 
     public Task<Tuple<bool, string>> VerifyProductAvailability(OrderItem orderItem) {
@@ -847,46 +920,53 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 throw new Exception("Existing OrderItem is not valid input for current request.");
             if (orderItem.ProductId.Equals(0) && orderItem.Product == null)
                 throw new Exception("Product need to be specified.");
-            LegacyCheckoutPolicy.RequireQuantity(orderItem.Qty);
-
-            if (orderItem.Product != null) orderItem.ProductId = orderItem.Product.Id;
+            if (!double.IsFinite(orderItem.Qty) || orderItem.Qty <= 0 || orderItem.Qty > 100000)
+                throw new ArgumentException("Order item quantity is invalid.");
 
             IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
-            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection).GetWithHighestPriority();
+            Storage storage = _storageRepositoryFactory.NewStorageRepository(connection)
+                .GetWithHighestPriority();
+            if (storage?.OrganizationId == null)
+                return Task.FromResult(new Tuple<bool, string>(false, "Retail storage is not configured"));
+
+            Client retailClient = _clientRepositoriesFactory
+                .NewClientRepository(connection)
+                .GetRetailClient();
+            if (retailClient == null)
+                return Task.FromResult(new Tuple<bool, string>(false, "Retail client is not configured"));
 
             ClientAgreement clientAgreement = clientAgreementRepository.GetByClientNetIdWithOrWithoutVat(
-                _clientRepositoriesFactory.NewClientRepository(connection).GetRetailClient().NetUid,
+                retailClient.NetUid,
                 storage.OrganizationId.Value,
                 storage.ForVatProducts);
+            if (clientAgreement?.Agreement == null)
+                return Task.FromResult(new Tuple<bool, string>(false, "Retail agreement is not configured"));
+
+            IGetSingleProductRepository productRepository =
+                _productRepositoriesFactory.NewGetSingleProductRepository(connection);
+            Guid productNetId = orderItem.Product?.NetUid ?? Guid.Empty;
+            if (productNetId == Guid.Empty && orderItem.ProductId > 0)
+                productNetId = productRepository.GetById(orderItem.ProductId)?.NetUid ?? Guid.Empty;
+
+            Product product = productNetId == Guid.Empty
+                ? null
+                : productRepository.GetByNetIdForRetail(
+                    productNetId,
+                    storage.Id,
+                    storage.OrganizationId.Value,
+                    storage.ForVatProducts);
+            if (!EcommercePurchasability.IsPurchasable(product))
+                return Task.FromResult(new Tuple<bool, string>(false, EcommercePurchasability.NotAvailableMessage));
+            if (!EcommercePurchasability.HasSellablePrice(product))
+                return Task.FromResult(new Tuple<bool, string>(false, EcommercePurchasability.NotPricedMessage));
+
+            orderItem.ProductId = product.Id;
 
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
-
-            IEnumerable<ProductAvailability> productAvailabilities;
-
-            if (clientAgreement.Agreement.WithVATAccounting) {
-                productAvailabilities =
-                    productAvailabilityRepository
-                        .GetByProductAndOrganizationIds(
-                            orderItem.ProductId,
-                            clientAgreement.Agreement.Organization.Id,
-                            clientAgreement.Agreement.WithVATAccounting
-                        );
-            } else {
-                List<Storage> allStorages = _storageRepositoryFactory.NewStorageRepository(connection).GetAllNonDefectiveByCurrentLocale().ToList();
-
-                List<Storage> storages = new(allStorages.Where(s => s.AvailableForReSale));
-                storages.AddRange(allStorages.Where(e => e.OrganizationId.Equals(clientAgreement.Agreement.OrganizationId)));
-
-                productAvailabilities = productAvailabilityRepository
-                    .GetAllByProductAndStorageIds(
-                        orderItem.ProductId,
-                        storages.Select(e => e.Id).ToList());
-            }
-
-            if (!productAvailabilities.Any()) return Task.FromResult(new Tuple<bool, string>(false, "Product is not available"));
-
-            double qtyRemainderProducts = productAvailabilities.Sum(a => a.Amount);
+            ProductAvailability productAvailability =
+                productAvailabilityRepository.GetByProductAndStorageIds(product.Id, storage.Id);
+            double qtyRemainderProducts = Math.Max(0d, productAvailability?.Amount ?? 0d);
 
             if (qtyRemainderProducts < orderItem.Qty) return Task.FromResult(new Tuple<bool, string>(false, "Product is not available"));
 
@@ -970,11 +1050,12 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
                 saleSyncCrmUrl = $"{data?.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
             } else {
-                saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+                throw new InvalidOperationException("CRM endpoint is not configured.");
             }
 
-            using HttpClient httpClient = _httpClientFactory.CreateClient();
-            await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+            using HttpClient httpClient = _httpClientFactory.CreateClient(
+                EcommerceInternalHttpClientDefaults.ClientName);
+            await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
         }, "Cart update availability sync");
 
         return NormalizeOverLordQty(orderItemRepository.GetByIdAndClientAgreementNetIdWithIncludes(existingOrderItem.Id, clientAgreementNetId.Value, currencyId.Value));
@@ -1035,11 +1116,12 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
                 saleSyncCrmUrl = $"{data?.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
             } else {
-                saleSyncCrmUrl = $"http://93.183.224.42/api/v1/{CultureInfo.CurrentCulture}/products/sync/availability?netId={orderItem.Product.NetUid.ToString()}";
+                throw new InvalidOperationException("CRM endpoint is not configured.");
             }
 
-            using HttpClient httpClient = _httpClientFactory.CreateClient();
-            await httpClient.GetAsync(saleSyncCrmUrl, cancellationToken);
+            using HttpClient httpClient = _httpClientFactory.CreateClient(
+                EcommerceInternalHttpClientDefaults.ClientName);
+            await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
         }, "Cart add availability sync");
 
         return NormalizeOverLordQty(orderItemRepository.GetByIdAndClientAgreementNetIdWithIncludes(orderItem.Id, clientAgreementNetId.Value, currencyId.Value));

@@ -1,6 +1,4 @@
-﻿#nullable enable annotations
-
-namespace GBA.Domain.EntityHelpers.ProductModels;
+﻿namespace GBA.Domain.EntityHelpers.ProductModels;
 
 public sealed class AnalogueForUpload {
     public string VendorCode { get; set; }

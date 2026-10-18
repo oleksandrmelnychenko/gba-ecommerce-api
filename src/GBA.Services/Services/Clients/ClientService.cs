@@ -7,11 +7,13 @@ using System.Threading.Tasks;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.Clients;
+using GBA.Domain.Entities.Ecommerce;
 using GBA.Domain.Entities.ExchangeRates;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.Repositories.Clients.Contracts;
 using GBA.Domain.Repositories.Clients.RetailClients.Contracts;
+using GBA.Domain.Repositories.Ecommerce.Contracts;
 using GBA.Domain.Repositories.ExchangeRates.Contracts;
 using GBA.Domain.Repositories.Products.Contracts;
 using GBA.Domain.Repositories.Storages.Contracts;
@@ -29,6 +31,7 @@ public sealed class ClientService : IClientService {
 
     private readonly IClientRepositoriesFactory _clientRepositoriesFactory;
     private readonly IDbConnectionFactory _connectionFactory;
+    private readonly IEcommerceAdminPanelRepositoriesFactory _ecommerceRepositoriesFactory;
     private readonly IExchangeRateRepositoriesFactory _exchangeRateRepositoriesFactory;
     private readonly IOrderService _orderService;
     private readonly IProductRepositoriesFactory _productRepositoriesFactory;
@@ -39,6 +42,7 @@ public sealed class ClientService : IClientService {
         IClientRepositoriesFactory clientRepositoriesFactory,
         IExchangeRateRepositoriesFactory exchangeRateRepositoriesFactory,
         IRetailClientRepositoriesFactory retailClientRepositoriesFactory,
+        IEcommerceAdminPanelRepositoriesFactory ecommerceRepositoriesFactory,
         IDbConnectionFactory connectionFactory,
         IOrderService orderService,
         IProductRepositoriesFactory productRepositoriesFactory,
@@ -47,6 +51,7 @@ public sealed class ClientService : IClientService {
         _clientRepositoriesFactory = clientRepositoriesFactory;
         _exchangeRateRepositoriesFactory = exchangeRateRepositoriesFactory;
         _retailClientRepositoriesFactory = retailClientRepositoriesFactory;
+        _ecommerceRepositoriesFactory = ecommerceRepositoriesFactory;
         _connectionFactory = connectionFactory;
         _orderService = orderService;
         _productRepositoriesFactory = productRepositoriesFactory;
@@ -61,27 +66,26 @@ public sealed class ClientService : IClientService {
 
             if (client == null) {
                 Workplace workplace = _clientRepositoriesFactory.NewWorkplaceRepository(connection).GetByNetIdWithClient(netId);
+                if (workplace?.MainClient == null)
+                    throw new ArgumentException("A client profile could not be resolved.", nameof(netId));
+
                 client = workplace.MainClient;
                 client.CurrentWorkplace = workplace;
             }
 
-            foreach (ClientAgreement clientAgreement in client.ClientAgreements)
+            foreach (ClientAgreement clientAgreement in client.ClientAgreements ?? [])
                 clientAgreement.AccountBalance = _clientRepositoriesFactory.NewClientCashFlowRepository(connection)
                     .GetAccountBalanceByClientAgreement(
                         clientAgreement.Id,
-                        clientAgreement.Agreement.Currency != null && clientAgreement.Agreement.Currency.Code.ToUpper().Equals("EUR"));
+                        clientAgreement.Agreement?.Currency?.Code?.ToUpper().Equals("EUR") == true);
 
             dynamic data = _clientRepositoriesFactory.NewClientRepository(connection).GetDebtTotalsForClientStructureWithRootByClientNetId(netId, true);
 
-            ClientAgreement selectedClientAgreement = client.ClientAgreements.FirstOrDefault(ca => ca.Agreement.IsSelected);
-
-            ExchangeRate agreementExchangeRate = selectedClientAgreement == null
-                ? exchangeRateRepository.GetByCurrencyCodeAndCurrentCulture(client.ClientAgreements.First().Agreement.Currency.Code)
-                : exchangeRateRepository.GetByCurrencyCodeAndCurrentCulture(selectedClientAgreement.Agreement.Currency.Code);
+            ExchangeRate agreementExchangeRate = ResolveAgreementExchangeRate(client, exchangeRateRepository);
 
             decimal totalLocalDebt = data.TotalLocal ?? 0m;
 
-            client.AccountBalance = agreementExchangeRate != null
+            client.AccountBalance = agreementExchangeRate != null && agreementExchangeRate.Amount != 0
                 ? decimal.Round(totalLocalDebt / agreementExchangeRate.Amount, 2, MidpointRounding.AwayFromZero)
                 : decimal.Round(totalLocalDebt, 2, MidpointRounding.AwayFromZero);
 
@@ -91,44 +95,74 @@ public sealed class ClientService : IClientService {
     public Task<Client> GetRootClientBySubClientNerId(Guid netId) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
             IExchangeRateRepository exchangeRateRepository = _exchangeRateRepositoriesFactory.NewExchangeRateRepository(connection);
+            IClientRepository clientRepository = _clientRepositoriesFactory.NewClientRepository(connection);
 
-            Client client = _clientRepositoriesFactory.NewClientRepository(connection).GetRootClientBySubClientNetId(netId);
+            Client client = clientRepository.GetRootClientBySubClientNetId(netId);
+            Guid debtClientNetId = netId;
 
-            dynamic data = _clientRepositoriesFactory.NewClientRepository(connection).GetDebtTotalsForClientStructureWithRootByClientNetId(netId, true);
+            if (client == null) {
+                Workplace workplace = _clientRepositoriesFactory.NewWorkplaceRepository(connection).GetByNetIdWithClient(netId);
+                if (workplace?.MainClient == null)
+                    throw new ArgumentException("A client profile could not be resolved.", nameof(netId));
 
-            ClientAgreement clientAgreement = client.ClientAgreements.FirstOrDefault(ca => ca.Agreement.IsSelected);
+                client = workplace.MainClient;
+                client.CurrentWorkplace = workplace;
+                debtClientNetId = client.NetUid;
+            }
 
-            ExchangeRate agreementExchangeRate = clientAgreement == null
-                ? exchangeRateRepository.GetByCurrencyCodeAndCurrentCulture(client.ClientAgreements.First().Agreement.Currency.Code)
-                : exchangeRateRepository.GetByCurrencyCodeAndCurrentCulture(clientAgreement.Agreement.Currency.Code);
+            dynamic data = clientRepository.GetDebtTotalsForClientStructureWithRootByClientNetId(debtClientNetId, true);
+
+            ExchangeRate agreementExchangeRate = ResolveAgreementExchangeRate(client, exchangeRateRepository);
 
             decimal totalLocalDebt = data.TotalLocal ?? 0m;
 
-            client.AccountBalance = agreementExchangeRate != null
+            client.AccountBalance = agreementExchangeRate != null && agreementExchangeRate.Amount != 0
                 ? decimal.Round(totalLocalDebt / agreementExchangeRate.Amount, 2, MidpointRounding.AwayFromZero)
                 : decimal.Round(totalLocalDebt, 2, MidpointRounding.AwayFromZero);
 
             return Task.FromResult(client);
     }
 
+    private static ExchangeRate ResolveAgreementExchangeRate(Client client, IExchangeRateRepository exchangeRateRepository) {
+        ClientAgreement clientAgreement =
+            client.ClientAgreements?.FirstOrDefault(ca => ca.Agreement?.IsSelected == true)
+            ?? client.ClientAgreements?.FirstOrDefault(ca => ca.Agreement?.Currency?.Code != null);
+
+        string agreementCurrencyCode = clientAgreement?.Agreement?.Currency?.Code;
+
+        return agreementCurrencyCode == null
+            ? null
+            : exchangeRateRepository.GetByCurrencyCodeAndCurrentCulture(agreementCurrencyCode);
+    }
+
     public Task<RetailClient> GetRetailClientByNetId(Guid netId) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-            IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
+            IRetailClientRepository retailClientRepository =
+                _retailClientRepositoriesFactory.NewRetailClientRepository(connection);
+            RetailClient client = retailClientRepository.GetByNetId(netId);
+            if (client == null)
+                throw new ArgumentException("A retail client could not be resolved.", nameof(netId));
 
-            RetailClient client = _retailClientRepositoriesFactory.NewRetailClientRepository(connection).GetByNetId(netId);
+            IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
             IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
 
-            Storage storage = storageRepository.GetWithHighestPriority();
+            Storage storage = storageRepository
+                .GetWithHighestPriority()
+                ?? throw new InvalidOperationException("Retail storage is not configured.");
             List<OrderItem> orderItems = JsonSerializer.Deserialize<List<OrderItem>>(client.ShoppingCartJson, _jsonSerializerOptions) ?? new List<OrderItem>();
             List<OrderItem> anyOrderItems = new();
 
-            foreach (OrderItem orderItem in orderItems.Where(i => i.IsNew() && i.Qty > 0)) {
+            // IsMisplacedItem means "not on hand at the checkout storage, so it becomes a
+            // backorder" - it is flagged on ABSENCE of availability, the same direction as
+            // OrderService.RemoveUnavailableProducts and GenerateNewRetailSale. Reading the cart
+            // must not drop lines either: an out-of-stock line stays in the cart as a backorder
+            // instead of silently disappearing.
+            foreach (OrderItem orderItem in GetPendingRetailOrderItems(orderItems)) {
                 ProductAvailability productAvailability =
                     productAvailabilityRepository.GetByProductAndStorageIds(orderItem.Product.Id, storage.Id);
-                if (productAvailability != null && !productAvailability.Amount.Equals(0)) {
-                    orderItem.IsMisplacedItem = true;
-                    anyOrderItems.Add(orderItem);
-                }
+
+                orderItem.IsMisplacedItem = productAvailability == null || productAvailability.Amount.Equals(0);
+                anyOrderItems.Add(orderItem);
             }
 
             client.ShoppingCartJson = JsonSerializer.Serialize(anyOrderItems);
@@ -138,19 +172,25 @@ public sealed class ClientService : IClientService {
 
     public Task<(RetailClient, string)> GetRetailClientByNetIdCheckOrderItems(Guid netId) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-            IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
+            IRetailClientRepository retailClientRepository =
+                _retailClientRepositoriesFactory.NewRetailClientRepository(connection);
+            RetailClient client = retailClientRepository.GetByNetId(netId);
+            if (client == null)
+                throw new ArgumentException("A retail client could not be resolved.", nameof(netId));
 
-            RetailClient client = _retailClientRepositoriesFactory.NewRetailClientRepository(connection).GetByNetId(netId);
+            IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
             IStorageRepository storageRepository = _storageRepositoryFactory.NewStorageRepository(connection);
 
-            Storage storage = storageRepository.GetWithHighestPriority();
+            Storage storage = storageRepository
+                .GetWithHighestPriority()
+                ?? throw new InvalidOperationException("Retail storage is not configured.");
             List<OrderItem> orderItems = JsonSerializer.Deserialize<List<OrderItem>>(client.ShoppingCartJson, _jsonSerializerOptions) ?? new List<OrderItem>();
             List<OrderItem> anyOrderItems = new();
             List<OrderItem> notHaveOrderItems = new();
             string notHaveOrderItemsInfo = string.Empty;
 
 
-            foreach (OrderItem orderItem in orderItems.Where(i => i.IsNew() && i.Qty > 0)) {
+            foreach (OrderItem orderItem in GetPendingRetailOrderItems(orderItems)) {
                 ProductAvailability productAvailability =
                     productAvailabilityRepository.GetByProductAndStorageIds(orderItem.Product.Id, storage.Id);
                 if (productAvailability != null && !productAvailability.Amount.Equals(0))
@@ -163,9 +203,24 @@ public sealed class ClientService : IClientService {
 
             client.ShoppingCartJson = JsonSerializer.Serialize(anyOrderItems);
 
-            _retailClientRepositoriesFactory.NewRetailClientRepository(connection).Update(client);
+            retailClientRepository.Update(client);
 
             return Task.FromResult((client, notHaveOrderItemsInfo));
+    }
+
+    private static IEnumerable<OrderItem> GetPendingRetailOrderItems(IEnumerable<OrderItem> orderItems) {
+        foreach (OrderItem orderItem in orderItems) {
+            if (orderItem == null)
+                throw new InvalidOperationException("Retail shopping cart contains an unresolved product.");
+
+            if (!orderItem.IsNew() || orderItem.Qty <= 0)
+                continue;
+
+            if (orderItem.Product == null)
+                throw new InvalidOperationException("Retail shopping cart contains an unresolved product.");
+
+            yield return orderItem;
+        }
     }
 
     public async Task<RetailClient> AddRetailClient(RetailClient client) {
@@ -173,44 +228,47 @@ public sealed class ClientService : IClientService {
         try {
             IRetailClientRepository retailClientRepository = _retailClientRepositoriesFactory.NewRetailClientRepository(connection);
 
-            RetailClient exists = retailClientRepository.GetByPhoneNumber(client.PhoneNumber);
-
             List<OrderItem> orderItems = JsonSerializer.Deserialize<List<OrderItem>>(client.ShoppingCartJson, _jsonSerializerOptions) ?? new List<OrderItem>();
+            if (orderItems.Count == 0 || orderItems.Count > 100)
+                throw new ArgumentException("Shopping cart must contain between 1 and 100 items.");
 
-            if (exists != null) {
-                orderItems = await _orderService.RemoveUnavailableProducts(orderItems, exists.Id);
+            if (client.EcommerceRegion == null || client.EcommerceRegion.NetUid == Guid.Empty)
+                throw new ArgumentException("A valid ecommerce region is required.");
 
-                client.Id = exists.Id;
-                client.NetUid = exists.NetUid;
-                client.Name = exists.Name;
-                client.EcommerceRegionId = client.EcommerceRegion.Id;
+            EcommerceRegion ecommerceRegion = _ecommerceRepositoriesFactory
+                .NewEcommerceRegionRepository(connection)
+                .GetByNetId(client.EcommerceRegion.NetUid);
+            if (ecommerceRegion == null)
+                throw new ArgumentException("A valid ecommerce region is required.");
 
-                if (!orderItems.All(o => o.IsMisplacedItem))
-                    orderItems.First().TotalAmount = orderItems
+            client.Name = client.Name?.Trim();
+            client.PhoneNumber = client.PhoneNumber?.Trim();
+            client.EcommerceRegion = ecommerceRegion;
+            client.EcommerceRegionId = ecommerceRegion.Id;
+
+            orderItems = await _orderService.RemoveUnavailableProducts(orderItems, 0);
+
+            // TotalAmount is the agreement-currency figure everywhere else in the order model
+            // (TotalAmountLocal carries the UAH one), so this summary must use CurrentPrice.
+            // It read CurrentLocalPrice only because the local price used to be identical to it.
+            if (!orderItems.All(o => o.IsMisplacedItem))
+                orderItems.First().TotalAmount = decimal.Round(
+                    orderItems
                         .Where(o => !o.IsMisplacedItem)
-                        .Sum(o => o.Product.CurrentLocalPrice * Convert.ToInt32(o.Qty));
+                        .Sum(o => o.Product.CurrentPrice * Convert.ToDecimal(o.Qty)),
+                    2,
+                    MidpointRounding.AwayFromZero);
 
-                client.ShoppingCartJson = JsonSerializer.Serialize(orderItems);
+            client.ShoppingCartJson = JsonSerializer.Serialize(orderItems);
 
-                retailClientRepository.Update(client);
-            } else {
-                client.EcommerceRegionId = client.EcommerceRegion.Id;
-
-                client.Id = retailClientRepository.Add(client);
-
-                orderItems = await _orderService.RemoveUnavailableProducts(orderItems, client.Id);
-
-                if (!orderItems.All(o => o.IsMisplacedItem))
-                    orderItems.First().TotalAmount = orderItems
-                        .Where(o => !o.IsMisplacedItem)
-                        .Sum(o => o.Product.CurrentLocalPrice * Convert.ToInt32(o.Qty));
-
-                client.ShoppingCartJson = JsonSerializer.Serialize(orderItems);
-
-                retailClientRepository.Update(client);
-            }
+            // A phone number is contact data, not authentication. Reusing an existing
+            // record here allowed anyone knowing a number to overwrite that guest's cart
+            // and receive its bearer NetUid. Every checkout gets a separate capability.
+            client.Id = retailClientRepository.Add(client);
 
             return retailClientRepository.GetRetailClientById(client.Id);
+        } catch (ArgumentException) {
+            throw;
         } catch (Exception exc) {
             _logger.Error(exc, "Failed to add retail client");
             return null;

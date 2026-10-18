@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Globalization;
@@ -12,8 +12,6 @@ namespace GBA.Domain.Repositories.Products;
 
 public sealed class ProductAvailabilityRepository : IProductAvailabilityRepository {
     private readonly IDbConnection _connection;
-    private static string MutationReadLock => System.Transactions.Transaction.Current == null
-        ? string.Empty : "WITH(UPDLOCK,HOLDLOCK) ";
 
     public ProductAvailabilityRepository(IDbConnection connection) {
         _connection = connection;
@@ -60,15 +58,87 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
             "FROM [ProductAvailability] " +
             "WHERE [ProductAvailability].Deleted = 0 " +
             "AND [ProductAvailability].StorageID = @StorageId " +
-            "AND [ProductAvailability].ProductID = @ProductId",
+            "AND [ProductAvailability].ProductID = @ProductId " +
+            "ORDER BY [ProductAvailability].ID",
             new { ProductId = productId, StorageId = storageId }
         ).FirstOrDefault();
+    }
+
+    public IEnumerable<ProductAvailability> GetForEcommercePurchase(
+        long productId,
+        long organizationId,
+        string culture) {
+        return _connection.Query<ProductAvailability, Storage, ProductAvailability>(
+            "SELECT [ProductAvailability].*, [Storage].* " +
+            "FROM [ProductAvailability] " +
+            "INNER JOIN [Storage] ON [Storage].ID = [ProductAvailability].StorageID " +
+            "WHERE [ProductAvailability].ProductID = @ProductId " +
+            "AND [ProductAvailability].Deleted = 0 " +
+            "AND [Storage].Deleted = 0 " +
+            "AND [Storage].ForDefective = 0 " +
+            "AND [Storage].Locale = @Culture " +
+            "AND " + EcommerceStorageScope.NamedStorageSql + " " +
+            "ORDER BY [Storage].RetailPriority, [Storage].ID, [ProductAvailability].ID",
+            (availability, storage) => {
+                availability.Storage = storage;
+                return availability;
+            },
+            new {
+                ProductId = productId,
+                OrganizationId = organizationId,
+                Culture = culture
+            });
+    }
+
+    public Dictionary<long, double> GetEcommerceSellableQuantities(
+        IReadOnlyCollection<long> productIds,
+        long? retailStorageId,
+        long? organizationId,
+        string culture) {
+        if (productIds == null || productIds.Count == 0)
+            return new Dictionary<long, double>();
+
+        const string sql = @"
+SELECT requested.ID AS ProductId,
+       CAST(COALESCE(
+           CASE WHEN @RetailStorageId IS NOT NULL THEN (
+               SELECT TOP (1)
+                      CASE WHEN pa.Amount > 0 THEN pa.Amount ELSE 0 END
+               FROM ProductAvailability pa
+               WHERE pa.ProductID = requested.ID
+                 AND pa.StorageID = @RetailStorageId
+                 AND pa.Deleted = 0
+               ORDER BY pa.ID
+           ) ELSE (
+               SELECT SUM(CASE WHEN pa.Amount > 0 THEN pa.Amount ELSE 0 END)
+               FROM ProductAvailability pa
+               INNER JOIN Storage s ON s.ID = pa.StorageID
+               WHERE pa.ProductID = requested.ID
+                 AND pa.Deleted = 0
+                 AND s.Deleted = 0
+                 AND s.ForDefective = 0
+                 AND s.Locale = @Culture
+                 AND " + EcommerceStorageScope.AliasedStorageSql + @"
+           ) END,
+           0) AS float) AS Quantity
+FROM Product requested
+WHERE requested.ID IN @ProductIds";
+
+        return _connection.Query<EcommerceAvailabilityRow>(
+                sql,
+                new {
+                    ProductIds = productIds,
+                    RetailStorageId = retailStorageId,
+                    OrganizationId = organizationId,
+                    Culture = culture
+                })
+            .ToDictionary(row => row.ProductId, row => row.Quantity);
     }
 
     public IEnumerable<ProductAvailability> GetAllByProductAndStorageIds(long productId, List<long> storageIds) {
         return _connection.Query<ProductAvailability, Storage, ProductAvailability>(
             "SELECT * " +
-            "FROM [ProductAvailability] " + MutationReadLock +
+            "FROM [ProductAvailability] " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "WHERE [ProductAvailability].Deleted = 0 " +
@@ -89,7 +159,7 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
             "SELECT [ProductAvailability].* " +
             ", 0 AS [IsReSaleAvailability] " +
             ", [Storage].* " +
-            "FROM [ProductAvailability] " + MutationReadLock +
+            "FROM [ProductAvailability] " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "WHERE [ProductAvailability].ProductID = @ProductId " +
@@ -103,7 +173,7 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
                       "SELECT [ProductAvailability].* " +
                       ", 0 AS [IsReSaleAvailability] " +
                       ", [Storage].* " +
-                      "FROM [ProductAvailability] " + MutationReadLock +
+                      "FROM [ProductAvailability] " +
                       "LEFT JOIN [Storage] " +
                       "ON [Storage].ID = [ProductAvailability].StorageID " +
                       "WHERE [ProductAvailability].ProductID = @ProductId " +
@@ -118,7 +188,7 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
                       "SELECT [ProductAvailability].* " +
                       ", 1 AS [IsReSaleAvailability] " +
                       ", [Storage].* " +
-                      "FROM [ProductAvailability] " + MutationReadLock +
+                      "FROM [ProductAvailability] " +
                       "LEFT JOIN [Storage] " +
                       "ON [Storage].ID = [ProductAvailability].StorageID " +
                       "WHERE [ProductAvailability].ProductID = @ProductId " +
@@ -353,4 +423,10 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
             new { Id = id }
         );
     }
+}
+
+internal sealed class EcommerceAvailabilityRow {
+    public long ProductId { get; set; }
+
+    public double Quantity { get; set; }
 }
