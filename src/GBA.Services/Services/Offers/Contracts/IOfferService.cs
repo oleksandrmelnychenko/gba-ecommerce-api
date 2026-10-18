@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using GBA.Domain.Entities.Clients;
 using GBA.Domain.Entities.Sales;
+using GBA.Services.Infrastructure.Checkout;
 
 namespace GBA.Services.Services.Offers.Contracts;
 
@@ -13,7 +14,11 @@ public interface IOfferService {
 
     Task<List<ClientShoppingCart>> GetAllAvailableOffersByClientNetId(Guid netId);
 
-    Task<Sale> GenerateNewOrderAndSaleFromOffer(ClientShoppingCart clientShoppingCart, Guid clientNetId, bool addCurrentCartItems);
+    Task<CheckoutResult> GenerateNewOrderAndSaleFromOffer(
+        ClientShoppingCart clientShoppingCart,
+        Guid clientNetId,
+        bool addCurrentCartItems,
+        CheckoutAttempt attempt);
 
     Task<Order> DynamicallyCalculateTotalPrices(Order order);
 }

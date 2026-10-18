@@ -39,6 +39,8 @@ public interface IOrderItemRepository {
 
     void Remove(Guid netId);
 
+    bool RemoveFromShoppingCart(Guid netId, long clientShoppingCartId);
+
     void Remove(IEnumerable<OrderItem> orderItems);
 
     void SetItemsZeroOffered(IEnumerable<OrderItem> items);

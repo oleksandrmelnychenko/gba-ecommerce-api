@@ -764,7 +764,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
             if (orderItem == null) return Task.CompletedTask;
 
-            orderItemRepository.Remove(itemNetId);
+            if (!orderItemRepository.RemoveFromShoppingCart(itemNetId, clientShoppingCart.Id)) return Task.CompletedTask;
 
             IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
@@ -830,7 +830,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
 
                 foreach (OrderItem orderItem in clientShoppingCart.OrderItems) {
-                    orderItemRepository.Remove(orderItem.NetUid);
+                    if (!orderItemRepository.RemoveFromShoppingCart(orderItem.NetUid, clientShoppingCart.Id)) continue;
 
                     IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
                     IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
@@ -888,6 +888,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
             foreach (ClientShoppingCart cart in expiredCarts) {
                 foreach (OrderItem orderItem in cart.OrderItems) {
+                    if (!orderItemRepository.RemoveFromShoppingCart(orderItem.NetUid, cart.Id)) continue;
+
                     IEnumerable<ProductReservation> reservations =
                         productReservationRepository.GetAllByOrderItemIdWithAvailability(orderItem.Id);
 
@@ -902,8 +904,6 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                     }
 
                     _reindexSignal.Request(orderItem.ProductId);
-
-                    orderItemRepository.Remove(orderItem.NetUid);
                 }
 
                 clientShoppingCartRepository.Remove(cart.NetUid);

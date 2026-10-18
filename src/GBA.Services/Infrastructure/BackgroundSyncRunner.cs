@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using GBA.Common.Helpers;
 using NLog;
 
 namespace GBA.Services.Infrastructure;
@@ -13,6 +14,13 @@ public static class BackgroundSyncRunner {
         Func<CancellationToken, Task> action,
         string operationName,
         TimeSpan? timeout = null) {
+        TransactionalEffects.AfterCommit(() => Start(action, operationName, timeout));
+    }
+
+    private static void Start(
+        Func<CancellationToken, Task> action,
+        string operationName,
+        TimeSpan? timeout) {
         _ = Task.Run(async () => {
             using CancellationTokenSource timeoutCts = new(timeout ?? _defaultTimeout);
 

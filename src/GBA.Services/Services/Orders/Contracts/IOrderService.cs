@@ -4,13 +4,21 @@ using System.Threading.Tasks;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.EntityHelpers;
 using GBA.Domain.EntityHelpers.SalesModels.Models;
+using GBA.Services.Infrastructure.Checkout;
 
 namespace GBA.Services.Services.Orders.Contracts;
 
 public interface IOrderService {
-    Task<Sale> GenerateNewOrderAndSaleFromClientShoppingCart(Guid clientNetId, bool withVat);
+    Task<CheckoutResult> GenerateNewOrderAndSaleFromClientShoppingCart(Guid clientNetId, bool withVat, CheckoutAttempt attempt);
 
-    Task<Sale> GenerateNewSaleWithInvoice(Sale sale, Guid clientNetId, bool isWorkplace);
+    Task<CheckoutResult> GenerateNewSaleWithInvoice(
+        Sale sale,
+        Guid clientNetId,
+        bool isWorkplace,
+        bool withVatRequested,
+        CheckoutAttempt attempt);
+
+    CheckoutResult FindInvoiceCheckoutReplay(Guid clientNetId, bool withVat, CheckoutAttempt attempt);
 
     Task<Order> DynamicallyCalculateTotalPrices(Order order, Guid clientNetId);
 

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using GBA.Common.Configuration;
@@ -17,6 +18,7 @@ using GBA.Common.WebApi.RoutingConfiguration.Maps;
 using GBA.Domain.Entities.Clients;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.EntityHelpers.SalesModels.Models;
+using GBA.Services.Infrastructure.Checkout;
 using GBA.Services.Services.Offers.Contracts;
 using GBA.Services.Services.Orders.Contracts;
 using Microsoft.AspNetCore.Authorization;
@@ -40,9 +42,18 @@ public sealed class OrdersController(
 
     [HttpGet]
     [AssignActionRoute(OrdersSegments.ADD_NEW)]
-    public async Task<IActionResult> GenerateOrderFromClientShoppingCartAsync([FromQuery] int withVat) {
+    public async Task<IActionResult> GenerateOrderFromClientShoppingCartAsync(
+        [FromQuery] int withVat,
+        [FromHeader(Name = CheckoutIdempotencyKey.HeaderName)] string? idempotencyKey) {
+        if (!CheckoutIdempotencyKey.TryParse(idempotencyKey, out Guid operationNetUid))
+            return MissingIdempotencyKey();
+
         Guid userNetId = GetUserNetId();
-        return Ok(SuccessResponseBody(await orderService.GenerateNewOrderAndSaleFromClientShoppingCart(userNetId, withVat.Equals(1))));
+        bool isVat = withVat.Equals(1);
+        CheckoutAttempt attempt = new(operationNetUid, CheckoutFingerprint.ForCart(isVat));
+
+        return await CheckoutResponseAsync(() =>
+            orderService.GenerateNewOrderAndSaleFromClientShoppingCart(userNetId, isVat, attempt));
     }
 
     [HttpPost]
@@ -52,7 +63,8 @@ public sealed class OrdersController(
         [FromQuery] bool withVat,
         string invoice,
         string number,
-        IFormFile invoiceFile) {
+        IFormFile invoiceFile,
+        [FromHeader(Name = CheckoutIdempotencyKey.HeaderName)] string? idempotencyKey) {
         Guid userNetId = GetUserNetId();
         Claim? type = User.Claims.FirstOrDefault(e => e.Type.Equals("type"));
         bool isWorkplace = type != null && type.Value.Equals(IdentityRoles.Workplace);
@@ -74,6 +86,22 @@ public sealed class OrdersController(
                 return BadRequest(ErrorResponseBody("TTN file is invalid", HttpStatusCode.BadRequest));
         }
 
+        if (!CheckoutIdempotencyKey.TryParse(idempotencyKey, out Guid operationNetUid))
+            return MissingIdempotencyKey();
+
+        string requestedVatMode = Request.Query["withVat"].ToString();
+        bool isVatRequested = withVat || requestedVatMode.Equals("1", StringComparison.Ordinal);
+        byte[]? invoiceFileHash = null;
+
+        if (invoiceFile != null) {
+            await using Stream hashStream = invoiceFile.OpenReadStream();
+            invoiceFileHash = await SHA256.HashDataAsync(hashStream);
+        }
+
+        CheckoutAttempt attempt = new(
+            operationNetUid,
+            CheckoutFingerprint.ForInvoice(requestedVatMode, invoice, number, invoiceFileHash));
+
         invoice = invoice.Replace(" 02:00\"", "+02:00\"").Replace(" 03:00\"", "+03:00\"");
 
         Sale? parsedSale = JsonSerializer.Deserialize<Sale>(invoice);
@@ -84,9 +112,24 @@ public sealed class OrdersController(
             Number = number
         };
 
-        if (invoiceFile == null)
-            return Ok(SuccessResponseBody(await orderService.GenerateNewSaleWithInvoice(parsedSale, userNetId, isWorkplace)));
+        return await CheckoutResponseAsync(async () => {
+            if (invoiceFile != null) {
+                CheckoutResult? replay = orderService.FindInvoiceCheckoutReplay(userNetId, isVatRequested, attempt);
+                if (replay != null) return replay;
 
+                parsedSale.CustomersOwnTtn.TtnPDFPath = await UploadTtnFileAsync(invoiceFile);
+            }
+
+            return await orderService.GenerateNewSaleWithInvoice(
+                parsedSale,
+                userNetId,
+                isWorkplace,
+                isVatRequested,
+                attempt);
+        });
+    }
+
+    private async Task<string?> UploadTtnFileAsync(IFormFile invoiceFile) {
         string crmUrl;
 
         if (System.IO.File.Exists(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath())) {
@@ -110,13 +153,11 @@ public sealed class OrdersController(
         using StreamContent streamContent = new(invoiceFile.OpenReadStream());
         formData.Add(streamContent, "file", Path.GetFileName(invoiceFile.FileName));
 
-        HttpResponseMessage response = await httpClient.PostAsync(crmUrl, formData);
+        using HttpResponseMessage response = await httpClient.PostAsync(crmUrl, formData);
 
-        if (response.IsSuccessStatusCode) {
-            parsedSale.CustomersOwnTtn.TtnPDFPath = await response.Content.ReadAsStringAsync();
-        }
-
-        return Ok(SuccessResponseBody(await orderService.GenerateNewSaleWithInvoice(parsedSale, userNetId, isWorkplace)));
+        return response.IsSuccessStatusCode
+            ? await response.Content.ReadAsStringAsync()
+            : null;
     }
 
     [HttpPost]
@@ -165,13 +206,23 @@ public sealed class OrdersController(
     [EnableRateLimiting("api")]
     [Consumes("application/json")]
     [RequestSizeLimit(524288)]
-    public async Task<IActionResult> GenerateOrderAndSaleFromOfferAsync([FromBody] ClientShoppingCart clientShoppingCart, [FromQuery] int addCartItems) {
+    public async Task<IActionResult> GenerateOrderAndSaleFromOfferAsync(
+        [FromBody] ClientShoppingCart clientShoppingCart,
+        [FromQuery] int addCartItems,
+        [FromHeader(Name = CheckoutIdempotencyKey.HeaderName)] string? idempotencyKey) {
+        if (clientShoppingCart == null || clientShoppingCart.NetUid == Guid.Empty)
+            return BadRequest(ErrorResponseBody("A valid offer selection is required.", HttpStatusCode.BadRequest));
+        if (!CheckoutIdempotencyKey.TryParse(idempotencyKey, out Guid operationNetUid))
+            return MissingIdempotencyKey();
+
         Guid userNetId = GetUserNetId();
-        return Ok(
-            SuccessResponseBody(
-                await offerService.GenerateNewOrderAndSaleFromOffer(clientShoppingCart, userNetId, addCartItems == 1)
-            )
-        );
+        bool addCurrentCartItems = addCartItems == 1;
+        CheckoutAttempt attempt = new(
+            operationNetUid,
+            CheckoutFingerprint.ForOffer(clientShoppingCart, addCurrentCartItems));
+
+        return await CheckoutResponseAsync(() =>
+            offerService.GenerateNewOrderAndSaleFromOffer(clientShoppingCart, userNetId, addCurrentCartItems, attempt));
     }
 
     [HttpPost]
@@ -210,6 +261,28 @@ public sealed class OrdersController(
         await orderService.SendPaymentImageToCrm(saleNetId, clientNetId, new PaymentConfirmationImageModel(base64Image, safeFileName));
 
         return Ok(SuccessResponseBody("success"));
+    }
+
+    private IActionResult MissingIdempotencyKey() {
+        return BadRequest(ErrorResponseBody(
+            $"A non-empty UUID {CheckoutIdempotencyKey.HeaderName} header is required.",
+            HttpStatusCode.BadRequest));
+    }
+
+    private async Task<IActionResult> CheckoutResponseAsync(Func<Task<CheckoutResult>> checkout) {
+        CheckoutResult result;
+
+        try {
+            result = await checkout();
+        } catch (CheckoutKeyReuseException exception) {
+            return UnprocessableEntity(ErrorResponseBody(exception.Message, HttpStatusCode.UnprocessableEntity));
+        } catch (CheckoutConflictException exception) {
+            return Conflict(ErrorResponseBody(exception.Message, HttpStatusCode.Conflict));
+        }
+
+        if (result.IsReplay) Response.Headers[CheckoutIdempotencyKey.ReplayedHeaderName] = "true";
+
+        return Ok(SuccessResponseBody(result.Sale));
     }
 
     private static bool HasValidPaymentImageSignature(byte[] bytes, string? contentType) {

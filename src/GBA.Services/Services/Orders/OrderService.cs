@@ -36,6 +36,7 @@ using GBA.Domain.Repositories.Sales.Contracts;
 using GBA.Domain.Repositories.Storages.Contracts;
 using GBA.Domain.Repositories.Users.Contracts;
 using GBA.Services.Infrastructure;
+using GBA.Services.Infrastructure.Checkout;
 using GBA.Services.Services.Clients.Contracts;
 using GBA.Services.Services.Messengers.Contracts;
 using GBA.Services.Services.Orders.Contracts;
@@ -44,6 +45,9 @@ using Microsoft.Extensions.Http;
 namespace GBA.Services.Services.Orders;
 
 public sealed class OrderService : IOrderService {
+    internal const string CartCheckoutOperation = "ecommerce-cart-checkout-v1";
+    internal const string InvoiceCheckoutOperation = "ecommerce-invoice-checkout-v1";
+
     private static readonly JsonSerializerOptions _jsonSerializerOptions = new() {
         PropertyNameCaseInsensitive = true
     };
@@ -63,6 +67,7 @@ public sealed class OrderService : IOrderService {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ISearchReindexSignal _reindexSignal;
     private readonly IClientResourceAccessService _clientResourceAccessService;
+    private readonly ICheckoutExecutor _checkoutExecutor;
 
     public OrderService(
         ISaleRepositoriesFactory saleRepositoriesFactory,
@@ -79,7 +84,8 @@ public sealed class OrderService : IOrderService {
         IPaymentLinkService paymentLinkService,
         IHttpClientFactory httpClientFactory,
         IClientResourceAccessService clientResourceAccessService,
-        ISearchReindexSignal reindexSignal) {
+        ISearchReindexSignal reindexSignal,
+        ICheckoutExecutor checkoutExecutor) {
         _saleRepositoriesFactory = saleRepositoriesFactory;
         _reindexSignal = reindexSignal;
         _clientRepositoriesFactory = clientRepositoriesFactory;
@@ -95,6 +101,7 @@ public sealed class OrderService : IOrderService {
         _paymentLinkService = paymentLinkService;
         _httpClientFactory = httpClientFactory;
         _clientResourceAccessService = clientResourceAccessService;
+        _checkoutExecutor = checkoutExecutor;
     }
 
     internal static void ValidateSaleComment(Sale sale) {
@@ -301,56 +308,6 @@ public sealed class OrderService : IOrderService {
         return orderItem;
     }
 
-    private static Sale BuildCreatedSaleResponse(Sale sale) {
-        return new Sale {
-            Id = sale.Id,
-            NetUid = sale.NetUid,
-            Created = sale.Created,
-            Updated = sale.Updated,
-            Deleted = sale.Deleted,
-            OrderId = sale.OrderId,
-            ClientAgreementId = sale.ClientAgreementId,
-            BaseLifeCycleStatusId = sale.BaseLifeCycleStatusId,
-            BaseSalePaymentStatusId = sale.BaseSalePaymentStatusId,
-            DeliveryRecipientId = sale.DeliveryRecipientId,
-            DeliveryRecipientAddressId = sale.DeliveryRecipientAddressId,
-            TransporterId = sale.TransporterId,
-            SaleNumberId = sale.SaleNumberId,
-            ShiftStatusId = sale.ShiftStatusId,
-            WorkplaceId = sale.WorkplaceId,
-            CustomersOwnTtnId = sale.CustomersOwnTtnId,
-            Comment = sale.Comment,
-            IsInvoice = sale.IsInvoice,
-            IsVatSale = sale.IsVatSale,
-            IsCashOnDelivery = sale.IsCashOnDelivery,
-            HasDocuments = sale.HasDocuments,
-            CashOnDeliveryAmount = sale.CashOnDeliveryAmount,
-            ShipmentDate = sale.ShipmentDate,
-            SaleNumber = sale.SaleNumber == null
-                ? null
-                : new SaleNumber {
-                    Id = sale.SaleNumber.Id,
-                    NetUid = sale.SaleNumber.NetUid,
-                    Created = sale.SaleNumber.Created,
-                    Updated = sale.SaleNumber.Updated,
-                    Deleted = sale.SaleNumber.Deleted,
-                    Value = sale.SaleNumber.Value,
-                    OrganizationId = sale.SaleNumber.OrganizationId
-                },
-            Order = sale.Order == null
-                ? null
-                : new Order {
-                    Id = sale.Order.Id,
-                    NetUid = sale.Order.NetUid,
-                    Created = sale.Order.Created,
-                    Updated = sale.Order.Updated,
-                    Deleted = sale.Order.Deleted,
-                    OrderSource = sale.Order.OrderSource,
-                    OrderStatus = sale.Order.OrderStatus
-                }
-        };
-    }
-
     internal static HttpRequestMessage CreateEcommerceSaleUpdateRequest(
         string crmApiUrl,
         string payload,
@@ -386,12 +343,23 @@ public sealed class OrderService : IOrderService {
         }, operationName);
     }
 
-    public Task<Sale> GenerateNewOrderAndSaleFromClientShoppingCart(Guid clientNetId, bool withVat) {
-        using IDbConnection connection = _connectionFactory.NewSqlConnection();
-            ClientShoppingCart clientShoppingCart =
-                _clientRepositoriesFactory.NewClientShoppingCartRepository(connection).GetByClientNetId(clientNetId, withVat);
+    public Task<CheckoutResult> GenerateNewOrderAndSaleFromClientShoppingCart(
+        Guid clientNetId,
+        bool withVat,
+        CheckoutAttempt attempt) {
+        CheckoutRequest request = new(CartCheckoutOperation, attempt, clientNetId, clientNetId, withVat);
 
-            if (clientShoppingCart == null || !clientShoppingCart.OrderItems.Any()) throw new Exception("You need to add products first.");
+        return Task.FromResult(_checkoutExecutor.Execute(request, connection => {
+            IClientShoppingCartRepository shoppingCartRepository =
+                _clientRepositoriesFactory.NewClientShoppingCartRepository(connection);
+
+            ClientShoppingCart clientShoppingCart = CheckoutLocks.LockShoppingCart(
+                connection,
+                shoppingCartRepository.GetByClientNetId(clientNetId, withVat),
+                () => shoppingCartRepository.GetByClientNetId(clientNetId, withVat));
+
+            if (clientShoppingCart == null || !clientShoppingCart.OrderItems.Any())
+                throw new ArgumentException("You need to add products first.");
 
             Order order = new() {
                 OrderSource = OrderSource.Shop,
@@ -400,24 +368,16 @@ public sealed class OrderService : IOrderService {
                 ClientAgreement = _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetActiveByRootClientNetId(clientNetId, withVat)
             };
 
+            if (order.ClientAgreement?.Agreement?.Organization == null)
+                throw new ArgumentException("A valid client agreement is required.");
+
             order.ClientAgreementId = order.ClientAgreement.Id;
 
             order.Id = _saleRepositoriesFactory
                 .NewOrderRepository(connection)
                 .Add(order);
 
-            _saleRepositoriesFactory
-                .NewOrderItemRepository(connection)
-                .Update(
-                    clientShoppingCart
-                        .OrderItems
-                        .Select(item => {
-                            item.ClientShoppingCartId = null;
-                            item.OrderId = order.Id;
-
-                            return item;
-                        })
-                );
+            CheckoutLocks.ClaimCartItems(connection, clientShoppingCart, order.Id);
 
             Sale sale = new() {
                 ClientAgreementId = order.ClientAgreementId,
@@ -443,6 +403,8 @@ public sealed class OrderService : IOrderService {
             };
 
             ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
+
+            CheckoutLocks.LockSaleNumbers(connection, order.ClientAgreement.Agreement.Organization.Id);
 
             SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
             SaleNumber saleNumber;
@@ -482,7 +444,7 @@ public sealed class OrderService : IOrderService {
 
             sale.Id = saleRepository.Add(sale);
 
-            sale = saleRepository.GetById(sale.Id);
+            Sale createdSale = saleRepository.GetById(sale.Id);
 
             BackgroundSyncRunner.Run(async cancellationToken => {
                 string saleSyncCrmUrl;
@@ -491,9 +453,9 @@ public sealed class OrderService : IOrderService {
                     EcommerceCrmConfig data = ReadEcommerceCrmConfig();
 
 #if DEBUG
-                    saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
+                    saleSyncCrmUrl = $"{data.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
 #else
-                            saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
+                    saleSyncCrmUrl = $"{data.CrmServerUrlRelease}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
 #endif
                 } else {
                     throw new InvalidOperationException("CRM endpoint is not configured.");
@@ -504,7 +466,8 @@ public sealed class OrderService : IOrderService {
                 await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
             }, "Order sale sync");
 
-            return Task.FromResult(sale);
+            return CheckoutSaleResponse.From(createdSale);
+        }));
     }
 
     /// <summary>
@@ -575,10 +538,22 @@ public sealed class OrderService : IOrderService {
         return Task.FromResult(order);
     }
 
-    public async Task<Sale> GenerateNewSaleWithInvoice(Sale sale, Guid clientNetId, bool isWorkplace) {
+    public CheckoutResult FindInvoiceCheckoutReplay(Guid clientNetId, bool withVat, CheckoutAttempt attempt) {
+        return _checkoutExecutor.FindReplay(
+            new CheckoutRequest(InvoiceCheckoutOperation, attempt, clientNetId, clientNetId, withVat));
+    }
+
+    public Task<CheckoutResult> GenerateNewSaleWithInvoice(
+        Sale sale,
+        Guid clientNetId,
+        bool isWorkplace,
+        bool withVatRequested,
+        CheckoutAttempt attempt) {
         ValidateSaleComment(sale);
 
-        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+        CheckoutRequest request = new(InvoiceCheckoutOperation, attempt, clientNetId, clientNetId, withVatRequested);
+
+        return Task.FromResult(_checkoutExecutor.Execute(request, connection => {
             IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
             IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
@@ -597,7 +572,8 @@ public sealed class OrderService : IOrderService {
                 throw new ArgumentException("Order must contain between 1 and 100 items.");
 
             if (sale.DeliveryRecipient != null && sale.DeliveryRecipient.NetUid != Guid.Empty) {
-                if (!_clientResourceAccessService.CanAccessDeliveryRecipient(clientNetId, sale.DeliveryRecipient.NetUid))
+                if (!CheckoutTransaction.Suppressed(() =>
+                        _clientResourceAccessService.CanAccessDeliveryRecipient(clientNetId, sale.DeliveryRecipient.NetUid)))
                     throw new ArgumentException("Delivery recipient is invalid.");
 
                 DeliveryRecipient recipient = _deliveryRepositoriesFactory
@@ -610,7 +586,8 @@ public sealed class OrderService : IOrderService {
             }
 
             if (sale.DeliveryRecipientAddress != null && sale.DeliveryRecipientAddress.NetUid != Guid.Empty) {
-                if (!_clientResourceAccessService.CanAccessDeliveryRecipientAddress(clientNetId, sale.DeliveryRecipientAddress.NetUid))
+                if (!CheckoutTransaction.Suppressed(() =>
+                        _clientResourceAccessService.CanAccessDeliveryRecipientAddress(clientNetId, sale.DeliveryRecipientAddress.NetUid)))
                     throw new ArgumentException("Delivery recipient address is invalid.");
 
                 DeliveryRecipientAddress address = _deliveryRepositoriesFactory
@@ -643,17 +620,26 @@ public sealed class OrderService : IOrderService {
                 : _clientRepositoriesFactory.NewClientRepository(connection).GetByNetIdWithRegionCode(clientNetId);
 
 
-            ClientShoppingCart currentCart =
-                _clientRepositoriesFactory
-                    .NewClientShoppingCartRepository(connection)
-                    .GetByClientAgreementNetId(
-                        selectedClientAgreement.NetUid,
-                        withVat,
-                        workplace?.Id
-                    );
+            IClientShoppingCartRepository shoppingCartRepository =
+                _clientRepositoriesFactory.NewClientShoppingCartRepository(connection);
+
+            ClientShoppingCart currentCart = CheckoutLocks.LockShoppingCart(
+                connection,
+                shoppingCartRepository.GetByClientAgreementNetId(
+                    selectedClientAgreement.NetUid,
+                    withVat,
+                    workplace?.Id),
+                () => shoppingCartRepository.GetByClientAgreementNetId(
+                    selectedClientAgreement.NetUid,
+                    withVat,
+                    workplace?.Id));
 
             if (currentCart == null || currentCart.OrderItems.Count == 0)
                 throw new ArgumentException("The current shopping cart is empty.");
+
+            Dictionary<Guid, double> observedCartQuantities = currentCart.OrderItems
+                .GroupBy(item => item.NetUid)
+                .ToDictionary(group => group.Key, group => group.First().Qty);
 
             HashSet<Guid> requestedItemNetIds = new();
             List<OrderItem> authorizedOrderItems = new();
@@ -673,6 +659,8 @@ public sealed class OrderService : IOrderService {
 
             sale.Order.OrderItems = authorizedOrderItems.ToHashSet();
 
+            CheckoutLocks.LockProductStock(connection, sale.Order.OrderItems.Select(item => item.ProductId));
+
             order.Id = _saleRepositoriesFactory
                 .NewOrderRepository(connection)
                 .Add(order);
@@ -688,7 +676,10 @@ public sealed class OrderService : IOrderService {
                     orderItem.ClientShoppingCartId = null;
                     orderItem.OrderId = order.Id;
 
-                    orderItemRepository.UpdateItemAssignment(orderItem);
+                    if (!observedCartQuantities.TryGetValue(orderItem.NetUid, out double observedQty))
+                        throw new CheckoutConflictException(CheckoutConflictException.CartChangedMessage);
+
+                    CheckoutLocks.ClaimCartItem(connection, currentCart.Id, orderItem, observedQty, order.Id);
 
                     if (fromCartItem.Qty.Equals(orderItem.Qty)) {
                         orderItemRepository.Update(orderItem);
@@ -947,6 +938,8 @@ public sealed class OrderService : IOrderService {
 
             ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
 
+            CheckoutLocks.LockSaleNumbers(connection, order.ClientAgreement.Agreement.Organization.Id);
+
             SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
             SaleNumber saleNumber;
 
@@ -1032,7 +1025,8 @@ public sealed class OrderService : IOrderService {
 
             QueueEcommerceSaleUpdate(crmApiUrl, payload, "Order invoice sale update");
 
-            return BuildCreatedSaleResponse(createdSale);
+            return CheckoutSaleResponse.From(createdSale);
+        }));
     }
 
     public async Task<string> GenerateNewRetailSale(Sale sale, Guid retailClientNetId, bool fullPayment) {

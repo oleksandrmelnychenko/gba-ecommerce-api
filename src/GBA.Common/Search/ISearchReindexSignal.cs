@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Threading.Channels;
+using GBA.Common.Helpers;
 
 namespace GBA.Common.Search;
 
@@ -21,7 +22,9 @@ public sealed class SearchReindexSignal : ISearchReindexSignal {
     public ChannelReader<long> Reader => _channel.Reader;
 
     public void Request(long productId) {
-        if (productId > 0) _channel.Writer.TryWrite(productId);
+        if (productId <= 0) return;
+
+        TransactionalEffects.AfterCommit(() => _channel.Writer.TryWrite(productId));
     }
 
     public void Request(IEnumerable<long> productIds) {

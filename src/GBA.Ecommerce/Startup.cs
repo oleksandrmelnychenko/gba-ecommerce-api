@@ -59,6 +59,7 @@ using GBA.Domain.Repositories.UserRoles;
 using GBA.Domain.Repositories.UserRoles.Contracts;
 using GBA.Domain.Repositories.Users;
 using GBA.Domain.Repositories.Users.Contracts;
+using GBA.Services.Infrastructure.Checkout;
 using GBA.Services.Services.Clients;
 using GBA.Services.Services.Clients.Contracts;
 using GBA.Services.Services.DeliveryRecipients;
@@ -438,6 +439,8 @@ public class Startup {
         services.AddScoped<IClientService, ClientService>();
         services.AddScoped<IClientResourceAccessService, ClientResourceAccessService>();
         services.AddScoped<IExchageRateService, ExchageRateService>();
+        services.AddSingleton<ICheckoutLedger>(_ => new SqlCheckoutLedger());
+        services.AddScoped<ICheckoutExecutor, CheckoutExecutor>();
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<IGeoLocationService, GeoLocationService>();
         services.AddScoped<ITransporterService, TransporterService>();

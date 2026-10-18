@@ -102,6 +102,18 @@ public sealed class OrderItemRepository : IOrderItemRepository {
         );
     }
 
+    public bool RemoveFromShoppingCart(Guid netId, long clientShoppingCartId) {
+        return _connection.Execute(
+            "UPDATE [OrderItem] " +
+            "SET Deleted = 1, Updated = getutcdate() " +
+            "WHERE NetUID = @NetId " +
+            "AND ClientShoppingCartID = @ClientShoppingCartId " +
+            "AND OrderID IS NULL " +
+            "AND Deleted = 0",
+            new { NetId = netId, ClientShoppingCartId = clientShoppingCartId }
+        ) == 1;
+    }
+
     public void Remove(IEnumerable<OrderItem> orderItems) {
         _connection.Execute(
             "UPDATE [OrderItem] " +

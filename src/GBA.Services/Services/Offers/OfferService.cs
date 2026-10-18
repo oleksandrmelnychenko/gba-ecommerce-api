@@ -23,6 +23,7 @@ using GBA.Domain.Repositories.Products.Contracts;
 using GBA.Domain.Repositories.Sales.Contracts;
 using GBA.Domain.Repositories.Users.Contracts;
 using GBA.Services.Infrastructure;
+using GBA.Services.Infrastructure.Checkout;
 using GBA.Services.Services.Clients.Contracts;
 using GBA.Services.Services.Offers.Contracts;
 using Microsoft.Extensions.Http;
@@ -30,6 +31,8 @@ using Microsoft.Extensions.Http;
 namespace GBA.Services.Services.Offers;
 
 public sealed class OfferService : IOfferService {
+    internal const string OfferCheckoutOperation = "ecommerce-offer-checkout-v1";
+
     private static readonly JsonSerializerOptions _jsonSerializerOptions = new() {
         PropertyNameCaseInsensitive = true
     };
@@ -46,6 +49,7 @@ public sealed class OfferService : IOfferService {
 
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IClientResourceAccessService _clientResourceAccessService;
+    private readonly ICheckoutExecutor _checkoutExecutor;
 
     public OfferService(
         IClientRepositoriesFactory clientRepositoriesFactory,
@@ -54,7 +58,8 @@ public sealed class OfferService : IOfferService {
         IUserRepositoriesFactory userRepositoriesFactory,
         IDbConnectionFactory connectionFactory,
         IHttpClientFactory httpClientFactory,
-        IClientResourceAccessService clientResourceAccessService) {
+        IClientResourceAccessService clientResourceAccessService,
+        ICheckoutExecutor checkoutExecutor) {
         _clientRepositoriesFactory = clientRepositoriesFactory;
 
         _saleRepositoriesFactory = saleRepositoriesFactory;
@@ -66,6 +71,7 @@ public sealed class OfferService : IOfferService {
         _connectionFactory = connectionFactory;
         _httpClientFactory = httpClientFactory;
         _clientResourceAccessService = clientResourceAccessService;
+        _checkoutExecutor = checkoutExecutor;
     }
 
     public Task<ClientShoppingCart> GetOfferByNetId(Guid netId, Guid actorNetId) {
@@ -163,8 +169,17 @@ public sealed class OfferService : IOfferService {
         return Task.FromResult(offers);
     }
 
-    public Task<Sale> GenerateNewOrderAndSaleFromOffer(ClientShoppingCart clientShoppingCart, Guid clientNetId, bool addCurrentCartItems) {
-        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+    public Task<CheckoutResult> GenerateNewOrderAndSaleFromOffer(
+        ClientShoppingCart clientShoppingCart,
+        Guid clientNetId,
+        bool addCurrentCartItems,
+        CheckoutAttempt attempt) {
+        if (clientShoppingCart == null || clientShoppingCart.NetUid == Guid.Empty)
+            throw new ArgumentException("A valid offer selection is required.");
+
+        CheckoutRequest request = new(OfferCheckoutOperation, attempt, clientNetId, clientNetId, addCurrentCartItems);
+
+        return Task.FromResult(_checkoutExecutor.Execute(request, connection => {
             IClientShoppingCartRepository shoppingCartRepository = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection);
 
             ClientShoppingCart offer = shoppingCartRepository.GetByNetId(clientShoppingCart.NetUid);
@@ -177,12 +192,20 @@ public sealed class OfferService : IOfferService {
                 throw new Exception(OfferResourceNames.OFFER_PROCESSED);
             if (offer.ValidUntil < DateTime.Now.Date)
                 throw new Exception(OfferResourceNames.OFFER_EXPIRED);
-            if (!_clientResourceAccessService.CanAccessClientOrAgreement(clientNetId, offer.ClientAgreement.NetUid))
+            if (!CheckoutTransaction.Suppressed(() =>
+                    _clientResourceAccessService.CanAccessClientOrAgreement(clientNetId, offer.ClientAgreement.NetUid)))
                 throw new UnauthorizedAccessException();
 
             List<OrderItem> selectedOrderItems = BuildCanonicalOfferItems(offer, clientShoppingCart);
             if (!shoppingCartRepository.TrySetProcessedByNetId(clientShoppingCart.NetUid))
                 throw new Exception(OfferResourceNames.OFFER_PROCESSED);
+
+            ClientShoppingCart currentCart = addCurrentCartItems
+                ? CheckoutLocks.LockShoppingCart(
+                    connection,
+                    shoppingCartRepository.GetByClientNetId(clientNetId, offer.IsVatCart),
+                    () => shoppingCartRepository.GetByClientNetId(clientNetId, offer.IsVatCart))
+                : null;
 
             Order order = new() {
                 OrderSource = OrderSource.Offer,
@@ -191,6 +214,9 @@ public sealed class OfferService : IOfferService {
                 ClientAgreement = _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetActiveByRootClientNetId(clientNetId, offer.IsVatCart),
                 ClientShoppingCartId = offer.Id
             };
+
+            if (order.ClientAgreement?.Agreement?.Organization == null)
+                throw new ArgumentException("A valid client agreement is required.");
 
             order.ClientAgreementId = order.ClientAgreement.Id;
 
@@ -201,6 +227,10 @@ public sealed class OfferService : IOfferService {
             IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
             IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
+
+            CheckoutLocks.LockProductStock(
+                connection,
+                selectedOrderItems.Select(item => item.Product?.Id ?? item.ProductId));
 
             if (selectedOrderItems.Any()) {
                 List<OrderItem> offeredOrderItems = new();
@@ -306,22 +336,8 @@ public sealed class OfferService : IOfferService {
 
             shoppingCartRepository.UpdateProcessingStatus(offer);
 
-            if (addCurrentCartItems) {
-                ClientShoppingCart currentCart = _clientRepositoriesFactory.NewClientShoppingCartRepository(connection).GetByClientNetId(clientNetId, offer.IsVatCart);
-
-                if (currentCart != null && currentCart.OrderItems.Any())
-                    orderItemRepository
-                        .Update(
-                            currentCart
-                                .OrderItems
-                                .Select(item => {
-                                    item.ClientShoppingCartId = null;
-                                    item.OrderId = order.Id;
-
-                                    return item;
-                                })
-                        );
-            }
+            if (currentCart != null && currentCart.OrderItems.Any())
+                CheckoutLocks.ClaimCartItems(connection, currentCart, order.Id);
 
             Sale sale = new() {
                 ClientAgreementId = order.ClientAgreementId,
@@ -348,6 +364,8 @@ public sealed class OfferService : IOfferService {
 
             ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
 
+            CheckoutLocks.LockSaleNumbers(connection, order.ClientAgreement.Agreement.Organization.Id);
+
             SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
             SaleNumber saleNumber;
 
@@ -369,7 +387,7 @@ public sealed class OfferService : IOfferService {
 
             sale.Id = saleRepository.Add(sale);
 
-            sale = saleRepository.GetById(sale.Id);
+            Sale createdSale = saleRepository.GetById(sale.Id);
 
             BackgroundSyncRunner.Run(async cancellationToken => {
                 string saleSyncCrmUrl;
@@ -379,7 +397,7 @@ public sealed class OfferService : IOfferService {
                         File.ReadAllText(NoltFolderManager.GetEcommerceCrmConfigJsonFilePath()),
                         _jsonSerializerOptions);
 
-                    saleSyncCrmUrl = $"{data?.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={sale.NetUid.ToString()}";
+                    saleSyncCrmUrl = $"{data?.CrmServerUrl}/api/v1/{CultureInfo.CurrentCulture}/sales/sync/new?netId={createdSale.NetUid.ToString()}";
                 } else {
                     throw new InvalidOperationException("CRM endpoint is not configured.");
                 }
@@ -389,7 +407,8 @@ public sealed class OfferService : IOfferService {
                 await httpClient.PostAsync(saleSyncCrmUrl, null, cancellationToken);
             }, "Offer sale sync");
 
-            return Task.FromResult(sale);
+            return CheckoutSaleResponse.From(createdSale);
+        }));
     }
 
     private static List<OrderItem> BuildCanonicalOfferItems(
