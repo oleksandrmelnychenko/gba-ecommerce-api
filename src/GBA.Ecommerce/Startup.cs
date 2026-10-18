@@ -627,13 +627,11 @@ public class Startup {
     /// than one global bucket. The permit limits themselves are unchanged.
     /// </para>
     /// </summary>
-    private static string GetClientPartitionKey(HttpContext context) {
+    internal static string GetClientPartitionKey(HttpContext context) {
         IPAddress? remoteIp = context.Connection.RemoteIpAddress;
 
         if (IsPrivateOrLoopback(remoteIp)) {
-            string? forwardedIp = GetFirstHeaderIp(context, "CF-Connecting-IP")
-                ?? GetFirstHeaderIp(context, "X-Forwarded-For")
-                ?? GetFirstHeaderIp(context, "X-Real-IP");
+            string? forwardedIp = GetFirstHeaderIp(context, "X-Forwarded-For");
 
             if (!string.IsNullOrWhiteSpace(forwardedIp)) {
                 return forwardedIp;
