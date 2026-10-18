@@ -717,9 +717,7 @@ public sealed class OrderService : IOrderService {
                                 productAvailabilityRepository
                                     .GetForEcommercePurchase(
                                         orderItem.ProductId,
-                                        order.ClientAgreement.Agreement.Organization.Id,
-                                        CultureInfo.CurrentCulture.TwoLetterISOLanguageName
-                                    );
+                                        order.ClientAgreement.Agreement.Organization.Id);
 
                             double toDecreaseAmount = orderItem.Qty - fromCartItem.Qty;
 
@@ -813,9 +811,7 @@ public sealed class OrderService : IOrderService {
                     productAvailabilityRepository
                         .GetForEcommercePurchase(
                             orderItem.ProductId,
-                            order.ClientAgreement.Agreement.Organization.Id,
-                            CultureInfo.CurrentCulture.TwoLetterISOLanguageName
-                        );
+                            order.ClientAgreement.Agreement.Organization.Id);
 
                 if (!productAvailabilities.Any()) continue;
 

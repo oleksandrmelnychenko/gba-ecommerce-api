@@ -80,7 +80,7 @@ public sealed class ProductsController(
         // same storage scope cart reservation uses; otherwise a targeted re-index race can expose
         // stock that checkout cannot reserve.
         Dictionary<long, double> sellableQuantities =
-            productService.GetSellableQuantities(productIds, userNetId, locale);
+            productService.GetSellableQuantities(productIds, userNetId);
 
         string fallbackCurrencyCode = pricingContext.CurrencyCode;
 

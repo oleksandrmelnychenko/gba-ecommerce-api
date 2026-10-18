@@ -113,41 +113,20 @@ public sealed class ProductService : IProductService {
         ?? clientAgreementRepository.GetSelectedByClientNotSelectedNetId(clientNetId);
 
     public Task<Product> GetProductBySlug(string slug, Guid clientNetId, bool withVat) {
-        using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        if (clientNetId.Equals(Guid.Empty)) {
+        Guid? productNetId;
+
+        using (IDbConnection connection = _connectionFactory.NewSqlConnection()) {
             IGetSingleProductRepository productRepository =
                 _productRepositoriesFactory.NewGetSingleProductRepository(connection);
-            Guid? productNetId = productRepository.GetNetIdBySlug(slug);
-            if (!productNetId.HasValue)
-                return Task.FromResult<Product>(null);
-
-            if (!TryGetRetailContext(connection, out Storage storage, out _))
-                return Task.FromResult(
-                    MakeRetailUnavailable(productRepository.GetByNetId(productNetId.Value)));
-
-            return Task.FromResult(
-                EnsureRetailProductCanBeOffered(
-                    productRepository.GetByNetIdForRetail(
-                        productNetId.Value,
-                        storage.Id,
-                        storage.OrganizationId.Value,
-                        storage.ForVatProducts)));
+            productNetId = productRepository.GetNetIdBySlug(slug);
         }
 
-        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
+        if (!productNetId.HasValue)
+            return Task.FromResult<Product>(null);
 
-        ClientAgreement nonVatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(clientNetId, false);
-        ClientAgreement vatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(clientNetId, true);
-
-        return Task.FromResult(
-            _productRepositoriesFactory
-                .NewGetSingleProductRepository(connection)
-                .GetBySlug(
-                    slug,
-                    nonVatAgreement?.NetUid ?? Guid.Empty,
-                    vatAgreement?.NetUid
-                )
-        );
+        return clientNetId.Equals(Guid.Empty)
+            ? GetByNetIdForRetail(productNetId.Value)
+            : GetByNetId(productNetId.Value, clientNetId, withVat);
     }
 
     private static Product MakeRetailUnavailable(Product product) {
@@ -1215,7 +1194,38 @@ public sealed class ProductService : IProductService {
                 clientAgreement.Agreement.WithVATAccounting
             );
 
-        return Task.FromResult(analogues);
+        if (analogues.Count == 0 || clientAgreement.Agreement.OrganizationId == null)
+            return Task.FromResult(analogues);
+
+        return Task.FromResult(WithSellableStock(
+            analogues,
+            _productRepositoriesFactory
+                .NewProductAvailabilityRepository(connection)
+                .GetEcommerceSellableQuantities(
+                    analogues.Select(analogue => analogue.Id).Distinct().ToList(),
+                    null,
+                    clientAgreement.Agreement.OrganizationId.Value)));
+    }
+
+    private List<FromSearchProduct> WithSellableStock(List<FromSearchProduct> products, Guid currentClientNetId) {
+        if (products.Count == 0) return products;
+
+        return WithSellableStock(
+            products,
+            GetSellableQuantities(products.Select(product => product.Id).ToList(), currentClientNetId));
+    }
+
+    internal static List<FromSearchProduct> WithSellableStock(
+        List<FromSearchProduct> products,
+        Dictionary<long, double> sellableQuantities) {
+        foreach (FromSearchProduct product in products) {
+            sellableQuantities.TryGetValue(product.Id, out double sellable);
+            sellable = double.IsFinite(sellable) ? Math.Max(0d, sellable) : 0d;
+            product.AvailableQtyUk = sellable;
+            product.AvailableQtyUkVAT = sellable;
+        }
+
+        return products;
     }
 
     public Task<List<FromSearchProduct>> GetAllComponentsByProductNetId(Guid productNetId, Guid currentClientNetId, bool withVat) {
@@ -1252,7 +1262,7 @@ public sealed class ProductService : IProductService {
                 component.CurrencyCode = retailAgreement.Agreement.Currency?.Code;
             }
 
-            return Task.FromResult(retailComponents);
+            return Task.FromResult(WithSellableStock(retailComponents, currentClientNetId));
         }
 
         IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
@@ -1260,13 +1270,15 @@ public sealed class ProductService : IProductService {
         ClientAgreement nonVatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(currentClientNetId, false);
         ClientAgreement vatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(currentClientNetId, true);
 
-        return Task.FromResult(getMultipleProductsRepository
-            .GetAllComponentsByProductIdWithCalculatedPrices(
-                product.Id,
-                nonVatAgreement?.NetUid ?? Guid.Empty,
-                vatAgreement?.NetUid,
-                withVat ? vatAgreement?.Agreement?.OrganizationId : nonVatAgreement?.Agreement?.OrganizationId
-            ));
+        return Task.FromResult(WithSellableStock(
+            getMultipleProductsRepository
+                .GetAllComponentsByProductIdWithCalculatedPrices(
+                    product.Id,
+                    nonVatAgreement?.NetUid ?? Guid.Empty,
+                    vatAgreement?.NetUid,
+                    withVat ? vatAgreement?.Agreement?.OrganizationId : nonVatAgreement?.Agreement?.OrganizationId
+                ),
+            currentClientNetId));
     }
 
     private bool TryGetRetailContext(
@@ -1526,8 +1538,7 @@ public sealed class ProductService : IProductService {
 
     public Dictionary<long, double> GetSellableQuantities(
         List<long> productIds,
-        Guid currentClientNetId,
-        string culture = "uk") {
+        Guid currentClientNetId) {
         if (productIds == null || productIds.Count == 0)
             return new Dictionary<long, double>();
 
@@ -1545,8 +1556,7 @@ public sealed class ProductService : IProductService {
             return availabilityRepository.GetEcommerceSellableQuantities(
                 distinctProductIds,
                 storage.Id,
-                storage.OrganizationId,
-                culture);
+                storage.OrganizationId);
         }
 
         IClientAgreementRepository agreementRepository =
@@ -1563,8 +1573,7 @@ public sealed class ProductService : IProductService {
         return availabilityRepository.GetEcommerceSellableQuantities(
             distinctProductIds,
             null,
-            agreement.OrganizationId.Value,
-            culture);
+            agreement.OrganizationId.Value);
     }
 
     public Dictionary<long, ProductPriceInfo> GetPricesOnly(List<long> productIds, Guid currentClientNetId, bool withVat, string culture = "uk") {

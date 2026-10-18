@@ -64,6 +64,5 @@ public interface IProductService {
     /// </summary>
     Dictionary<long, double> GetSellableQuantities(
         List<long> productIds,
-        Guid currentClientNetId,
-        string culture = "uk");
+        Guid currentClientNetId);
 }

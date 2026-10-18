@@ -181,7 +181,7 @@ public sealed class CartCheckoutRaceTests {
         WithCart();
         WithStock(Availability(11, 10));
         _availabilities
-            .Setup(repository => repository.GetForEcommercePurchase(second.Id, _agreement.Agreement.Organization.Id, It.IsAny<string>()))
+            .Setup(repository => repository.GetForEcommercePurchase(second.Id, _agreement.Agreement.Organization.Id))
             .Returns(() => new List<ProductAvailability> { Availability(21, 1) });
         _orderItems.SetupSequence(repository => repository.Add(It.IsAny<OrderItem>())).Returns(77).Returns(78);
         _stock.Setup(repository => repository.Reserve(It.IsAny<long>(), It.IsAny<long>(), It.IsAny<double>())).Returns(true);
@@ -357,7 +357,7 @@ public sealed class CartCheckoutRaceTests {
 
     private void WithStock(params ProductAvailability[] rows) {
         _availabilities
-            .Setup(repository => repository.GetForEcommercePurchase(ProductId, _agreement.Agreement.Organization.Id, It.IsAny<string>()))
+            .Setup(repository => repository.GetForEcommercePurchase(ProductId, _agreement.Agreement.Organization.Id))
             .Callback(() => _calls.Add("read:" + ProductId))
             .Returns(() => rows.Select(row => new ProductAvailability { Id = row.Id, Amount = row.Amount }).ToList());
     }

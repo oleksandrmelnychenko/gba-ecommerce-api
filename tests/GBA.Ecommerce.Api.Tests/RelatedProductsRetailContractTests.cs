@@ -103,7 +103,7 @@ public sealed class RelatedProductsRetailContractTests {
         string availabilityJoin = method[availabilityJoinStart..relationFilterStart];
 
         Assert.Contains("AND EXISTS (", availabilityJoin, StringComparison.Ordinal);
-        Assert.Contains("[Storage].Locale = @Culture", availabilityJoin, StringComparison.Ordinal);
+        Assert.DoesNotContain("[Storage].Locale", availabilityJoin, StringComparison.Ordinal);
         Assert.Contains("[Storage].ForDefective = 0", availabilityJoin, StringComparison.Ordinal);
         Assert.Contains("[Storage].Deleted = 0", availabilityJoin, StringComparison.Ordinal);
         Assert.Contains(

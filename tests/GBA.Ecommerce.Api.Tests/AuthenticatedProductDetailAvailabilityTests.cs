@@ -79,7 +79,6 @@ public sealed class AuthenticatedProductDetailAvailabilityTests {
 
     [Fact]
     public void Fenix_primary_storage_link_preserves_the_exact_quantity_in_the_selected_price_bucket() {
-        const long fenixOrganizationId = 41;
         const long fenixPrimaryStorageId = 73;
         Product product = new();
         ProductAvailability availability = new() { Id = 20, Amount = 16 };
@@ -92,9 +91,7 @@ public sealed class AuthenticatedProductDetailAvailabilityTests {
         };
 
         Assert.True(EcommerceStorageScope.MatchesOrganization(
-            storage.OrganizationId,
             storage.Id,
-            fenixOrganizationId,
             organizationStorageId: fenixPrimaryStorageId));
 
         GetSingleProductRepository.IncludeAvailabilityFromJoinedStorage(
@@ -137,29 +134,42 @@ public sealed class AuthenticatedProductDetailAvailabilityTests {
     [Fact]
     public void Unrelated_storage_is_not_included_in_the_agreement_organization_scope() {
         Assert.False(EcommerceStorageScope.MatchesOrganization(
-            storageOrganizationId: 42,
             storageId: 73,
-            organizationId: 41,
             organizationStorageId: 74));
+        Assert.False(EcommerceStorageScope.MatchesOrganization(
+            storageId: 73,
+            organizationStorageId: null));
     }
 
     [Fact]
     public void Fenix_scope_does_not_mix_resale_stock_from_AMG() {
-        const long fenixOrganizationId = 10487;
         const long fenixPrimaryStorageId = 2625;
         var stock = new[] {
-            new { StorageOrganizationId = (long?)null, StorageId = fenixPrimaryStorageId, Amount = 16d },
-            new { StorageOrganizationId = (long?)10485, StorageId = 2618L, Amount = 39d }
+            new { StorageId = fenixPrimaryStorageId, Amount = 16d },
+            new { StorageId = 2618L, Amount = 39d }
         };
 
         double availableForFenix = stock
-            .Where(item => EcommerceStorageScope.MatchesOrganization(
-                item.StorageOrganizationId,
-                item.StorageId,
-                fenixOrganizationId,
-                fenixPrimaryStorageId))
+            .Where(item => EcommerceStorageScope.MatchesOrganization(item.StorageId, fenixPrimaryStorageId))
             .Sum(item => item.Amount);
 
         Assert.Equal(16, availableForFenix);
+    }
+
+    [Fact]
+    public void AMG_scope_counts_only_its_sale_storage_and_not_the_fleet_display_or_np_storages() {
+        const long amgSaleStorageId = 2968;
+        var amgStock = new[] {
+            new { StorageId = 2962L, Amount = 5d },
+            new { StorageId = 2963L, Amount = 7d },
+            new { StorageId = 2964L, Amount = 11d },
+            new { StorageId = amgSaleStorageId, Amount = 3d }
+        };
+
+        double sellable = amgStock
+            .Where(item => EcommerceStorageScope.MatchesOrganization(item.StorageId, amgSaleStorageId))
+            .Sum(item => item.Amount);
+
+        Assert.Equal(3, sellable);
     }
 }

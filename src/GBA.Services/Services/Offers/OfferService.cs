@@ -243,11 +243,10 @@ public sealed class OfferService : IOfferService {
 
                     IEnumerable<ProductAvailability> productAvailabilities =
                         productAvailabilityRepository
-                            .GetByProductAndOrganizationIds(
+                            .GetForEcommercePurchase(
                                 orderItem.ProductId,
-                                order.ClientAgreement.Agreement.Organization.Id,
-                                offer.IsVatCart
-                            );
+                                order.ClientAgreement.Agreement.Organization.Id
+                            ).ToList();
 
                     if (productAvailabilities.Any()) {
                         orderItem.OrderedQty = orderItem.Qty;

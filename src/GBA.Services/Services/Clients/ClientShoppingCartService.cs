@@ -606,8 +606,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             .NewProductAvailabilityRepository(connection)
             .GetForEcommercePurchase(
                 productId,
-                context.ClientAgreement.Agreement.Organization.Id,
-                CultureInfo.CurrentCulture.TwoLetterISOLanguageName)
+                context.ClientAgreement.Agreement.Organization.Id)
             .ToList();
     }
 

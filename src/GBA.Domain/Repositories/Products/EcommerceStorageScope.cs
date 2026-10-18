@@ -1,32 +1,36 @@
 namespace GBA.Domain.Repositories.Products;
 
 internal static class EcommerceStorageScope {
-    // Stock follows the selected agreement organization, while VAT remains a pricing and
-    // presentation concern. Synced data can express storage ownership in either direction;
-    // both source links stay valid until the legacy relation is migrated. Do not broaden this
-    // scope with AvailableForReSale or ForVatProducts: that mixes another organization's stock
-    // into the quantity the current agreement can reserve.
     internal const string NamedStorageSql =
-        "([Storage].OrganizationID = @OrganizationId " +
-        "OR EXISTS (" +
+        "EXISTS (" +
         "SELECT 1 FROM [Organization] AS [AgreementOrganization] " +
         "WHERE [AgreementOrganization].ID = @OrganizationId " +
         "AND [AgreementOrganization].Deleted = 0 " +
-        "AND [AgreementOrganization].StorageID = [Storage].ID))";
+        "AND [AgreementOrganization].StorageID = [Storage].ID)";
 
     internal const string AliasedStorageSql =
-        "(s.OrganizationID = @OrganizationId " +
-        "OR EXISTS (" +
+        "EXISTS (" +
         "SELECT 1 FROM [Organization] AS [AgreementOrganization] " +
         "WHERE [AgreementOrganization].ID = @OrganizationId " +
         "AND [AgreementOrganization].Deleted = 0 " +
-        "AND [AgreementOrganization].StorageID = s.ID))";
+        "AND [AgreementOrganization].StorageID = s.ID)";
 
-    internal static bool MatchesOrganization(
-        long? storageOrganizationId,
-        long storageId,
-        long organizationId,
-        long? organizationStorageId) {
-        return storageOrganizationId == organizationId || organizationStorageId == storageId;
+    internal const string ProductSellableQuantitySql =
+        "ISNULL((" +
+        "SELECT SUM(CASE WHEN [ScopedAvailability].Amount > 0 THEN [ScopedAvailability].Amount ELSE 0 END) " +
+        "FROM [ProductAvailability] AS [ScopedAvailability] " +
+        "INNER JOIN [Storage] AS [ScopedStorage] " +
+        "ON [ScopedStorage].ID = [ScopedAvailability].StorageID " +
+        "AND [ScopedStorage].Deleted = 0 " +
+        "AND [ScopedStorage].ForDefective = 0 " +
+        "INNER JOIN [Organization] AS [ScopedOrganization] " +
+        "ON [ScopedOrganization].ID = @OrganizationId " +
+        "AND [ScopedOrganization].Deleted = 0 " +
+        "AND [ScopedOrganization].StorageID = [ScopedStorage].ID " +
+        "WHERE [ScopedAvailability].ProductID = [Product].ID " +
+        "AND [ScopedAvailability].Deleted = 0), 0)";
+
+    internal static bool MatchesOrganization(long storageId, long? organizationStorageId) {
+        return organizationStorageId == storageId;
     }
 }

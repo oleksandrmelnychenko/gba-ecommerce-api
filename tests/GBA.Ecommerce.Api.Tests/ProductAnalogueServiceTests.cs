@@ -28,7 +28,7 @@ public sealed class ProductAnalogueServiceTests {
             currencyId: 22,
             withVat: true);
         List<FromSearchProduct> expected = [
-            new() { NetUid = Guid.NewGuid(), VendorCode = "FE20096" }
+            new() { Id = 501, NetUid = Guid.NewGuid(), VendorCode = "FE20096", AvailableQtyUkVAT = 40 }
         ];
 
         fixture.ClientAgreementRepository
@@ -56,6 +56,14 @@ public sealed class ProductAnalogueServiceTests {
 
         FromSearchProduct analogue = Assert.Single(actual);
         Assert.Equal("FE20096", analogue.VendorCode);
+        Assert.Equal(7, analogue.AvailableQtyUk);
+        Assert.Equal(7, analogue.AvailableQtyUkVAT);
+        fixture.AvailabilityRepository.Verify(
+            repository => repository.GetEcommerceSellableQuantities(
+                It.Is<IReadOnlyCollection<long>>(ids => ids.SequenceEqual(new long[] { 501 })),
+                null,
+                11),
+            Times.Once);
         fixture.ClientAgreementRepository.Verify(
             repository => repository.GetSelectedByClientNotSelectedNetId(clientNetId),
             Times.Once);
@@ -72,7 +80,7 @@ public sealed class ProductAnalogueServiceTests {
             currencyId: 44,
             withVat: false);
         List<FromSearchProduct> expected = [
-            new() { NetUid = Guid.NewGuid(), VendorCode = "SABO890850B" }
+            new() { Id = 502, NetUid = Guid.NewGuid(), VendorCode = "SABO890850B", AvailableQtyUk = 40 }
         ];
 
         fixture.ClientAgreementRepository
@@ -135,6 +143,15 @@ public sealed class ProductAnalogueServiceTests {
             ClientRepositoriesFactory
                 .Setup(factory => factory.NewClientAgreementRepository(Connection.Object))
                 .Returns(ClientAgreementRepository.Object);
+            ProductRepositoriesFactory
+                .Setup(factory => factory.NewProductAvailabilityRepository(Connection.Object))
+                .Returns(AvailabilityRepository.Object);
+            AvailabilityRepository
+                .Setup(repository => repository.GetEcommerceSellableQuantities(
+                    It.IsAny<IReadOnlyCollection<long>>(),
+                    null,
+                    It.IsAny<long?>()))
+                .Returns<IReadOnlyCollection<long>, long?, long?>((ids, _, _) => ids.ToDictionary(id => id, _ => 7d));
             SingleProductRepository
                 .Setup(repository => repository.GetByNetIdWithoutIncludes(Product.NetUid))
                 .Returns(Product);
@@ -160,5 +177,6 @@ public sealed class ProductAnalogueServiceTests {
         public Mock<IGetSingleProductRepository> SingleProductRepository { get; } = new();
         public Mock<IGetMultipleProductsRepository> MultipleProductsRepository { get; } = new();
         public Mock<IClientAgreementRepository> ClientAgreementRepository { get; } = new();
+        public Mock<IProductAvailabilityRepository> AvailabilityRepository { get; } = new();
     }
 }

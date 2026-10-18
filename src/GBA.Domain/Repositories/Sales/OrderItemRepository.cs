@@ -16,6 +16,7 @@ using GBA.Domain.Entities.Sales.OrderItemShiftStatuses;
 using GBA.Domain.EntityHelpers.SalesModels;
 using GBA.Domain.EntityHelpers.SalesModels.ChartOfSalesModels;
 using GBA.Domain.EntityHelpers.SalesModels.Models;
+using GBA.Domain.Repositories.Products;
 using GBA.Domain.Repositories.Sales.Contracts;
 
 namespace GBA.Domain.Repositories.Sales;
@@ -731,41 +732,7 @@ public sealed class OrderItemRepository : IOrderItemRepository {
             ", [Product].VendorCode " +
             ", [Product].Volume " +
             ", [Product].[Weight] " +
-            ", ( ";
-        if (currentAgreement?.WithVATAccounting ?? false)
-            sqlExpression +=
-                "SELECT SUM([ProductAvailability].Amount) " +
-                "FROM [ProductAvailability] " +
-                "LEFT JOIN [Storage] " +
-                "ON [Storage].ID = [ProductAvailability].StorageID " +
-                "WHERE [ProductAvailability].ProductID = [Product].ID " +
-                "AND [ProductAvailability].Deleted = 0 " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].Locale = N'uk' " +
-                "AND [Storage].OrganizationID = @OrganizationId " +
-                ") AS [AvailableQtyUk] ";
-        else
-            sqlExpression +=
-                "SELECT SUM(AmountQty) AS [AvailableQtyUk] " +
-                "FROM ( " +
-                "SELECT SUM([ProductAvailability].Amount) AS AmountQty FROM [ProductAvailability] " +
-                "LEFT JOIN [Storage] " +
-                "ON [Storage].ID = [ProductAvailability].StorageID " +
-                "WHERE [ProductAvailability].ProductID = [Product].ID  " +
-                "AND [ProductAvailability].Deleted = 0 " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].Locale = N'uk' " +
-                "AND [Storage].AvailableForReSale = 1 " +
-                "UNION " +
-                "SELECT SUM([ProductAvailability].Amount) AS AmountQty FROM [ProductAvailability] " +
-                "LEFT JOIN [Storage] " +
-                "ON [Storage].ID = [ProductAvailability].StorageID " +
-                "WHERE [ProductAvailability].ProductID = [Product].ID " +
-                "AND [ProductAvailability].Deleted = 0 " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].Locale = N'uk' " +
-                "AND [Storage].OrganizationID = @OrganizationId " +
-                ") AS AmountQty) AS [AvailableQtyUk]";
+            ", " + EcommerceStorageScope.ProductSellableQuantitySql + " AS [AvailableQtyUk] ";
 
         sqlExpression +=
             ", ISNULL(( " +
@@ -1068,41 +1035,7 @@ public sealed class OrderItemRepository : IOrderItemRepository {
             ", (SELECT Code FROM Currency " +
             "WHERE ID = @CurrencyId " +
             "AND Deleted = 0) AS CurrencyCode " +
-            ", ( ";
-        if (withVat)
-            sqlExpression +=
-                "SELECT SUM([ProductAvailability].Amount) " +
-                "FROM [ProductAvailability] " +
-                "LEFT JOIN [Storage] " +
-                "ON [Storage].ID = [ProductAvailability].StorageID " +
-                "WHERE [ProductAvailability].ProductID = [Product].ID " +
-                "AND [ProductAvailability].Deleted = 0 " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].Locale = N'uk' " +
-                "AND [Storage].OrganizationID = @OrganizationId " +
-                ") AS [AvailableQtyUk] ";
-        else
-            sqlExpression +=
-                "SELECT SUM(AmountQty) AS [AvailableQtyUk] " +
-                "FROM ( " +
-                "SELECT SUM([ProductAvailability].Amount) AS AmountQty FROM [ProductAvailability] " +
-                "LEFT JOIN [Storage] " +
-                "ON [Storage].ID = [ProductAvailability].StorageID " +
-                "WHERE [ProductAvailability].ProductID = [Product].ID  " +
-                "AND [ProductAvailability].Deleted = 0 " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].Locale = N'uk' " +
-                "AND [Storage].AvailableForReSale = 1 " +
-                "UNION " +
-                "SELECT SUM([ProductAvailability].Amount) AS AmountQty FROM [ProductAvailability] " +
-                "LEFT JOIN [Storage] " +
-                "ON [Storage].ID = [ProductAvailability].StorageID " +
-                "WHERE [ProductAvailability].ProductID = [Product].ID " +
-                "AND [ProductAvailability].Deleted = 0 " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].Locale = N'uk' " +
-                "AND [Storage].OrganizationID = @OrganizationId " +
-                ") AS AmountQty) AS [AvailableQtyUk] ";
+            ", " + EcommerceStorageScope.ProductSellableQuantitySql + " AS [AvailableQtyUk] ";
 
         sqlExpression +=
             ", ISNULL(( " +

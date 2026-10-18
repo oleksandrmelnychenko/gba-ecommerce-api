@@ -66,8 +66,7 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
 
     public IEnumerable<ProductAvailability> GetForEcommercePurchase(
         long productId,
-        long organizationId,
-        string culture) {
+        long organizationId) {
         return _connection.Query<ProductAvailability, Storage, ProductAvailability>(
             "SELECT [ProductAvailability].*, [Storage].* " +
             "FROM [ProductAvailability] " +
@@ -76,7 +75,6 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
             "AND [ProductAvailability].Deleted = 0 " +
             "AND [Storage].Deleted = 0 " +
             "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].Locale = @Culture " +
             "AND " + EcommerceStorageScope.NamedStorageSql + " " +
             "ORDER BY [Storage].RetailPriority, [Storage].ID, [ProductAvailability].ID",
             (availability, storage) => {
@@ -85,16 +83,14 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
             },
             new {
                 ProductId = productId,
-                OrganizationId = organizationId,
-                Culture = culture
+                OrganizationId = organizationId
             });
     }
 
     public Dictionary<long, double> GetEcommerceSellableQuantities(
         IReadOnlyCollection<long> productIds,
         long? retailStorageId,
-        long? organizationId,
-        string culture) {
+        long? organizationId) {
         if (productIds == null || productIds.Count == 0)
             return new Dictionary<long, double>();
 
@@ -117,7 +113,6 @@ SELECT requested.ID AS ProductId,
                  AND pa.Deleted = 0
                  AND s.Deleted = 0
                  AND s.ForDefective = 0
-                 AND s.Locale = @Culture
                  AND " + EcommerceStorageScope.AliasedStorageSql + @"
            ) END,
            0) AS float) AS Quantity
@@ -129,8 +124,7 @@ WHERE requested.ID IN @ProductIds";
                 new {
                     ProductIds = productIds,
                     RetailStorageId = retailStorageId,
-                    OrganizationId = organizationId,
-                    Culture = culture
+                    OrganizationId = organizationId
                 })
             .ToDictionary(row => row.ProductId, row => row.Quantity);
     }

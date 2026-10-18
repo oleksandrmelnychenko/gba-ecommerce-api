@@ -30,8 +30,7 @@ public interface IProductAvailabilityRepository {
     /// </summary>
     IEnumerable<ProductAvailability> GetForEcommercePurchase(
         long productId,
-        long organizationId,
-        string culture);
+        long organizationId);
 
     /// <summary>
     /// Resolves live, free ecommerce stock for a search result page. Anonymous retail is scoped
@@ -40,8 +39,7 @@ public interface IProductAvailabilityRepository {
     Dictionary<long, double> GetEcommerceSellableQuantities(
         IReadOnlyCollection<long> productIds,
         long? retailStorageId,
-        long? organizationId,
-        string culture);
+        long? organizationId);
 
     List<ProductAvailability> GetAllByStorageNetIdFiltered(Guid netId, long limit, long offset, string value);
 

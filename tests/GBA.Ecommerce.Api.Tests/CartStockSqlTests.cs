@@ -13,12 +13,14 @@ using GBA.Domain.Repositories.Agreements;
 using GBA.Domain.Repositories.Clients;
 using GBA.Domain.Repositories.Currencies;
 using GBA.Domain.Repositories.ExchangeRates;
+using GBA.Domain.Repositories.Organizations;
 using GBA.Domain.Repositories.Pricings;
 using GBA.Domain.Repositories.Products;
 using GBA.Domain.Repositories.Sales;
 using GBA.Domain.Repositories.Storages;
 using GBA.Services.Infrastructure.Checkout;
 using GBA.Services.Services.Clients;
+using GBA.Services.Services.Products;
 using Microsoft.Data.SqlClient;
 
 namespace GBA.Ecommerce.Api.Tests;
@@ -157,6 +159,35 @@ public sealed class CartStockSqlTests(CheckoutSqlFixture fixture) {
         await ClearCart(active);
     }
 
+    [Fact]
+    public async Task Signed_in_stock_and_reservations_ignore_the_organizations_other_storages() {
+        if (!Ready(out CartScenario scenario)) return;
+
+        Shopper shopper = scenario.Shoppers[0];
+        await ClearCart(shopper);
+        SetFreeStock(scenario, 2);
+        long otherAvailabilityId = PutStockInAnotherOrganizationStorage(scenario, 50);
+        try {
+            ProductService products = NewProductService();
+
+            Assert.Equal(2d, products.GetSellableQuantities(new List<long> { scenario.ProductId }, shopper.ClientNetUid)[scenario.ProductId]);
+            Product detail = await products.GetByNetId(scenario.ProductNetUid, shopper.ClientNetUid, false);
+            Assert.Equal(2d, detail.AvailableQtyUk + detail.AvailableQtyUkVAT);
+
+            await Assert.ThrowsAsync<LocalizedException>(() =>
+                NewCartService().Add(NewLine(scenario.ProductNetUid, 3), shopper.ClientNetUid, false));
+            await NewCartService().Add(NewLine(scenario.ProductNetUid, 2), shopper.ClientNetUid, false);
+
+            OrderItem line = Assert.Single(await NewCartService().GetAllItemsFromCurrentShoppingCartByClientNetId(shopper.ClientNetUid, false));
+            Assert.Equal(0d, line.Product.AvailableQtyUk);
+            Assert.Equal(50d, AvailabilityAmount(otherAvailabilityId));
+            Assert.Equal(0d, AvailabilityAmount(scenario.AvailabilityId));
+        } finally {
+            await ClearCart(shopper);
+            SetAvailabilityAmount(otherAvailabilityId, 0);
+        }
+    }
+
     private bool Ready(out CartScenario scenario) {
         scenario = null!;
         if (!fixture.IsConfigured || !fixture.HasConcordSchema) return false;
@@ -261,6 +292,41 @@ public sealed class CartStockSqlTests(CheckoutSqlFixture fixture) {
             UPDATE dbo.ProductAvailability SET Amount = 0 WHERE ProductID = @ProductId AND Deleted = 0;
             UPDATE dbo.ProductAvailability SET Amount = @amount WHERE ID = @AvailabilityId;
             """, new { scenario.ProductId, scenario.AvailabilityId, amount });
+    }
+
+    private long PutStockInAnotherOrganizationStorage(CartScenario scenario, double amount) {
+        using SqlConnection connection = fixture.Open();
+        long storageId = connection.ExecuteScalar<long>("""
+            SELECT TOP (1) s.ID
+            FROM dbo.Storage s
+            JOIN dbo.Organization o ON o.ID = @OrganizationId
+            WHERE s.OrganizationID = o.ID AND s.ID <> o.StorageID
+              AND s.Deleted = 0 AND s.ForDefective = 0
+            ORDER BY s.ID;
+            """, new { scenario.OrganizationId });
+        long? existing = connection.ExecuteScalar<long?>(
+            "SELECT TOP (1) ID FROM dbo.ProductAvailability WHERE ProductID = @ProductId AND StorageID = @storageId AND Deleted = 0;",
+            new { scenario.ProductId, storageId });
+        if (existing.HasValue) {
+            SetAvailabilityAmount(existing.Value, amount);
+            return existing.Value;
+        }
+
+        return connection.ExecuteScalar<long>("""
+            INSERT INTO dbo.ProductAvailability (ProductID, StorageID, Amount, Updated)
+            OUTPUT INSERTED.ID
+            VALUES (@ProductId, @storageId, @amount, GETUTCDATE());
+            """, new { scenario.ProductId, storageId, amount });
+    }
+
+    private void SetAvailabilityAmount(long availabilityId, double amount) {
+        using SqlConnection connection = fixture.Open();
+        connection.Execute("UPDATE dbo.ProductAvailability SET Amount = @amount WHERE ID = @availabilityId;", new { availabilityId, amount });
+    }
+
+    private double AvailabilityAmount(long availabilityId) {
+        using SqlConnection connection = fixture.Open();
+        return connection.ExecuteScalar<double>("SELECT CAST(Amount AS float) FROM dbo.ProductAvailability WHERE ID = @availabilityId;", new { availabilityId });
     }
 
     private double FreeStock(CartScenario scenario) {
@@ -395,6 +461,19 @@ public sealed class CartStockSqlTests(CheckoutSqlFixture fixture) {
             new AgreementRepositoriesFactory(),
             new RecordingCrmHandler().Factory(),
             new SearchReindexSignal());
+    }
+
+    private ProductService NewProductService() {
+        return new ProductService(
+            new ClientRepositoriesFactory(),
+            new ProductRepositoriesFactory(),
+            new PricingRepositoriesFactory(),
+            new ExchangeRateRepositoriesFactory(),
+            new CurrencyRepositoriesFactory(),
+            new OrganizationRepositoriesFactory(),
+            new StorageRepositoryFactory(),
+            fixture.ConnectionFactory,
+            new AgreementRepositoriesFactory());
     }
 
     private sealed record CartScenario(

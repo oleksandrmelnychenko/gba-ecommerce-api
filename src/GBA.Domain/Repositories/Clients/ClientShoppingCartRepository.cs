@@ -11,6 +11,7 @@ using GBA.Domain.Entities.Products;
 using GBA.Domain.Entities.Regions;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.Repositories.Clients.Contracts;
+using GBA.Domain.Repositories.Products;
 
 namespace GBA.Domain.Repositories.Clients;
 
@@ -125,28 +126,8 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
                 ", [Product].VendorCode " +
                 ", [Product].Volume " +
                 ", [Product].[Weight] " +
-                ", ISNULL(( " +
-                "SELECT SUM([ProductAvailability].Amount) " +
-                "FROM [ProductAvailability] " +
-                "LEFT JOIN [Storage] " +
-                "ON [Storage].ID = [ProductAvailability].StorageID " +
-                "WHERE [ProductAvailability].ProductID = [Product].ID " +
-                "AND [ProductAvailability].Deleted = 0 " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].Locale = N'uk' " +
-                "AND [Storage].ForVatProducts = 0 " +
-                "), 0) AS [AvailableQtyUk] " +
-                ", ISNULL(( " +
-                "SELECT SUM([ProductAvailability].Amount) " +
-                "FROM [ProductAvailability] " +
-                "LEFT JOIN [Storage] " +
-                "ON [Storage].ID = [ProductAvailability].StorageID " +
-                "WHERE [ProductAvailability].ProductID = [Product].ID " +
-                "AND [ProductAvailability].Deleted = 0 " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].Locale = N'uk' " +
-                "AND [Storage].ForVatProducts = 1 " +
-                "), 0) AS [AvailableQtyUkVAT] " +
+                ", " + EcommerceStorageScope.ProductSellableQuantitySql + " AS [AvailableQtyUk] " +
+                ", " + EcommerceStorageScope.ProductSellableQuantitySql + " AS [AvailableQtyUkVAT] " +
                 ", ISNULL(( " +
                 "SELECT SUM([ProductAvailability].Amount) " +
                 "FROM [ProductAvailability] " +
@@ -205,7 +186,8 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
                 },
                 new {
                     NetId = netId, ClientAgreementNetId = toReturn.ClientAgreement.NetUid, Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName,
-                    WithVat = toReturn.IsVatCart
+                    WithVat = toReturn.IsVatCart,
+                    OrganizationId = toReturn.ClientAgreement.Agreement?.OrganizationId
                 }
             );
         }

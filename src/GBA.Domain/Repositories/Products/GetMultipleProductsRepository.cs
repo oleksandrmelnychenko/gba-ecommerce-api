@@ -4011,7 +4011,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "AND EXISTS (" +
             "SELECT 1 FROM [Storage] " +
             "WHERE [Storage].ID = [ProductAvailability].StorageID " +
-            "AND [Storage].Locale = @Culture " +
             "AND [Storage].ForDefective = 0 " +
             "AND [Storage].Deleted = 0 " +
             "AND " + EcommerceStorageScope.NamedStorageSql + ") " +

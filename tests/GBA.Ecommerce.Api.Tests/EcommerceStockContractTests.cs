@@ -25,7 +25,7 @@ public sealed class EcommerceStockContractTests {
         string orderService = ReadSource("src/GBA.Services/Services/Orders/OrderService.cs");
         string availabilityRepository = ReadSource("src/GBA.Domain/Repositories/Products/ProductAvailabilityRepository.cs");
 
-        Assert.Contains("productService.GetSellableQuantities(productIds, userNetId, locale)", controller);
+        Assert.Contains("productService.GetSellableQuantities(productIds, userNetId)", controller);
         Assert.Contains("storage.Id,", productService);
         Assert.Contains("GetByProductAndStorageIds(product.Id, storage.Id)", cartService);
         Assert.Contains("EcommercePurchasability.HasSellablePrice(product)", cartService);
@@ -36,13 +36,16 @@ public sealed class EcommerceStockContractTests {
     }
 
     [Fact]
-    public void Authenticated_cart_and_search_share_the_multi_storage_agreement_scope() {
+    public void Authenticated_stock_uses_only_the_agreement_organizations_sale_storage() {
         string availabilityRepository = ReadSource("src/GBA.Domain/Repositories/Products/ProductAvailabilityRepository.cs");
         string productRepository = ReadSource("src/GBA.Domain/Repositories/Products/GetSingleProductRepository.cs");
         string multipleProductsRepository = ReadSource("src/GBA.Domain/Repositories/Products/GetMultipleProductsRepository.cs");
+        string orderItemRepository = ReadSource("src/GBA.Domain/Repositories/Sales/OrderItemRepository.cs");
+        string cartRepository = ReadSource("src/GBA.Domain/Repositories/Clients/ClientShoppingCartRepository.cs");
         string storageScope = ReadSource("src/GBA.Domain/Repositories/Products/EcommerceStorageScope.cs");
         string cartService = ReadSource("src/GBA.Services/Services/Clients/ClientShoppingCartService.cs");
         string orderService = ReadSource("src/GBA.Services/Services/Orders/OrderService.cs");
+        string offerService = ReadSource("src/GBA.Services/Services/Offers/OfferService.cs");
         int ecommerceAvailabilityStart = availabilityRepository.IndexOf(
             "public IEnumerable<ProductAvailability> GetForEcommercePurchase(",
             StringComparison.Ordinal);
@@ -56,17 +59,22 @@ public sealed class EcommerceStockContractTests {
 
         Assert.Contains("GetForEcommercePurchase", cartService);
         Assert.Contains("GetForEcommercePurchase", orderService);
+        Assert.Contains("GetForEcommercePurchase", offerService);
+        Assert.DoesNotContain("GetByProductAndOrganizationIds", offerService, StringComparison.Ordinal);
         Assert.Equal(1, Count(availabilityRepository, "EcommerceStorageScope.NamedStorageSql"));
         Assert.Equal(1, Count(availabilityRepository, "EcommerceStorageScope.AliasedStorageSql"));
         Assert.Equal(2, Count(productRepository, "EcommerceStorageScope.NamedStorageSql"));
         Assert.Contains("EcommerceStorageScope.NamedStorageSql", multipleProductsRepository);
-        Assert.Contains("[Storage].OrganizationID = @OrganizationId", storageScope);
+        Assert.Equal(2, Count(orderItemRepository, "EcommerceStorageScope.ProductSellableQuantitySql"));
+        Assert.Equal(2, Count(cartRepository, "EcommerceStorageScope.ProductSellableQuantitySql"));
         Assert.Contains("[AgreementOrganization].StorageID = [Storage].ID", storageScope);
         Assert.Contains("[AgreementOrganization].StorageID = s.ID", storageScope);
+        Assert.Contains("[ScopedOrganization].StorageID = [ScopedStorage].ID", storageScope);
+        Assert.DoesNotContain("OrganizationID = @OrganizationId", storageScope, StringComparison.Ordinal);
         Assert.DoesNotContain("ForVatProducts", ecommerceAvailability, StringComparison.Ordinal);
         Assert.DoesNotContain("AvailableForReSale", ecommerceAvailability, StringComparison.Ordinal);
+        Assert.DoesNotContain("Locale", ecommerceAvailability, StringComparison.Ordinal);
         Assert.Contains("s.ForDefective = 0", ecommerceAvailability);
-        Assert.Contains("s.Locale = @Culture", ecommerceAvailability);
     }
 
     [Fact]

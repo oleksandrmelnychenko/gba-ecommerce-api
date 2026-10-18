@@ -990,8 +990,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
         sqlExpression +=
             "AND " + EcommerceStorageScope.NamedStorageSql + " " +
             "AND [Storage].Deleted = 0 " +
-            "AND [Storage].ForDefective = 0 " +
-            "AND [Storage].Locale = @Culture ";
+            "AND [Storage].ForDefective = 0 ";
         sqlExpression +=
             "LEFT JOIN MeasureUnit " +
             "ON MeasureUnit.ID = Product.MeasureUnitID " +
@@ -1224,7 +1223,6 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "AND [ProductImage].Deleted = 0 " +
             "WHERE [ProductAnalogue].BaseProductID = @Id " +
             "AND [ProductAnalogue].Deleted = 0 " +
-            "AND [Storage].Locale = @Culture " +
             "AND [Storage].ForDefective = 0 ";
         analogueExpression +=
             "AND " + EcommerceStorageScope.NamedStorageSql + " " +
