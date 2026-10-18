@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using GBA.Domain.Entities.Clients;
 using GBA.Domain.Entities.Sales;
 
@@ -40,6 +41,14 @@ public static class CheckoutFingerprint {
             invoice,
             number,
             invoiceFileHash == null ? string.Empty : Convert.ToHexString(invoiceFileHash));
+    }
+
+    public static byte[] ForQuickInvoice(Guid retailClientNetId, bool fullPayment, Sale sale) {
+        return Compute(
+            "quick-invoice",
+            retailClientNetId.ToString("D"),
+            fullPayment ? "1" : "0",
+            sale == null ? string.Empty : JsonSerializer.Serialize(sale, CheckoutExecutor.ReceiptJsonOptions));
     }
 
     public static byte[] ForOffer(ClientShoppingCart offer, bool addCurrentCartItems) {

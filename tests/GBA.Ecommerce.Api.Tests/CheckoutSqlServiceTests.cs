@@ -5,14 +5,18 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Transactions;
 using Dapper;
+using GBA.Common.ResourceNames;
 using GBA.Common.Search;
+using GBA.Domain.Entities;
 using GBA.Domain.Entities.Clients;
 using GBA.Domain.Entities.Delivery;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.Repositories.Agreements;
 using GBA.Domain.Repositories.Clients;
+using GBA.Domain.Repositories.Clients.RetailClients;
 using GBA.Domain.Repositories.Currencies;
 using GBA.Domain.Repositories.Delivery;
 using GBA.Domain.Repositories.ExchangeRates;
@@ -25,7 +29,7 @@ using GBA.Domain.Repositories.Users;
 using GBA.Domain.Repositories.Users.Contracts;
 using GBA.Services.Infrastructure.Checkout;
 using GBA.Services.Services.Clients;
-using GBA.Services.Services.Messengers.Contracts;
+using GBA.Services.Services.Messengers;
 using GBA.Services.Services.Offers;
 using GBA.Services.Services.Orders;
 using Microsoft.Data.SqlClient;
@@ -39,6 +43,7 @@ public sealed class CheckoutSqlServiceTests(CheckoutSqlFixture fixture) {
     private static CheckoutScenario? _scenario;
     private static TwoCartScenario? _twoCartScenario;
     private static bool _twoCartScenarioSearched;
+    private static RetailScenario? _retailScenario;
 
     private readonly RecordingCrmHandler _crm = new();
 
@@ -176,7 +181,6 @@ public sealed class CheckoutSqlServiceTests(CheckoutSqlFixture fixture) {
         double availableBefore = OfferScopeStock(productId, scenario);
         CheckoutAttempt attempt = NewAttempt();
         Watermark watermark = CurrentWatermark();
-        SeedLegacyOfferSaleNumber(scenario);
 
         CheckoutResult[] results = await SettleSameKeyRace(Enumerable.Range(0, 3).Select(_ => Task.Run(() =>
             NewOfferService().GenerateNewOrderAndSaleFromOffer(
@@ -208,7 +212,6 @@ public sealed class CheckoutSqlServiceTests(CheckoutSqlFixture fixture) {
         double availableBefore = OfferScopeStock(productId, scenario);
         CheckoutAttempt attempt = NewAttempt();
         Watermark watermark = CurrentWatermark();
-        SeedLegacyOfferSaleNumber(scenario);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             NewOfferService(FailingSaleInsertFactory()).GenerateNewOrderAndSaleFromOffer(
@@ -225,7 +228,6 @@ public sealed class CheckoutSqlServiceTests(CheckoutSqlFixture fixture) {
         await Task.Delay(500);
         Assert.Empty(_crm.Paths);
 
-        SeedLegacyOfferSaleNumber(scenario);
         CheckoutResult retried = await NewOfferService().GenerateNewOrderAndSaleFromOffer(
             OfferSelection(offerNetUid, offerItemNetUid, 1), scenario.ClientNetUid, true, attempt);
 
@@ -241,7 +243,6 @@ public sealed class CheckoutSqlServiceTests(CheckoutSqlFixture fixture) {
 
         OrderItem cartItem = await AddFreshCartItem(scenario, 0);
         (Guid offerNetUid, Guid offerItemNetUid) = CreateOffer(scenario, OfferScopeProduct(scenario, 2), 1);
-        SeedLegacyOfferSaleNumber(scenario);
 
         CheckoutResult result = await NewOfferService().GenerateNewOrderAndSaleFromOffer(
             OfferSelection(offerNetUid, offerItemNetUid, 1), scenario.ClientNetUid, true, NewAttempt());
@@ -281,11 +282,149 @@ public sealed class CheckoutSqlServiceTests(CheckoutSqlFixture fixture) {
         Assert.NotEqual(results[0].Sale.OrderId, results[1].Sale.OrderId);
     }
 
-    private static async Task<CheckoutResult[]> SettleSameKeyRace(IEnumerable<Task<CheckoutResult>> submissions) {
-        Task<CheckoutResult>[] tasks = submissions.ToArray();
+
+    [Fact]
+    public async Task Offer_acceptance_continues_the_month_coded_sequence_whatever_other_numbers_the_organization_has() {
+        if (!Ready(out CheckoutScenario scenario)) return;
+
+        string prefix = MonthPrefix(scenario);
+        long current = HighestGeneratedSequence(scenario, prefix);
+        string code = OrganizationCode(scenario);
+        AddSaleNumber(scenario, prefix + (current + 1000).ToString("D8", CultureInfo.InvariantCulture));
+        AddSaleNumber(scenario, code + "0000000099");
+        AddSaleNumber(scenario, "1C");
+        (Guid offerNetUid, Guid offerItemNetUid) = CreateOffer(scenario, OfferScopeProduct(scenario, 0), 1);
+
+        CheckoutResult result = await NewOfferService().GenerateNewOrderAndSaleFromOffer(
+            OfferSelection(offerNetUid, offerItemNetUid, 1), scenario.ClientNetUid, false, NewAttempt());
+
+        Assert.Equal(
+            prefix + (current + 1001).ToString("D8", CultureInfo.InvariantCulture),
+            SaleNumberValue(result.Sale.Id));
+    }
+
+    [Fact]
+    public async Task A_gba_server_number_allocation_in_flight_makes_the_shop_wait_and_take_the_next_number() {
+        if (!Ready(out CheckoutScenario scenario)) return;
+
+        OrderItem item = await AddFreshCartItem(scenario, 0);
+        string prefix = MonthPrefix(scenario);
+        using ManualResetEventSlim held = new();
+        using ManualResetEventSlim release = new();
+
+        Task<string> gbaServer = Task.Run(() => AllocateLikeGbaServer(scenario, prefix, held, release));
+        Assert.True(held.Wait(TimeSpan.FromSeconds(30)));
+
+        Task<CheckoutResult> shop = Task.Run(() => NewOrderService().GenerateNewSaleWithInvoice(
+            InvoiceFor(item), scenario.ClientNetUid, false, scenario.WithVat, NewAttempt()));
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        bool shopWaited = !shop.IsCompleted;
+        release.Set();
+
+        string gbaServerNumber = await gbaServer;
+        CheckoutResult shopResult = await shop;
+
+        Assert.True(shopWaited);
+        Assert.Equal(
+            GeneratedSaleNumberPolicy.GetNextValue(prefix, gbaServerNumber, CheckoutSaleNumbers.SequenceWidth),
+            SaleNumberValue(shopResult.Sale.Id));
+    }
+
+    [Fact]
+    public async Task A_shop_number_allocation_in_flight_makes_gba_server_wait_and_take_the_next_number() {
+        if (!Ready(out CheckoutScenario scenario)) return;
+
+        OrderItem item = await AddFreshCartItem(scenario, 1);
+        string prefix = MonthPrefix(scenario);
+        using ManualResetEventSlim shopHoldsNumber = new();
+        using ManualResetEventSlim releaseShop = new();
+        ISaleRepositoriesFactory pausingSales = SaleFactory(connection => {
+            shopHoldsNumber.Set();
+            releaseShop.Wait(TimeSpan.FromSeconds(30));
+            return new SaleRepository(connection);
+        });
+
+        Task<CheckoutResult> shop = Task.Run(() => NewOrderService(sales: pausingSales).GenerateNewSaleWithInvoice(
+            InvoiceFor(item), scenario.ClientNetUid, false, scenario.WithVat, NewAttempt()));
+        Assert.True(shopHoldsNumber.Wait(TimeSpan.FromSeconds(60)));
+
+        Task<string> gbaServer = Task.Run(() => AllocateLikeGbaServer(scenario, prefix, null, null));
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        bool gbaServerWaited = !gbaServer.IsCompleted;
+        releaseShop.Set();
+
+        CheckoutResult shopResult = await shop;
+        string gbaServerNumber = await gbaServer;
+
+        Assert.True(gbaServerWaited);
+        Assert.Equal(
+            GeneratedSaleNumberPolicy.GetNextValue(prefix, SaleNumberValue(shopResult.Sale.Id), CheckoutSaleNumbers.SequenceWidth),
+            gbaServerNumber);
+    }
+
+    [Fact]
+    public async Task Quick_checkout_creates_one_sale_and_replays_its_payment_link() {
+        if (!Ready(out _)) return;
+
+        RetailScenario retail = Retail();
+        Guid retailClientNetUid = CreateRetailClient();
+        double stockBefore = RetailStock(retail);
+        CheckoutAttempt attempt = NewAttempt();
+
+        RetailCheckoutResult[] results = await SettleSameKeyRace(Enumerable.Range(0, 3).Select(_ => Task.Run(() =>
+            NewOrderService().GenerateNewRetailSale(QuickSale(retail), retailClientNetUid, false, attempt))));
+        RetailCheckoutResult replay = await NewOrderService().GenerateNewRetailSale(
+            QuickSale(retail), retailClientNetUid, false, attempt);
+
+        Assert.Single(results, result => !result.IsReplay);
+        Assert.True(replay.IsReplay);
+        Assert.All(results, result => Assert.Equal(replay.PaymentInfo, result.PaymentInfo));
+        Assert.StartsWith($"/uk/upload/payment/{retailClientNetUid}/", replay.PaymentInfo);
+        Assert.Equal(1, RetailSales(retailClientNetUid));
+        Assert.Equal(1, RetailPaymentImages(retailClientNetUid));
+        Assert.Equal(stockBefore - 2, RetailStock(retail));
+        Assert.True(await _crm.WaitForAsync("sales/sync/new", 1, TimeSpan.FromSeconds(5)));
+        await Task.Delay(500);
+        Assert.Equal(1, _crm.Count("sales/sync/new"));
+    }
+
+    [Fact]
+    public async Task A_quick_checkout_failing_after_its_writes_leaves_no_sale_and_no_stock_change() {
+        if (!Ready(out _)) return;
+
+        RetailScenario retail = Retail();
+        Guid retailClientNetUid = CreateRetailClient();
+        double stockBefore = RetailStock(retail);
+        CheckoutAttempt attempt = NewAttempt();
+
+        fixture.RemoveCrmConfiguration();
+        try {
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                NewOrderService().GenerateNewRetailSale(QuickSale(retail), retailClientNetUid, false, attempt));
+        } finally {
+            fixture.WriteCrmConfiguration();
+        }
+
+        Assert.Equal(0, RetailSales(retailClientNetUid));
+        Assert.Equal(0, RetailPaymentImages(retailClientNetUid));
+        Assert.Equal(stockBefore, RetailStock(retail));
+        Assert.False(ReceiptExists(attempt.IdempotencyKey));
+        await Task.Delay(500);
+        Assert.Empty(_crm.Paths);
+
+        RetailCheckoutResult retried = await NewOrderService().GenerateNewRetailSale(
+            QuickSale(retail), retailClientNetUid, false, attempt);
+
+        Assert.False(retried.IsReplay);
+        Assert.Equal(1, RetailSales(retailClientNetUid));
+        Assert.Equal(stockBefore - 2, RetailStock(retail));
+    }
+
+    private static async Task<T[]> SettleSameKeyRace<T>(IEnumerable<Task<T>> submissions) {
+        Task<T>[] tasks = submissions.ToArray();
         await Task.WhenAll(tasks.Select(task => task.ContinueWith(_ => { })));
 
-        foreach (Task<CheckoutResult> task in tasks.Where(task => task.IsFaulted))
+        foreach (Task<T> task in tasks.Where(task => task.IsFaulted))
             Assert.IsType<CheckoutConflictException>(task.Exception!.InnerException);
 
         return tasks.Where(task => task.IsCompletedSuccessfully).Select(task => task.Result).ToArray();
@@ -538,20 +677,161 @@ public sealed class CheckoutSqlServiceTests(CheckoutSqlFixture fixture) {
             """, new { offerId });
     }
 
-    private void SeedLegacyOfferSaleNumber(CheckoutScenario scenario) {
+
+    private string AllocateLikeGbaServer(
+        CheckoutScenario scenario,
+        string prefix,
+        ManualResetEventSlim? held,
+        ManualResetEventSlim? release) {
+        Guid organizationNetUid = OrganizationNetUid(scenario);
+        using TransactionScope scope = new(
+            TransactionScopeOption.RequiresNew,
+            new TransactionOptions {
+                IsolationLevel = System.Transactions.IsolationLevel.Serializable,
+                Timeout = TimeSpan.FromMinutes(1)
+            });
         using SqlConnection connection = fixture.Open();
-        string code = connection.ExecuteScalar<string?>(
-            "SELECT ISNULL(Code, N'') FROM dbo.Organization WHERE ID = @OrganizationId;",
-            new { scenario.OrganizationId }) ?? string.Empty;
-        new SaleNumberRepository(connection).Add(new SaleNumber {
-            OrganizationId = scenario.OrganizationId,
-            Value = code + Random.Shared.Next(1_000_000, 1_900_000_000).ToString("D10", CultureInfo.InvariantCulture)
-        });
+        SaleNumberRepository repository = new(connection);
+        SaleNumber last = repository.GetLastGeneratedByOrganizationNetId(
+            organizationNetUid,
+            prefix,
+            DateTime.Now.Year);
+        string value = GeneratedSaleNumberPolicy.GetNextValue(prefix, last?.Value!, CheckoutSaleNumbers.SequenceWidth);
+        repository.Add(new SaleNumber { OrganizationId = scenario.OrganizationId, Value = value });
+        held?.Set();
+        release?.Wait(TimeSpan.FromSeconds(30));
+        scope.Complete();
+        return value;
     }
 
-    private OrderService NewOrderService(IUserRepositoriesFactory? users = null) {
+    private string MonthPrefix(CheckoutScenario scenario) {
+        return OrganizationCode(scenario) + MonthCodesResourceNames.GetCurrentMonthCode();
+    }
+
+    private string OrganizationCode(CheckoutScenario scenario) {
+        using SqlConnection connection = fixture.Open();
+        return connection.ExecuteScalar<string?>(
+            "SELECT ISNULL(Code, N'') FROM dbo.Organization WHERE ID = @OrganizationId;",
+            new { scenario.OrganizationId }) ?? string.Empty;
+    }
+
+    private Guid OrganizationNetUid(CheckoutScenario scenario) {
+        using SqlConnection connection = fixture.Open();
+        return connection.ExecuteScalar<Guid>(
+            "SELECT NetUID FROM dbo.Organization WHERE ID = @OrganizationId;",
+            new { scenario.OrganizationId });
+    }
+
+    private long HighestGeneratedSequence(CheckoutScenario scenario, string prefix) {
+        using SqlConnection connection = fixture.Open();
+        return connection.ExecuteScalar<long>("""
+            SELECT ISNULL(MAX(TRY_CONVERT(bigint, SUBSTRING(Value, LEN(@prefix) + 1, 64))), 0)
+            FROM dbo.SaleNumber
+            WHERE OrganizationID = @OrganizationId AND Deleted = 0
+              AND LEFT(Value, LEN(@prefix)) = @prefix AND LEN(Value) > LEN(@prefix)
+              AND Created >= DATEFROMPARTS(YEAR(SYSUTCDATETIME()), 1, 1);
+            """, new { prefix, scenario.OrganizationId });
+    }
+
+    private void AddSaleNumber(CheckoutScenario scenario, string value) {
+        using SqlConnection connection = fixture.Open();
+        new SaleNumberRepository(connection).Add(new SaleNumber { OrganizationId = scenario.OrganizationId, Value = value });
+    }
+
+    private string SaleNumberValue(long saleId) {
+        using SqlConnection connection = fixture.Open();
+        return connection.ExecuteScalar<string?>(
+            "SELECT n.Value FROM dbo.Sale s JOIN dbo.SaleNumber n ON n.ID = s.SaleNumberID WHERE s.ID = @saleId;",
+            new { saleId }) ?? string.Empty;
+    }
+
+    private RetailScenario Retail() {
+        lock (ScenarioGate) {
+            _retailScenario ??= DiscoverRetailScenario();
+        }
+
+        return _retailScenario;
+    }
+
+    private RetailScenario DiscoverRetailScenario() {
+        Storage storage;
+        List<(long ProductId, Guid ProductNetUid)> candidates;
+        using (SqlConnection connection = fixture.Open()) {
+            storage = new StorageRepository(connection).GetWithHighestPriority();
+            candidates = connection.Query<(long, Guid)>("""
+                SELECT TOP (25) p.ID, p.NetUID
+                FROM dbo.ProductAvailability pa
+                JOIN dbo.Product p ON p.ID = pa.ProductID AND p.Deleted = 0 AND p.IsForWeb = 1
+                WHERE pa.StorageID = @StorageId AND pa.Deleted = 0 AND pa.Amount >= 20
+                ORDER BY pa.Amount DESC, p.ID;
+                """, new { StorageId = storage.Id }).ToList();
+        }
+
+        OrderService pricing = NewOrderService();
+        foreach ((long productId, Guid productNetUid) in candidates) {
+            try {
+                Order priced = pricing.DynamicallyCalculateTotalPrices(new Order {
+                    OrderItems = new List<OrderItem> {
+                        new() { Product = new Product { NetUid = productNetUid }, Qty = 1 }
+                    }
+                }, Guid.Empty).GetAwaiter().GetResult();
+                if (priced.TotalAmount > 0) return new RetailScenario(storage.Id, productId, productNetUid);
+            } catch (ArgumentException) {
+            }
+        }
+
+        throw new InvalidOperationException("No retail product with stock was found in the checkout test database.");
+    }
+
+    private Guid CreateRetailClient() {
+        using SqlConnection connection = fixture.Open();
+        long id = new RetailClientRepository(connection).Add(new RetailClient {
+            Name = "Checkout Atomicity Retail",
+            PhoneNumber = "+380000000001",
+            ShoppingCartJson = "[]"
+        });
+        return connection.ExecuteScalar<Guid>("SELECT NetUID FROM dbo.RetailClient WHERE ID = @id;", new { id });
+    }
+
+    private static Sale QuickSale(RetailScenario retail) {
+        Sale sale = new() {
+            Comment = "quick checkout atomicity test",
+            Order = new Order(),
+            DeliveryRecipient = new DeliveryRecipient { FullName = "Retail Buyer", MobilePhone = "+380000000001" },
+            DeliveryRecipientAddress = new DeliveryRecipientAddress { Value = "Test street 2", City = "Kyiv" }
+        };
+        sale.Order.OrderItems.Add(new OrderItem {
+            Product = new Product { NetUid = retail.ProductNetUid },
+            Qty = 2,
+            OverLordQty = 2
+        });
+        return sale;
+    }
+
+    private double RetailStock(RetailScenario retail) {
+        using SqlConnection connection = fixture.Open();
+        return connection.ExecuteScalar<double>(
+            "SELECT TOP (1) CAST(Amount AS float) FROM dbo.ProductAvailability WHERE ProductID = @ProductId AND StorageID = @StorageId AND Deleted = 0 ORDER BY ID;",
+            new { retail.ProductId, retail.StorageId });
+    }
+
+    private int RetailSales(Guid retailClientNetUid) {
+        using SqlConnection connection = fixture.Open();
+        return connection.ExecuteScalar<int>(
+            "SELECT COUNT(*) FROM dbo.Sale s JOIN dbo.RetailClient r ON r.ID = s.RetailClientId WHERE r.NetUID = @retailClientNetUid;",
+            new { retailClientNetUid });
+    }
+
+    private int RetailPaymentImages(Guid retailClientNetUid) {
+        using SqlConnection connection = fixture.Open();
+        return connection.ExecuteScalar<int>(
+            "SELECT COUNT(*) FROM dbo.RetailClientPaymentImage i JOIN dbo.RetailClient r ON r.ID = i.RetailClientId WHERE r.NetUID = @retailClientNetUid;",
+            new { retailClientNetUid });
+    }
+
+    private OrderService NewOrderService(IUserRepositoriesFactory? users = null, ISaleRepositoriesFactory? sales = null) {
         return new OrderService(
-            new SaleRepositoriesFactory(),
+            sales ?? new SaleRepositoriesFactory(),
             new ClientRepositoriesFactory(),
             users ?? new UserRepositoriesFactory(),
             new ProductRepositoriesFactory(),
@@ -562,7 +842,7 @@ public sealed class CheckoutSqlServiceTests(CheckoutSqlFixture fixture) {
             new DeliveryRepositoriesFactory(),
             new RetailClientRepositoriesFactory(),
             fixture.ConnectionFactory,
-            Mock.Of<IPaymentLinkService>(),
+            new PaymentLinkService(),
             _crm.Factory(),
             NewAccessService(),
             new SearchReindexSignal(),
@@ -582,6 +862,10 @@ public sealed class CheckoutSqlServiceTests(CheckoutSqlFixture fixture) {
     }
 
     private static ISaleRepositoriesFactory FailingSaleInsertFactory() {
+        return SaleFactory(_ => throw new InvalidOperationException("Simulated failure before the sale insert."));
+    }
+
+    private static ISaleRepositoriesFactory SaleFactory(Func<IDbConnection, ISaleRepository> saleRepository) {
         SaleRepositoriesFactory real = new();
         Mock<ISaleRepositoriesFactory> factory = new(MockBehavior.Strict);
         factory.Setup(candidate => candidate.NewOrderRepository(It.IsAny<IDbConnection>()))
@@ -594,8 +878,10 @@ public sealed class CheckoutSqlServiceTests(CheckoutSqlFixture fixture) {
             .Returns<IDbConnection>(real.NewBaseSalePaymentStatusRepository);
         factory.Setup(candidate => candidate.NewSaleNumberRepository(It.IsAny<IDbConnection>()))
             .Returns<IDbConnection>(real.NewSaleNumberRepository);
+        factory.Setup(candidate => candidate.NewMisplacedSaleRepository(It.IsAny<IDbConnection>()))
+            .Returns<IDbConnection>(real.NewMisplacedSaleRepository);
         factory.Setup(candidate => candidate.NewSaleRepository(It.IsAny<IDbConnection>()))
-            .Throws(new InvalidOperationException("Simulated failure before the sale insert."));
+            .Returns(saleRepository);
         return factory.Object;
     }
 
@@ -743,6 +1029,8 @@ public sealed class CheckoutSqlServiceTests(CheckoutSqlFixture fixture) {
         public long OrderId { get; init; }
         public long SaleId { get; init; }
     }
+
+    private sealed record RetailScenario(long StorageId, long ProductId, Guid ProductNetUid);
 
     private sealed record TwoCartScenario(
         CheckoutScenario NonVat,

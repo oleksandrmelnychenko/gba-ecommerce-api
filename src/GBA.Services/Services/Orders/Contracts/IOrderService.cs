@@ -24,7 +24,11 @@ public interface IOrderService {
 
     Task<string> GenerateNewQuickSaleWithInvoice(Sale sale, Guid retailClientNetId, bool fullPayment);
 
-    Task<string> GenerateNewRetailSale(Sale sale, Guid retailClientNetId, bool fullPayment);
+    Task<RetailCheckoutResult> GenerateNewRetailSale(
+        Sale sale,
+        Guid retailClientNetId,
+        bool fullPayment,
+        CheckoutAttempt attempt);
 
     Task<List<OrderItem>> RemoveUnavailableProducts(List<OrderItem> orderItems, long retailClientId);
 

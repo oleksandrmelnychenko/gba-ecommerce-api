@@ -23,18 +23,6 @@ public static class CheckoutLocks {
           AND [Deleted] = 0;
         """;
 
-    internal const string LockSaleNumbersSql = """
-        DECLARE @LockResult int;
-
-        EXEC @LockResult = sys.sp_getapplock
-            @Resource = @Resource,
-            @LockMode = N'Exclusive',
-            @LockOwner = N'Transaction',
-            @LockTimeout = 15000;
-
-        SELECT @LockResult;
-        """;
-
     internal const string ClaimCartItemSql = """
         UPDATE [dbo].[OrderItem]
         SET [ClientShoppingCartID] = NULL,
@@ -81,19 +69,6 @@ public static class CheckoutLocks {
 
         foreach (long productId in productIds.Where(id => id > 0).Distinct().OrderBy(id => id))
             connection.Query(LockProductStockSql, new { ProductId = productId }).AsList();
-    }
-
-    public static void LockSaleNumbers(IDbConnection connection, long organizationId) {
-        ArgumentNullException.ThrowIfNull(connection);
-
-        CheckoutTransaction.RequireAmbient();
-
-        int lockResult = connection.ExecuteScalar<int>(
-            LockSaleNumbersSql,
-            new { Resource = $"gba-ecommerce:sale-number:{organizationId}" });
-
-        if (lockResult < 0)
-            throw new CheckoutConflictException("Sale numbering is busy. Retry the request with the same key.");
     }
 
     public static void ClaimCartItem(

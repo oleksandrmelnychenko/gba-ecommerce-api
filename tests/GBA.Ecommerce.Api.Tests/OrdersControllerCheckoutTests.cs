@@ -198,6 +198,55 @@ public sealed class OrdersControllerCheckoutTests {
             Times.Never);
     }
 
+    [Fact]
+    public async Task Quick_checkout_without_an_idempotency_key_is_rejected_before_any_write() {
+        Mock<IOrderService> orderService = new(MockBehavior.Strict);
+        OrdersController controller = NewController(orderService.Object, Mock.Of<IOfferService>());
+
+        IActionResult result = await controller.GenerateNewSaleWithInvoiceAsync(
+            new Sale { Order = new Order() },
+            Guid.NewGuid(),
+            string.Empty,
+            0,
+            null);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task Quick_checkout_returns_the_payment_link_and_binds_the_key_to_the_submitted_sale() {
+        Guid key = Guid.NewGuid();
+        Guid retailClientNetUid = Guid.NewGuid();
+        List<CheckoutAttempt> attempts = new();
+        Mock<IOrderService> orderService = new();
+        orderService
+            .Setup(service => service.GenerateNewRetailSale(
+                It.IsAny<Sale>(), retailClientNetUid, true, It.IsAny<CheckoutAttempt>()))
+            .Callback<Sale, Guid, bool, CheckoutAttempt>((_, _, _, attempt) => attempts.Add(attempt))
+            .ReturnsAsync(new RetailCheckoutResult("/uk/upload/payment/client/sale", true));
+
+        OrdersController first = NewController(orderService.Object, Mock.Of<IOfferService>());
+        IActionResult result = await first.GenerateNewSaleWithInvoiceAsync(
+            QuickSale("Call me"), retailClientNetUid, string.Empty, 1, key.ToString());
+        await NewController(orderService.Object, Mock.Of<IOfferService>()).GenerateNewSaleWithInvoiceAsync(
+            QuickSale("Call me"), retailClientNetUid, string.Empty, 1, key.ToString());
+        await NewController(orderService.Object, Mock.Of<IOfferService>()).GenerateNewSaleWithInvoiceAsync(
+            QuickSale("Do not call"), retailClientNetUid, string.Empty, 1, key.ToString());
+
+        OkObjectResult ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal("/uk/upload/payment/client/sale", Assert.IsAssignableFrom<IWebResponse>(ok.Value).Body);
+        Assert.Equal("true", first.Response.Headers[CheckoutIdempotencyKey.ReplayedHeaderName].ToString());
+        Assert.All(attempts, attempt => Assert.Equal(key, attempt.IdempotencyKey));
+        Assert.Equal(attempts[0].RequestFingerprint, attempts[1].RequestFingerprint);
+        Assert.NotEqual(attempts[0].RequestFingerprint, attempts[2].RequestFingerprint);
+    }
+
+    private static Sale QuickSale(string comment) {
+        Sale sale = new() { Comment = comment, Order = new Order() };
+        sale.Order.OrderItems.Add(new OrderItem { ProductId = 5, Qty = 2 });
+        return sale;
+    }
+
     private static IFormFile PdfFile() {
         byte[] content = Encoding.ASCII.GetBytes("%PDF-1.4 test ttn");
         return new FormFile(new MemoryStream(content), 0, content.Length, "invoiceFile", "ttn.pdf") {

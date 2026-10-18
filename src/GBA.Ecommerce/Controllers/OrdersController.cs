@@ -170,12 +170,19 @@ public sealed class OrdersController(
         [FromBody] Sale sale,
         [FromQuery] Guid clientNetId,
         [FromQuery] string card,
-        [FromQuery] int fullPayment) {
-        return Ok(SuccessResponseBody(
-            await orderService.GenerateNewRetailSale(
-                sale,
-                clientNetId,
-                fullPayment.Equals(1))));
+        [FromQuery] int fullPayment,
+        [FromHeader(Name = CheckoutIdempotencyKey.HeaderName)] string? idempotencyKey) {
+        if (!CheckoutIdempotencyKey.TryParse(idempotencyKey, out Guid operationNetUid))
+            return MissingIdempotencyKey();
+
+        bool isFullPayment = fullPayment.Equals(1);
+        CheckoutAttempt attempt = new(
+            operationNetUid,
+            CheckoutFingerprint.ForQuickInvoice(clientNetId, isFullPayment, sale));
+
+        return await CheckoutResponseAsync(
+            () => orderService.GenerateNewRetailSale(sale, clientNetId, isFullPayment, attempt),
+            result => (result.PaymentInfo, result.IsReplay));
     }
 
     [HttpPost]
@@ -269,8 +276,14 @@ public sealed class OrdersController(
             HttpStatusCode.BadRequest));
     }
 
-    private async Task<IActionResult> CheckoutResponseAsync(Func<Task<CheckoutResult>> checkout) {
-        CheckoutResult result;
+    private Task<IActionResult> CheckoutResponseAsync(Func<Task<CheckoutResult>> checkout) {
+        return CheckoutResponseAsync(checkout, result => (result.Sale, result.IsReplay));
+    }
+
+    private async Task<IActionResult> CheckoutResponseAsync<T>(
+        Func<Task<T>> checkout,
+        Func<T, (object Body, bool IsReplay)> project) {
+        T result;
 
         try {
             result = await checkout();
@@ -280,9 +293,11 @@ public sealed class OrdersController(
             return Conflict(ErrorResponseBody(exception.Message, HttpStatusCode.Conflict));
         }
 
-        if (result.IsReplay) Response.Headers[CheckoutIdempotencyKey.ReplayedHeaderName] = "true";
+        (object body, bool isReplay) = project(result);
 
-        return Ok(SuccessResponseBody(result.Sale));
+        if (isReplay) Response.Headers[CheckoutIdempotencyKey.ReplayedHeaderName] = "true";
+
+        return Ok(SuccessResponseBody(body));
     }
 
     private static bool HasValidPaymentImageSignature(byte[] bytes, string? contentType) {

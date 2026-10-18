@@ -17,5 +17,7 @@ public interface ISaleNumberRepository {
 
     SaleNumber GetLastRecordByOrganizationNetId(Guid organizationNetId);
 
+    SaleNumber GetLastGeneratedByOrganizationNetId(Guid organizationNetId, string valuePrefix, int createdYear);
+
     void Remove(Guid netId);
 }

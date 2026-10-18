@@ -362,26 +362,10 @@ public sealed class OfferService : IOfferService {
                         )
             };
 
-            ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
-
-            CheckoutLocks.LockSaleNumbers(connection, order.ClientAgreement.Agreement.Organization.Id);
-
-            SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
-            SaleNumber saleNumber;
-
-            if (lastSaleNumber != null && DateTime.Now.Year.Equals(lastSaleNumber.Created.Year))
-                saleNumber = new SaleNumber {
-                    OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                    Value =
-                        $"{order.ClientAgreement.Agreement.Organization.Code}{string.Format("{0:D10}", Convert.ToInt32(lastSaleNumber.Value.Substring(order.ClientAgreement.Agreement.Organization.Code.Length, 10)) + 1)}"
-                };
-            else
-                saleNumber = new SaleNumber {
-                    OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                    Value = $"{order.ClientAgreement.Agreement.Organization.Code}{string.Format("{0:D10}", 1)}"
-                };
-
-            sale.SaleNumberId = saleNumberRepository.Add(saleNumber);
+            sale.SaleNumberId = CheckoutSaleNumbers.Add(
+                connection,
+                _saleRepositoriesFactory.NewSaleNumberRepository(connection),
+                order.ClientAgreement.Agreement.Organization);
 
             ISaleRepository saleRepository = _saleRepositoriesFactory.NewSaleRepository(connection);
 

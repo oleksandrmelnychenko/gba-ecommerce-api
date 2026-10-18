@@ -47,6 +47,7 @@ namespace GBA.Services.Services.Orders;
 public sealed class OrderService : IOrderService {
     internal const string CartCheckoutOperation = "ecommerce-cart-checkout-v1";
     internal const string InvoiceCheckoutOperation = "ecommerce-invoice-checkout-v1";
+    internal const string QuickCheckoutOperation = "ecommerce-quick-checkout-v1";
 
     private static readonly JsonSerializerOptions _jsonSerializerOptions = new() {
         PropertyNameCaseInsensitive = true
@@ -402,43 +403,10 @@ public sealed class OrderService : IOrderService {
                         )
             };
 
-            ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
-
-            CheckoutLocks.LockSaleNumbers(connection, order.ClientAgreement.Agreement.Organization.Id);
-
-            SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
-            SaleNumber saleNumber;
-
-            string currentMonth = MonthCodesResourceNames.GetCurrentMonthCode();
-
-            try {
-                if (lastSaleNumber != null && DateTime.Now.Year.Equals(lastSaleNumber.Created.Year)) {
-                    saleNumber = new SaleNumber {
-                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}"
-                    };
-
-                    saleNumber.Value +=
-                        string.Format("{0:D8}",
-                            Convert.ToInt32(
-                                lastSaleNumber.Value.Substring(
-                                    lastSaleNumber.Organization.Code.Length + currentMonth.Length,
-                                    lastSaleNumber.Value.Length - (lastSaleNumber.Organization.Code.Length + currentMonth.Length)))
-                            + 1);
-                } else {
-                    saleNumber = new SaleNumber {
-                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
-                    };
-                }
-            } catch (FormatException) {
-                saleNumber = new SaleNumber {
-                    OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                    Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
-                };
-            }
-
-            sale.SaleNumberId = saleNumberRepository.Add(saleNumber);
+            sale.SaleNumberId = CheckoutSaleNumbers.Add(
+                connection,
+                _saleRepositoriesFactory.NewSaleNumberRepository(connection),
+                order.ClientAgreement.Agreement.Organization);
 
             ISaleRepository saleRepository = _saleRepositoriesFactory.NewSaleRepository(connection);
 
@@ -936,43 +904,10 @@ public sealed class OrderService : IOrderService {
                         }
                     );
 
-            ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
-
-            CheckoutLocks.LockSaleNumbers(connection, order.ClientAgreement.Agreement.Organization.Id);
-
-            SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
-            SaleNumber saleNumber;
-
-            string currentMonth = MonthCodesResourceNames.GetCurrentMonthCode();
-
-            try {
-                if (lastSaleNumber != null && DateTime.Now.Year.Equals(lastSaleNumber.Created.Year)) {
-                    saleNumber = new SaleNumber {
-                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}"
-                    };
-
-                    saleNumber.Value +=
-                        string.Format("{0:D8}",
-                            Convert.ToInt32(
-                                lastSaleNumber.Value.Substring(
-                                    lastSaleNumber.Organization.Code.Length + currentMonth.Length,
-                                    lastSaleNumber.Value.Length - (lastSaleNumber.Organization.Code.Length + currentMonth.Length)))
-                            + 1);
-                } else {
-                    saleNumber = new SaleNumber {
-                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
-                    };
-                }
-            } catch (FormatException) {
-                saleNumber = new SaleNumber {
-                    OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                    Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
-                };
-            }
-
-            sale.SaleNumberId = saleNumberRepository.Add(saleNumber);
+            sale.SaleNumberId = CheckoutSaleNumbers.Add(
+                connection,
+                _saleRepositoriesFactory.NewSaleNumberRepository(connection),
+                order.ClientAgreement.Agreement.Organization);
 
             if (isWorkplace) sale.WorkplaceId = workplace.Id;
 
@@ -1029,7 +964,11 @@ public sealed class OrderService : IOrderService {
         }));
     }
 
-    public async Task<string> GenerateNewRetailSale(Sale sale, Guid retailClientNetId, bool fullPayment) {
+    public async Task<RetailCheckoutResult> GenerateNewRetailSale(
+        Sale sale,
+        Guid retailClientNetId,
+        bool fullPayment,
+        CheckoutAttempt attempt) {
         ValidateSaleComment(sale);
 
         if (retailClientNetId == Guid.Empty)
@@ -1037,7 +976,9 @@ public sealed class OrderService : IOrderService {
         if (sale?.Order?.OrderItems == null || sale.Order.OrderItems.Count == 0 || sale.Order.OrderItems.Count > 100)
             throw new ArgumentException("Order must contain between 1 and 100 items.");
 
-        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+        CheckoutRequest request = new(QuickCheckoutOperation, attempt, retailClientNetId, retailClientNetId, fullPayment);
+
+        CheckoutResult result = _checkoutExecutor.Execute(request, connection => {
             IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
             IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
@@ -1071,13 +1012,18 @@ public sealed class OrderService : IOrderService {
                 ClientAgreementId = clientAgreement.Id
             };
 
+            List<OrderItem> requestedOrderItems = sale.Order.OrderItems.Where(i => i.Qty > 0).ToList();
+
+            foreach (OrderItem orderItem in requestedOrderItems)
+                ApplyAuthoritativeRetailProduct(connection, storage, clientAgreement, orderItem);
+
+            CheckoutLocks.LockProductStock(connection, requestedOrderItems.Select(item => item.ProductId));
+
             order.Id = _saleRepositoriesFactory
                 .NewOrderRepository(connection)
                 .Add(order);
 
-            foreach (OrderItem orderItem in sale.Order.OrderItems.Where(i => i.Qty > 0)) {
-                ApplyAuthoritativeRetailProduct(connection, storage, clientAgreement, orderItem);
-
+            foreach (OrderItem orderItem in requestedOrderItems) {
                 ProductAvailability productAvailability =
                     productAvailabilityRepository.GetByProductAndStorageIds(orderItem.ProductId, storage.Id);
 
@@ -1188,41 +1134,10 @@ public sealed class OrderService : IOrderService {
                         }
                     );
 
-            ISaleNumberRepository saleNumberRepository = _saleRepositoriesFactory.NewSaleNumberRepository(connection);
-
-            SaleNumber lastSaleNumber = saleNumberRepository.GetLastRecordByOrganizationNetId(order.ClientAgreement.Agreement.Organization.NetUid);
-            SaleNumber saleNumber;
-
-            string currentMonth = MonthCodesResourceNames.GetCurrentMonthCode();
-
-            try {
-                if (lastSaleNumber != null && DateTime.Now.Year.Equals(lastSaleNumber.Created.Year)) {
-                    saleNumber = new SaleNumber {
-                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}"
-                    };
-
-                    saleNumber.Value +=
-                        string.Format("{0:D8}",
-                            Convert.ToInt32(
-                                lastSaleNumber.Value.Substring(
-                                    lastSaleNumber.Organization.Code.Length + currentMonth.Length,
-                                    lastSaleNumber.Value.Length - (lastSaleNumber.Organization.Code.Length + currentMonth.Length)))
-                            + 1);
-                } else {
-                    saleNumber = new SaleNumber {
-                        OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                        Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
-                    };
-                }
-            } catch (FormatException) {
-                saleNumber = new SaleNumber {
-                    OrganizationId = order.ClientAgreement.Agreement.Organization.Id,
-                    Value = $"{order.ClientAgreement.Agreement.Organization.Code}{currentMonth}{string.Format("{0:D8}", 1)}"
-                };
-            }
-
-            sale.SaleNumberId = saleNumberRepository.Add(saleNumber);
+            sale.SaleNumberId = CheckoutSaleNumbers.Add(
+                connection,
+                _saleRepositoriesFactory.NewSaleNumberRepository(connection),
+                order.ClientAgreement.Agreement.Organization);
 
             ISaleRepository saleRepository = _saleRepositoriesFactory.NewSaleRepository(connection);
 
@@ -1293,8 +1208,6 @@ public sealed class OrderService : IOrderService {
 
             QueueEcommerceSaleUpdate(crmApiUrl, payload, "Retail sale update");
 
-            // sale = saleRepository.GetByNetId(createdSale.NetUid);
-
             long statusId = _retailClientRepositoriesFactory.NewRetailPaymentStatusRepository(connection).Add(new RetailPaymentStatus {
                 RetailPaymentStatusType = RetailPaymentStatusType.New
             });
@@ -1306,7 +1219,12 @@ public sealed class OrderService : IOrderService {
                     RetailPaymentStatusId = statusId
                 });
 
-            return await _paymentLinkService.GenerateSalePaymentInfoMessage(retailClientNetId, createdSale.NetUid);
+            return CheckoutSaleResponse.From(createdSale);
+        });
+
+        return new RetailCheckoutResult(
+            await _paymentLinkService.GenerateSalePaymentInfoMessage(retailClientNetId, result.Sale.NetUid),
+            result.IsReplay);
     }
 
     // Old 
