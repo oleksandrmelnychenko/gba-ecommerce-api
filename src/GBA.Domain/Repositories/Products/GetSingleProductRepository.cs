@@ -920,6 +920,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
         Product productToReturn = null;
 
         string sqlExpression =
+            ProductPriceVariablesSql +
             "SELECT [Product].ID " +
             ",[Product].Created " +
             ",[Product].Deleted " +
@@ -961,8 +962,9 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             ",[Product].VendorCode " +
             ",[Product].Volume " +
             ",[Product].Weight " +
-            ", dbo.GetCalculatedProductPriceWithSharesAndVat([Product].NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS [CurrentPrice] " +
-            ", dbo.GetCalculatedProductLocalPriceWithSharesAndVat([Product].NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS [CurrentLocalPrice] " +
+            ", @ProductCurrentPrice AS [CurrentPrice] " +
+            ", @ProductCurrentLocalPrice AS [CurrentLocalPrice] " +
+            ", " + ProductRoadQuantitySql + " AS [AvailableQtyRoad] " +
             ", (SELECT Code FROM Currency " +
             "WHERE ID = @CurrencyId " +
             "AND Deleted = 0) AS CurrencyCode " +
@@ -974,10 +976,6 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             ",[ProductImage].* " +
             ",[ProductOriginalNumber].* " +
             ",[OriginalNumber].* " +
-            ",[SupplyOrderItem].* " +
-            ",[SupplyOrder].* " +
-            ",[SupplyOrderUkraineItem].* " +
-            ",[SupplyOrderUkraine].* " +
             "FROM Product " +
             "LEFT JOIN ProductProductGroup " +
             "ON ProductProductGroup.ProductID = Product.ID " +
@@ -1005,14 +1003,6 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "AND [ProductOriginalNumber].Deleted = 0 " +
             "LEFT JOIN [OriginalNumber] " +
             "ON [ProductOriginalNumber].OriginalNumberID = [OriginalNumber].ID " +
-            "LEFT JOIN [SupplyOrderItem] " +
-            "ON SupplyOrderItem.ProductID = Product.ID " +
-            "LEFT JOIN SupplyOrder " +
-            "ON SupplyOrder.ID = [SupplyOrderItem].SupplyOrderID " +
-            "LEFT JOIN [SupplyOrderUkraineItem] " +
-            "ON [SupplyOrderUkraineItem].ProductID = Product.ID " +
-            "LEFT JOIN [SupplyOrderUkraine] " +
-            "ON [SupplyOrderUkraine].ID = [SupplyOrderUkraineItem].SupplyOrderUkraineID " +
             "WHERE Product.NetUID = @NetId ";
 
 
@@ -1025,11 +1015,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             typeof(MeasureUnit),
             typeof(ProductImage),
             typeof(ProductOriginalNumber),
-            typeof(OriginalNumber),
-            typeof(SupplyOrderItem),
-            typeof(SupplyOrder),
-            typeof(SupplyOrderUkraineItem),
-            typeof(SupplyOrderUkraine)
+            typeof(OriginalNumber)
         };
 
         Func<object[], Product> productMapper = objects => {
@@ -1042,10 +1028,6 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             ProductImage image = (ProductImage)objects[6];
             ProductOriginalNumber productOriginalNumber = (ProductOriginalNumber)objects[7];
             OriginalNumber originalNumber = (OriginalNumber)objects[8];
-            SupplyOrderItem SupplyOrderItem = (SupplyOrderItem)objects[9];
-            SupplyOrder SupplyOrder = (SupplyOrder)objects[10];
-            SupplyOrderUkraineItem SupplyOrderUkraineItem = (SupplyOrderUkraineItem)objects[11];
-            SupplyOrderUkraine SupplyOrderUkraine = (SupplyOrderUkraine)objects[12];
 
             if (productToReturn != null) {
                 if (productOriginalNumber != null && !productToReturn.ProductOriginalNumbers.Any(n => n.Id.Equals(productOriginalNumber.Id))) {
@@ -1053,14 +1035,6 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
 
                     productToReturn.ProductOriginalNumbers.Add(productOriginalNumber);
                 }
-
-                if (SupplyOrderUkraine != null)
-                    if (!SupplyOrderUkraine.IsPlaced)
-                        productToReturn.AvailableQtyRoad += SupplyOrderUkraineItem.Qty;
-
-                if (SupplyOrder != null)
-                    if (!SupplyOrder.IsFullyPlaced)
-                        productToReturn.AvailableQtyRoad += SupplyOrderItem.Qty;
 
                 if (productProductGroup != null && !productToReturn.ProductProductGroups.Any(p => p.Id.Equals(productProductGroup.Id))) {
                     if (productGroup != null) {
@@ -1081,14 +1055,6 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             } else {
                 product.CurrentLocalPrice = decimal.Round(product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
                 product.CurrentPrice = decimal.Round(product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
-                if (SupplyOrderUkraine != null)
-                    if (!SupplyOrderUkraine.IsPlaced)
-                        product.AvailableQtyRoad += SupplyOrderUkraineItem.Qty;
-
-                if (SupplyOrder != null)
-                    if (!SupplyOrder.IsFullyPlaced)
-                        product.AvailableQtyRoad += SupplyOrderItem.Qty;
-
                 product.MeasureUnit = measureUnit;
 
                 if (image != null) product.ProductImages.Add(image);
@@ -1281,6 +1247,28 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
         return productToReturn;
     }
 
+    internal const string ProductPriceVariablesSql =
+        "DECLARE @ProductCurrentPrice decimal(30, 14) = dbo.GetCalculatedProductPriceWithSharesAndVat(@NetId, @ClientAgreementNetId, @Culture, @WithVat, NULL); " +
+        "DECLARE @ProductCurrentLocalPrice decimal(30, 14) = dbo.GetCalculatedProductLocalPriceWithSharesAndVat(@NetId, @ClientAgreementNetId, @Culture, @WithVat, NULL); ";
+
+    internal const string ProductRoadQuantitySql =
+        "((SELECT ISNULL(SUM([RoadSupplyOrderItem].Qty), 0) " +
+        "FROM [SupplyOrderItem] AS [RoadSupplyOrderItem] " +
+        "INNER JOIN [SupplyOrder] AS [RoadSupplyOrder] " +
+        "ON [RoadSupplyOrder].ID = [RoadSupplyOrderItem].SupplyOrderID " +
+        "AND [RoadSupplyOrder].Deleted = 0 " +
+        "AND [RoadSupplyOrder].IsFullyPlaced = 0 " +
+        "WHERE [RoadSupplyOrderItem].ProductID = [Product].ID " +
+        "AND [RoadSupplyOrderItem].Deleted = 0) + " +
+        "(SELECT ISNULL(SUM([RoadSupplyOrderUkraineItem].Qty), 0) " +
+        "FROM [SupplyOrderUkraineItem] AS [RoadSupplyOrderUkraineItem] " +
+        "INNER JOIN [SupplyOrderUkraine] AS [RoadSupplyOrderUkraine] " +
+        "ON [RoadSupplyOrderUkraine].ID = [RoadSupplyOrderUkraineItem].SupplyOrderUkraineID " +
+        "AND [RoadSupplyOrderUkraine].Deleted = 0 " +
+        "AND [RoadSupplyOrderUkraine].IsPlaced = 0 " +
+        "WHERE [RoadSupplyOrderUkraineItem].ProductID = [Product].ID " +
+        "AND [RoadSupplyOrderUkraineItem].Deleted = 0))";
+
     internal static void IncludeAvailabilityFromJoinedStorage(
         Product product,
         ProductAvailability productAvailability,
@@ -1344,6 +1332,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
         Product productToReturn = null;
 
         string sqlExpression =
+            ProductPriceVariablesSql +
             "SELECT [Product].ID " +
             ",[Product].Created " +
             ",[Product].Deleted " +
@@ -1385,8 +1374,9 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             ",[Product].VendorCode " +
             ",[Product].Volume " +
             ",[Product].Weight " +
-            ", dbo.GetCalculatedProductPriceWithSharesAndVat([Product].NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS [CurrentPrice] " +
-            ", dbo.GetCalculatedProductLocalPriceWithSharesAndVat([Product].NetUID, @ClientAgreementNetId, @Culture, @WithVat, NULL) AS [CurrentLocalPrice] " +
+            ", @ProductCurrentPrice AS [CurrentPrice] " +
+            ", @ProductCurrentLocalPrice AS [CurrentLocalPrice] " +
+            ", " + ProductRoadQuantitySql + " AS [AvailableQtyRoad] " +
             ", (SELECT Code FROM Currency " +
             "WHERE ID = @CurrencyId " +
             "AND Deleted = 0) AS CurrencyCode " +
@@ -1398,10 +1388,6 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             ",[ProductImage].* " +
             ",[ProductOriginalNumber].* " +
             ",[OriginalNumber].* " +
-            ",[SupplyOrderItem].* " +
-            ",[SupplyOrder].* " +
-            ",[SupplyOrderUkraineItem].* " +
-            ",[SupplyOrderUkraine].* " +
             "FROM Product " +
             "LEFT JOIN ProductProductGroup " +
             "ON ProductProductGroup.ProductID = Product.ID " +
@@ -1425,14 +1411,6 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             "AND [ProductOriginalNumber].Deleted = 0 " +
             "LEFT JOIN [OriginalNumber] " +
             "ON [ProductOriginalNumber].OriginalNumberID = [OriginalNumber].ID " +
-            "LEFT JOIN [SupplyOrderItem] " +
-            "ON SupplyOrderItem.ProductID = Product.ID " +
-            "LEFT JOIN SupplyOrder " +
-            "ON SupplyOrder.ID = [SupplyOrderItem].SupplyOrderID " +
-            "LEFT JOIN [SupplyOrderUkraineItem] " +
-            "ON [SupplyOrderUkraineItem].ProductID = Product.ID " +
-            "LEFT JOIN [SupplyOrderUkraine] " +
-            "ON [SupplyOrderUkraine].ID = [SupplyOrderUkraineItem].SupplyOrderUkraineID " +
             "WHERE Product.NetUID = @NetId ";
 
         Type[] productTypes = {
@@ -1444,11 +1422,7 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             typeof(MeasureUnit),
             typeof(ProductImage),
             typeof(ProductOriginalNumber),
-            typeof(OriginalNumber),
-            typeof(SupplyOrderItem),
-            typeof(SupplyOrder),
-            typeof(SupplyOrderUkraineItem),
-            typeof(SupplyOrderUkraine)
+            typeof(OriginalNumber)
         };
 
         Func<object[], Product> productMapper = objects => {
@@ -1461,24 +1435,12 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
             ProductImage image = (ProductImage)objects[6];
             ProductOriginalNumber productOriginalNumber = (ProductOriginalNumber)objects[7];
             OriginalNumber originalNumber = (OriginalNumber)objects[8];
-            SupplyOrderItem SupplyOrderItem = (SupplyOrderItem)objects[9];
-            SupplyOrder SupplyOrder = (SupplyOrder)objects[10];
-            SupplyOrderUkraineItem SupplyOrderUkraineItem = (SupplyOrderUkraineItem)objects[11];
-            SupplyOrderUkraine SupplyOrderUkraine = (SupplyOrderUkraine)objects[12];
             if (productToReturn != null) {
                 if (productOriginalNumber != null && !productToReturn.ProductOriginalNumbers.Any(n => n.Id.Equals(productOriginalNumber.Id))) {
                     productOriginalNumber.OriginalNumber = originalNumber;
 
                     productToReturn.ProductOriginalNumbers.Add(productOriginalNumber);
                 }
-
-                if (SupplyOrderUkraine != null)
-                    if (!SupplyOrderUkraine.IsPlaced)
-                        productToReturn.AvailableQtyRoad += SupplyOrderUkraineItem.Qty;
-
-                if (SupplyOrder != null)
-                    if (!SupplyOrder.IsFullyPlaced)
-                        productToReturn.AvailableQtyRoad += SupplyOrderItem.Qty;
 
                 if (productProductGroup != null && !productToReturn.ProductProductGroups.Any(p => p.Id.Equals(productProductGroup.Id))) {
                     if (productGroup != null) {
@@ -1505,14 +1467,6 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
                 product.CurrentPrice = decimal.Round(product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
 
                 product.MeasureUnit = measureUnit;
-
-                if (SupplyOrderUkraine != null)
-                    if (!SupplyOrderUkraine.IsPlaced)
-                        product.AvailableQtyRoad += SupplyOrderUkraineItem.Qty;
-
-                if (SupplyOrder != null)
-                    if (!SupplyOrder.IsFullyPlaced)
-                        product.AvailableQtyRoad += SupplyOrderItem.Qty;
 
                 if (image != null) product.ProductImages.Add(image);
 

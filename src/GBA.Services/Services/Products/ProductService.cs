@@ -66,8 +66,9 @@ public sealed class ProductService : IProductService {
     }
 
     public Task<Product> GetByNetIdForRetail(Guid productNetId) {
+        if (productNetId.Equals(Guid.Empty)) return Task.FromResult<Product>(null);
+
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        if (productNetId.Equals(Guid.Empty)) throw new Exception("There's no such product in database");
 
         IGetSingleProductRepository productRepository =
             _productRepositoriesFactory.NewGetSingleProductRepository(connection);
@@ -89,22 +90,27 @@ public sealed class ProductService : IProductService {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
         IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
-        ClientAgreement clientAgreement =
-            clientAgreementRepository.GetSelectedByClientNetId(clientNetId)
-            ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(clientNetId);
+        ClientAgreement clientAgreement = ResolveClientAgreement(clientAgreementRepository, clientNetId);
 
         return Task.FromResult(
             _productRepositoriesFactory
                 .NewGetSingleProductRepository(connection)
                 .GetProductByNetId(
                     productNetId,
-                    clientAgreement.NetUid,
-                    clientAgreement.Agreement.WithVATAccounting,
-                    clientAgreement.Agreement.CurrencyId,
-                    clientAgreement.Agreement.OrganizationId
+                    clientAgreement?.NetUid,
+                    clientAgreement?.Agreement?.WithVATAccounting ?? false,
+                    clientAgreement?.Agreement?.CurrencyId,
+                    clientAgreement?.Agreement?.OrganizationId
                 )
         );
     }
+
+    internal static ClientAgreement ResolveClientAgreement(
+        IClientAgreementRepository clientAgreementRepository,
+        Guid clientNetId) =>
+        clientAgreementRepository.GetSelectedByClientNetId(clientNetId)
+        ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(clientNetId)
+        ?? clientAgreementRepository.GetSelectedByClientNotSelectedNetId(clientNetId);
 
     public Task<Product> GetProductBySlug(string slug, Guid clientNetId, bool withVat) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
@@ -970,16 +976,7 @@ public sealed class ProductService : IProductService {
 
                     return Task.FromResult(analogues);
                 } else {
-                    ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId)
-                                                      ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-                    if (clientAgreement == null) {
-                        clientAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
-                        clientAgreement.Agreement.IsSelected = true;
-                        agreementRepository.Update(clientAgreement.Agreement);
-                    }
-
-                    clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
-                                      clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
+                    ClientAgreement clientAgreement = ResolveClientAgreement(clientAgreementRepository, currentClientNetId);
                     List<FromSearchProduct> analogues = new();
 
                     foreach (SearchResult item in idsSearchAnalogues)
@@ -1054,16 +1051,7 @@ public sealed class ProductService : IProductService {
 
                 return Task.FromResult(productSearch);
             } else {
-                ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId)
-                                                  ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-                if (clientAgreement == null) {
-                    clientAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
-                    clientAgreement.Agreement.IsSelected = true;
-                    agreementRepository.Update(clientAgreement.Agreement);
-                }
-
-                clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
-                                  clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
+                ClientAgreement clientAgreement = ResolveClientAgreement(clientAgreementRepository, currentClientNetId);
 
                 List<FromSearchProduct> analogues = new();
                 List<FromSearchProduct> productSearch = getMultipleProductsRepository.GetAllFromIdsInTempTable(builder.ToString(),
@@ -1152,18 +1140,7 @@ public sealed class ProductService : IProductService {
 
                 return Task.FromResult(getMultipleProductsRepository.GetAllFromIdsInTempTableForRetail(builder.ToString(), clientAgreement));
             } else {
-                ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId)
-                                                  ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-                if (clientAgreement == null) {
-                    clientAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
-                    if (clientAgreement != null) {
-                        clientAgreement.Agreement.IsSelected = true;
-                        agreementRepository.Update(clientAgreement.Agreement);
-                    }
-                }
-
-                clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
-                                  clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
+                ClientAgreement clientAgreement = ResolveClientAgreement(clientAgreementRepository, currentClientNetId);
 
                 if (clientAgreement == null) return Task.FromResult(new List<FromSearchProduct>());
 
@@ -1196,7 +1173,20 @@ public sealed class ProductService : IProductService {
                 storage.Id
             );
 
-        return Task.FromResult(analogues);
+        return Task.FromResult(ExposeRetailAvailabilityInBothStorefrontBuckets(analogues));
+    }
+
+    internal static List<FromSearchProduct> ExposeRetailAvailabilityInBothStorefrontBuckets(
+        List<FromSearchProduct> products) {
+        foreach (FromSearchProduct product in products) {
+            double sellable = double.IsFinite(product.AvailableQtyUk)
+                ? Math.Max(0d, product.AvailableQtyUk)
+                : 0d;
+            product.AvailableQtyUk = sellable;
+            product.AvailableQtyUkVAT = sellable;
+        }
+
+        return products;
     }
 
     public Task<List<FromSearchProduct>> GetAllAnaloguesByProductNetId(Guid productNetId, Guid currentClientNetId, bool withVat) {
@@ -1328,6 +1318,8 @@ public sealed class ProductService : IProductService {
                 "SELECT [SearchProduct].ID " +
                 "FROM [Product] AS [SearchProduct] " +
                 "WHERE [SearchProduct].VendorCode IN @VendorCodes " +
+                "AND [SearchProduct].Deleted = 0 " +
+                "AND [SearchProduct].IsForWeb = 1 " +
                 "ORDER BY [SearchProduct].ID " +
                 "OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY";
             var queryParameters = new {
@@ -1427,19 +1419,7 @@ public sealed class ProductService : IProductService {
                 clientAgreement.Agreement.PricingId ?? 0);
         } else {
             // Logged-in user
-            ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId)
-                                              ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-            if (clientAgreement == null) {
-                clientAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
-                if (clientAgreement != null) {
-                    IAgreementRepository agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
-                    clientAgreement.Agreement.IsSelected = true;
-                    agreementRepository.Update(clientAgreement.Agreement);
-                }
-            }
-
-            clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
-                              clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
+            ClientAgreement clientAgreement = ResolveClientAgreement(clientAgreementRepository, currentClientNetId);
 
             if (clientAgreement == null) return Task.FromResult(new List<FromSearchProduct>());
 
@@ -1517,21 +1497,31 @@ public sealed class ProductService : IProductService {
         }
 
         string currencyCode = currency?.Code ?? string.Empty;
-        string cacheKey = string.Join(
-            ':',
-            clientAgreement.NetUid.ToString("N"),
-            agreement.CurrencyId?.ToString(CultureInfo.InvariantCulture) ?? "none",
-            agreement.PricingId?.ToString(CultureInfo.InvariantCulture) ?? "none",
-            agreement.OrganizationId?.ToString(CultureInfo.InvariantCulture) ?? "none",
-            agreement.WithVATAccounting ? "vat" : "no-vat",
-            agreement.Updated.Ticks.ToString(CultureInfo.InvariantCulture),
-            storage?.Id.ToString(CultureInfo.InvariantCulture) ?? "no-storage",
-            storage?.Updated.Ticks.ToString(CultureInfo.InvariantCulture) ?? "no-storage-version");
 
         return new ProductPricingContext(
             agreement.WithVATAccounting,
             currencyCode,
-            cacheKey);
+            BuildPricingContextCacheKey(clientAgreement, agreement, storage));
+    }
+
+    internal static string BuildPricingContextCacheKey(
+        ClientAgreement clientAgreement,
+        Agreement agreement,
+        Storage storage) {
+        return string.Join(
+            ':',
+            clientAgreement.NetUid.ToString("N"),
+            agreement.CurrencyId?.ToString(CultureInfo.InvariantCulture) ?? "none",
+            agreement.PricingId?.ToString(CultureInfo.InvariantCulture) ?? "none",
+            agreement.PromotionalPricingId?.ToString(CultureInfo.InvariantCulture) ?? "none",
+            agreement.OrganizationId?.ToString(CultureInfo.InvariantCulture) ?? "none",
+            agreement.WithVATAccounting ? "vat" : "no-vat",
+            agreement.ForReSale ? "resale" : "sale",
+            agreement.IsActive ? "active" : "inactive",
+            storage?.Id.ToString(CultureInfo.InvariantCulture) ?? "no-storage",
+            storage?.OrganizationId?.ToString(CultureInfo.InvariantCulture) ?? "none",
+            storage == null ? "none" : storage.ForVatProducts ? "vat-stock" : "stock",
+            storage?.Locale ?? "none");
     }
 
     public Dictionary<long, double> GetSellableQuantities(
@@ -1615,19 +1605,7 @@ public sealed class ProductService : IProductService {
                 culture);
         } else {
             // Logged-in user
-            ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId)
-                                              ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-            if (clientAgreement == null) {
-                clientAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
-                if (clientAgreement != null) {
-                    IAgreementRepository agreementRepository = _agreementRepositoriesFactory.NewAgreementRepository(connection);
-                    clientAgreement.Agreement.IsSelected = true;
-                    agreementRepository.Update(clientAgreement.Agreement);
-                }
-            }
-
-            clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
-                              clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
+            ClientAgreement clientAgreement = ResolveClientAgreement(clientAgreementRepository, currentClientNetId);
 
             if (clientAgreement?.Agreement == null)
                 return new Dictionary<long, ProductPriceInfo>();
@@ -1687,18 +1665,7 @@ public sealed class ProductService : IProductService {
 
             products = getMultipleProductsRepository.GetAllFromIdsInTempTableForRetail(builder.ToString(), clientAgreement);
         } else {
-            ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId)
-                                              ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
-            if (clientAgreement == null) {
-                clientAgreement = clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
-                if (clientAgreement != null) {
-                    clientAgreement.Agreement.IsSelected = true;
-                    agreementRepository.Update(clientAgreement.Agreement);
-                }
-            }
-
-            clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId) ??
-                              clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId);
+            ClientAgreement clientAgreement = ResolveClientAgreement(clientAgreementRepository, currentClientNetId);
 
             if (clientAgreement == null) return Task.FromResult(new List<FromSearchProduct>());
 

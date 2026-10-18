@@ -508,9 +508,6 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         try {
             (int indexed, int deleted) = await IndexByIdsAsync(productIds, ct);
             sw.Stop();
-            if (indexed > 0 || deleted > 0) {
-                await _cacheInvalidator.InvalidateProductsAsync(ct);
-            }
 
             _log.LogInformation(
                 "Targeted reindex: {Indexed} indexed, {Deleted} deleted in {ElapsedMs}ms",

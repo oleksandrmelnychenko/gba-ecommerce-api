@@ -762,6 +762,26 @@ public sealed class ElasticsearchSyncSafetyTests {
     }
 
     [Fact]
+    public async Task TargetedReindex_AfterCartStockChange_KeepsPriceAndSeoCaches() {
+        TestProductSyncRepository repository = new() {
+            GetProductsByIds = ids => Task.FromResult(ids.Select(CreateProduct).ToList())
+        };
+        TestSearchCacheInvalidator cache = new();
+        ElasticsearchSyncService service = CreateSyncService(
+            repository,
+            new TestSearchSyncStateStore(),
+            cache,
+            new CollectingLogger<ElasticsearchSyncService>(),
+            maxRetries: 0);
+
+        SyncResult result = await service.ReindexProductsAsync([42]);
+
+        Assert.True(result.Success);
+        Assert.Equal(1, result.DocumentsIndexed);
+        Assert.Equal(0, cache.Calls);
+    }
+
+    [Fact]
     public void DiffProductIds_SeparatesOrphansFromMissingProducts() {
         (List<long> orphans, List<long> missing) = ElasticsearchSyncService.DiffProductIds(
             [37854037, 38215752, 37952324],

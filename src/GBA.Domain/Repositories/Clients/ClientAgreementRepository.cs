@@ -217,9 +217,10 @@ public sealed class ClientAgreementRepository : IClientAgreementRepository {
             "AND [ActorClient].Deleted = 0 " +
             "AND [AgreementClient].Deleted = 0 " +
             "AND [ClientAgreement].Deleted = 0 " +
+            "AND [Agreement].Deleted = 0 " +
             "AND [Agreement].ForReSale = 0 " +
             selectedAgreementFilter +
-            "ORDER BY [ClientAgreement].ID ",
+            "ORDER BY [Agreement].IsActive DESC, [ClientAgreement].ID ",
             (clientAgreement, agreement, organization) => {
                 agreement.Organization = organization;
 
