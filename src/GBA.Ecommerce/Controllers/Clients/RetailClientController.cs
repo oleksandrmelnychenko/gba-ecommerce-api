@@ -39,7 +39,7 @@ public sealed class RetailClientController(
         if (netId.Equals(Guid.Empty))
             throw new ArgumentException("NetId cannot be empty.", nameof(netId));
 
-        return Ok(SuccessResponseBody(await clientService.GetRetailClientByNetId(netId)));
+        return Ok(SuccessResponseBody(RetailClientCartView.From(await clientService.GetRetailClientByNetId(netId))));
     }
 
     [HttpGet]
@@ -48,6 +48,14 @@ public sealed class RetailClientController(
         if (netId.Equals(Guid.Empty))
             throw new ArgumentException("NetId cannot be empty.", nameof(netId));
 
-        return Ok(SuccessResponseBody(await clientService.GetRetailClientByNetIdCheckOrderItems(netId)));
+        (RetailClient client, string unavailableItems) = await clientService.GetRetailClientByNetIdCheckOrderItems(netId);
+
+        return Ok(SuccessResponseBody((RetailClientCartView.From(client), unavailableItems)));
+    }
+}
+
+public sealed record RetailClientCartView(Guid NetUid, string ShoppingCartJson) {
+    public static RetailClientCartView From(RetailClient client) {
+        return client == null ? null : new RetailClientCartView(client.NetUid, client.ShoppingCartJson);
     }
 }

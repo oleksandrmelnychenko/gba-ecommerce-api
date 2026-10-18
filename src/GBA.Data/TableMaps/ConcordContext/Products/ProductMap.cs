@@ -78,6 +78,10 @@ public sealed class ProductMap : EntityBaseMap<Product> {
 
         entity.Ignore(e => e.CurrencyCode);
 
+        entity.Ignore(e => e.P);
+
+        entity.Ignore(e => e.T);
+
         entity.HasOne(e => e.MeasureUnit)
             .WithMany(e => e.Products)
             .HasForeignKey(e => e.MeasureUnitId)

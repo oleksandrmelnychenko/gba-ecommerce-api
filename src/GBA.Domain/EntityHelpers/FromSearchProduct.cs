@@ -77,6 +77,10 @@ public sealed class FromSearchProduct {
 
     public decimal CurrentLocalWithVatPrice { get; set; }
 
+    public string P { get; set; }
+
+    public long T { get; set; }
+
     public string CurrencyCode { get; set; }
 
     public ProductSlug ProductSlug { get; set; }

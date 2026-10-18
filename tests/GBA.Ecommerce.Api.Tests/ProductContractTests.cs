@@ -111,9 +111,7 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
             ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
 
         AssertOpaqueProtectedPrice(searchProduct);
-        Assert.Equal(
-            JsonValueKind.Number,
-            envelope.Body.GetProperty("CurrentPrice").ValueKind);
+        AssertAnonymousDetailHasNoCleartextPrice(envelope.Body);
     }
 
     [Fact]
@@ -137,9 +135,7 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
             ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
 
         AssertOpaqueProtectedPrice(searchProduct);
-        Assert.Equal(
-            JsonValueKind.Number,
-            envelope.Body.GetProperty("CurrentPrice").ValueKind);
+        AssertAnonymousDetailHasNoCleartextPrice(envelope.Body);
     }
 
     [Fact]
@@ -168,9 +164,7 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
             ApiAssertions.RequiredString(envelope.Body, "CurrencyCode"));
 
         AssertOpaqueProtectedPrice(searchProduct);
-        Assert.Equal(
-            JsonValueKind.Number,
-            envelope.Body.GetProperty("CurrentPrice").ValueKind);
+        AssertAnonymousDetailHasNoCleartextPrice(envelope.Body);
     }
 
     [Fact]
@@ -271,6 +265,18 @@ public sealed class ProductContractTests(EcommerceApiFixture fixture) : IClassFi
     private static void AssertNumberProperty(JsonElement element, string propertyName) {
         Assert.True(element.TryGetProperty(propertyName, out JsonElement property), $"Missing '{propertyName}' property.");
         Assert.Equal(JsonValueKind.Number, property.ValueKind);
+    }
+
+    private static void AssertAnonymousDetailHasNoCleartextPrice(JsonElement product) {
+        string protectedPrice = ApiAssertions.RequiredString(product, "P");
+        Assert.True(protectedPrice.Length >= 32, "Protected retail price must remain opaque.");
+        Assert.True(product.GetProperty("T").GetInt64() > 0);
+        foreach (string field in new[] { "CurrentPrice", "CurrentLocalPrice", "CurrentWithVatPrice", "CurrentLocalWithVatPrice" })
+            Assert.Equal(0m, product.GetProperty(field).GetDecimal());
+        Assert.False(
+            product.TryGetProperty("ProductAvailabilities", out JsonElement availabilities)
+            && availabilities.ValueKind == JsonValueKind.Array
+            && availabilities.GetArrayLength() > 0);
     }
 
     private static void AssertOpaqueProtectedPrice(JsonElement product) {

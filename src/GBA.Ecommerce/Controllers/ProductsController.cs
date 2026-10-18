@@ -155,7 +155,9 @@ public sealed class ProductsController(
         if (userNetId == Guid.Empty)
             return Ok(
                 SuccessResponseBody(
-                    await productService.GetAllAnaloguesByProductNetIdForRetail(netId)
+                    AnonymousCatalogView.Protect(
+                        await productService.GetAllAnaloguesByProductNetIdForRetail(netId),
+                        PriceObfuscator.GetTimestamp())
                 )
             );
 
@@ -170,9 +172,14 @@ public sealed class ProductsController(
     [AssignActionRoute(ProductsSegments.GET_COMPONENTS_BY_PRODUCT_NET_ID)]
     public async Task<IActionResult> GetAllComponentsByProductNetIdAsync([FromQuery] Guid netId, [FromQuery] int withVat = 0) {
         Guid userNetId = GetUserNetId();
+        List<FromSearchProduct> components =
+            await productService.GetAllComponentsByProductNetId(netId, userNetId, withVat.Equals(1));
+
         return Ok(
             SuccessResponseBody(
-                await productService.GetAllComponentsByProductNetId(netId, userNetId, withVat.Equals(1))
+                userNetId == Guid.Empty
+                    ? AnonymousCatalogView.Protect(components, PriceObfuscator.GetTimestamp())
+                    : components
             )
         );
     }
@@ -247,7 +254,10 @@ public sealed class ProductsController(
     public async Task<IActionResult> GetProductByNetId([FromQuery] Guid netId, [FromQuery] int withVat = 0) {
         Guid userNetId = GetUserNetId();
 
-        if (userNetId == Guid.Empty) return Ok(SuccessResponseBody(await productService.GetByNetIdForRetail(netId)));
+        if (userNetId == Guid.Empty)
+            return Ok(SuccessResponseBody(AnonymousCatalogView.Protect(
+                await productService.GetByNetIdForRetail(netId),
+                PriceObfuscator.GetTimestamp())));
 
         return Ok(
             SuccessResponseBody(
@@ -264,13 +274,17 @@ public sealed class ProductsController(
     [AssignActionRoute(ProductsSegments.GET_BY_SLUG)]
     public async Task<IActionResult> GetProductBySlugAsync([FromQuery] string slug, [FromQuery] int withVat = 0) {
         Guid userNetId = GetUserNetId();
+        Product product = await productService.GetProductBySlug(
+            slug,
+            userNetId,
+            withVat.Equals(1)
+        );
+
         return Ok(
             SuccessResponseBody(
-                await productService.GetProductBySlug(
-                    slug,
-                    userNetId,
-                    withVat.Equals(1)
-                )
+                userNetId == Guid.Empty
+                    ? AnonymousCatalogView.Protect(product, PriceObfuscator.GetTimestamp())
+                    : product
             )
         );
     }

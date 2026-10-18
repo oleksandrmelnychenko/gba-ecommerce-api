@@ -48,7 +48,12 @@ public sealed class RetailClientControllerTests {
     [Fact]
     public async Task Valid_net_id_keeps_both_retail_client_reads_successful() {
         Guid netId = Guid.NewGuid();
-        RetailClient retailClient = new() { NetUid = netId };
+        RetailClient retailClient = new() {
+            NetUid = netId,
+            Name = "Guest Buyer",
+            PhoneNumber = "+380501234567",
+            ShoppingCartJson = "[]"
+        };
         Mock<IClientService> clientService = new(MockBehavior.Strict);
         clientService
             .Setup(service => service.GetRetailClientByNetId(netId))
@@ -65,8 +70,13 @@ public sealed class RetailClientControllerTests {
 
         IWebResponse getResponse = Assert.IsAssignableFrom<IWebResponse>(getResult.Value);
         IWebResponse checkResponse = Assert.IsAssignableFrom<IWebResponse>(checkResult.Value);
-        Assert.Same(retailClient, getResponse.Body);
-        Assert.Equal((retailClient, string.Empty), checkResponse.Body);
+        RetailClientCartView cart = Assert.IsType<RetailClientCartView>(getResponse.Body);
+        Assert.Equal(netId, cart.NetUid);
+        Assert.Equal("[]", cart.ShoppingCartJson);
+        Assert.Equal((cart, string.Empty), checkResponse.Body);
+        string json = JsonSerializer.Serialize(getResponse.Body);
+        Assert.DoesNotContain("Guest Buyer", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("+380501234567", json, StringComparison.Ordinal);
         clientService.Verify(service => service.GetRetailClientByNetId(netId), Times.Once);
         clientService.Verify(
             service => service.GetRetailClientByNetIdCheckOrderItems(netId),

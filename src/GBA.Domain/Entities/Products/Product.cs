@@ -193,6 +193,10 @@ public sealed class Product : EntityBase {
 
     public decimal CurrentLocalWithVatPrice { get; set; }
 
+    public string P { get; set; }
+
+    public long T { get; set; }
+
     public byte[] ParentAmgId { get; set; } = null;
 
     public byte[] ParentFenixId { get; set; } = null;
