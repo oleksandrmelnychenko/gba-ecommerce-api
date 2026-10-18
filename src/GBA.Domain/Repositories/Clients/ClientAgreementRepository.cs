@@ -219,8 +219,9 @@ public sealed class ClientAgreementRepository : IClientAgreementRepository {
             "AND [ClientAgreement].Deleted = 0 " +
             "AND [Agreement].Deleted = 0 " +
             "AND [Agreement].ForReSale = 0 " +
+            "AND [Agreement].IsDefaultForSyncConsignment = 0 " +
             selectedAgreementFilter +
-            "ORDER BY [Agreement].IsActive DESC, [ClientAgreement].ID ",
+            "ORDER BY CASE WHEN [Agreement].PricingID IS NULL THEN 1 ELSE 0 END, [Agreement].IsActive DESC, [ClientAgreement].ID ",
             (clientAgreement, agreement, organization) => {
                 agreement.Organization = organization;
 

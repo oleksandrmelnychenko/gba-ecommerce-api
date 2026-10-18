@@ -27,6 +27,7 @@ using GBA.Domain.Repositories.Pricings.Contracts;
 using GBA.Domain.Repositories.Products;
 using GBA.Domain.Repositories.Products.Contracts;
 using GBA.Domain.Repositories.Storages.Contracts;
+using GBA.Services.Infrastructure;
 using GBA.Services.Services.Products.Contracts;
 
 namespace GBA.Services.Services.Products;
@@ -108,9 +109,7 @@ public sealed class ProductService : IProductService {
     internal static ClientAgreement ResolveClientAgreement(
         IClientAgreementRepository clientAgreementRepository,
         Guid clientNetId) =>
-        clientAgreementRepository.GetSelectedByClientNetId(clientNetId)
-        ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(clientNetId)
-        ?? clientAgreementRepository.GetSelectedByClientNotSelectedNetId(clientNetId);
+        ShopClientAgreements.Resolve(clientAgreementRepository, clientNetId);
 
     public Task<Product> GetProductBySlug(string slug, Guid clientNetId, bool withVat) {
         Guid? productNetId;
@@ -1177,10 +1176,7 @@ public sealed class ProductService : IProductService {
 
         IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
 
-        ClientAgreement clientAgreement =
-            clientAgreementRepository.GetSelectedByClientNetId(currentClientNetId)
-            ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId)
-            ?? clientAgreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
+        ClientAgreement clientAgreement = ResolveClientAgreement(clientAgreementRepository, currentClientNetId);
 
         if (clientAgreement?.Agreement == null)
             return Task.FromResult(new List<FromSearchProduct>());
@@ -1265,20 +1261,32 @@ public sealed class ProductService : IProductService {
             return Task.FromResult(WithSellableStock(retailComponents, currentClientNetId));
         }
 
-        IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
+        ClientAgreement clientAgreement = ResolveClientAgreement(
+            _clientRepositoriesFactory.NewClientAgreementRepository(connection),
+            currentClientNetId);
 
-        ClientAgreement nonVatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(currentClientNetId, false);
-        ClientAgreement vatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(currentClientNetId, true);
+        if (clientAgreement?.Agreement == null)
+            return Task.FromResult(new List<FromSearchProduct>());
 
-        return Task.FromResult(WithSellableStock(
-            getMultipleProductsRepository
-                .GetAllComponentsByProductIdWithCalculatedPrices(
-                    product.Id,
-                    nonVatAgreement?.NetUid ?? Guid.Empty,
-                    vatAgreement?.NetUid,
-                    withVat ? vatAgreement?.Agreement?.OrganizationId : nonVatAgreement?.Agreement?.OrganizationId
-                ),
-            currentClientNetId));
+        bool agreementWithVat = clientAgreement.Agreement.WithVATAccounting;
+        List<FromSearchProduct> components = getMultipleProductsRepository
+            .GetAllComponentsByProductIdWithCalculatedPrices(
+                product.Id,
+                agreementWithVat ? Guid.Empty : clientAgreement.NetUid,
+                agreementWithVat ? clientAgreement.NetUid : null,
+                clientAgreement.Agreement.OrganizationId);
+
+        foreach (FromSearchProduct component in components) {
+            if (agreementWithVat) {
+                component.CurrentPrice = component.CurrentWithVatPrice;
+                component.CurrentLocalPrice = component.CurrentLocalWithVatPrice;
+            } else {
+                component.CurrentWithVatPrice = component.CurrentPrice;
+                component.CurrentLocalWithVatPrice = component.CurrentLocalPrice;
+            }
+        }
+
+        return Task.FromResult(WithSellableStock(components, currentClientNetId));
     }
 
     private bool TryGetRetailContext(
@@ -1363,7 +1371,7 @@ public sealed class ProductService : IProductService {
 
     public Task<List<OrderItem>> GetAllOrderedProductsFiltered(DateTime from, DateTime to, long limit, long offset, Guid clientNetId) {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
-        ClientAgreement clientAgreement = _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetSelectedByClientNetId(clientNetId);
+        ClientAgreement clientAgreement = ResolveClientAgreement(_clientRepositoriesFactory.NewClientAgreementRepository(connection), clientNetId);
 
         return Task.FromResult(_productRepositoriesFactory
             .NewGetMultipleProductsRepository(connection)
@@ -1487,10 +1495,7 @@ public sealed class ProductService : IProductService {
         } else {
             IClientAgreementRepository agreementRepository =
                 _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-            clientAgreement =
-                agreementRepository.GetSelectedByClientNetId(clientNetId)
-                ?? agreementRepository.GetSelectedByWorkplaceNetId(clientNetId)
-                ?? agreementRepository.GetSelectedByClientNotSelectedNetId(clientNetId);
+            clientAgreement = ResolveClientAgreement(agreementRepository, clientNetId);
         }
 
         Agreement agreement = clientAgreement?.Agreement;
@@ -1561,10 +1566,7 @@ public sealed class ProductService : IProductService {
 
         IClientAgreementRepository agreementRepository =
             _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-        ClientAgreement clientAgreement =
-            agreementRepository.GetSelectedByClientNetId(currentClientNetId)
-            ?? agreementRepository.GetSelectedByWorkplaceNetId(currentClientNetId)
-            ?? agreementRepository.GetSelectedByClientNotSelectedNetId(currentClientNetId);
+        ClientAgreement clientAgreement = ResolveClientAgreement(agreementRepository, currentClientNetId);
         Agreement agreement = clientAgreement?.Agreement;
 
         if (agreement?.OrganizationId == null)

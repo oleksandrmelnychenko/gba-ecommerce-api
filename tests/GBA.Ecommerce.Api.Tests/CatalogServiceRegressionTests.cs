@@ -147,7 +147,7 @@ public sealed class CatalogServiceRegressionTests {
         string method = source[start..source.IndexOf("public ClientAgreement GetSelectedByWorkplaceNetId", start, StringComparison.Ordinal)];
 
         Assert.Contains("AND [Agreement].Deleted = 0", method, StringComparison.Ordinal);
-        Assert.Contains("ORDER BY [Agreement].IsActive DESC, [ClientAgreement].ID", method, StringComparison.Ordinal);
+        Assert.Contains("[Agreement].IsActive DESC, [ClientAgreement].ID", method, StringComparison.Ordinal);
     }
 
     private static string MethodBody(string source, string signature) {

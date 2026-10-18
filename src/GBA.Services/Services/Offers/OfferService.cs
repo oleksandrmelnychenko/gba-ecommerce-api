@@ -211,7 +211,7 @@ public sealed class OfferService : IOfferService {
                 OrderSource = OrderSource.Offer,
                 OrderStatus = OrderStatus.NewOrderCart,
                 UserId = offer.CreatedById ?? _userRepositoriesFactory.NewUserRepository(connection).GetManagerOrGBAIdByClientNetId(clientNetId),
-                ClientAgreement = _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetActiveByRootClientNetId(clientNetId, offer.IsVatCart),
+                ClientAgreement = offer.ClientAgreement,
                 ClientShoppingCartId = offer.Id
             };
 

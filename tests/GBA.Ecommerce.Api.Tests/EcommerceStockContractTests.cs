@@ -93,7 +93,7 @@ public sealed class EcommerceStockContractTests {
         Assert.Contains("[Agreement].ForReSale = 0", agreementRepository, StringComparison.Ordinal);
         Assert.Contains("WHERE [ClientSubClient].Deleted = 0", clientRepository, StringComparison.Ordinal);
         Assert.Contains("GetRootNetIdBySubClientNetId(clientNetId)", agreementService, StringComparison.Ordinal);
-        Assert.Contains("agreementRepository.GetSelectedByClientNetId(currentClientNetId)", productService, StringComparison.Ordinal);
+        Assert.Contains("ShopClientAgreements.Resolve(clientAgreementRepository, clientNetId)", productService, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -50,20 +50,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         Guid actorNetId,
         IClientAgreementRepository clientAgreementRepository,
         IWorkplaceRepository workplaceRepository) {
-        ClientAgreement clientAgreement = clientAgreementRepository.GetSelectedByClientNetId(actorNetId);
-        Workplace workplace = null;
-
-        if (clientAgreement == null) {
-            workplace = workplaceRepository.GetByNetId(actorNetId);
-            clientAgreement = workplace == null
-                ? clientAgreementRepository.GetSelectedByClientNotSelectedNetId(actorNetId)
-                : clientAgreementRepository.GetSelectedByWorkplaceNetId(actorNetId);
-        }
-
-        if (clientAgreement?.Agreement?.Organization == null)
-            throw new ArgumentException("A valid client agreement is required.");
-
-        return (clientAgreement, workplace);
+        return ShopClientAgreements.ResolveWithWorkplace(actorNetId, clientAgreementRepository, workplaceRepository);
     }
 
     private decimal ResolveLiveProductExchangeRate(

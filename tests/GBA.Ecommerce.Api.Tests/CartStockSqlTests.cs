@@ -21,6 +21,11 @@ using GBA.Domain.Repositories.Storages;
 using GBA.Services.Infrastructure.Checkout;
 using GBA.Services.Services.Clients;
 using GBA.Services.Services.Products;
+using GBA.Domain.Repositories.Delivery;
+using GBA.Domain.Repositories.Clients.RetailClients;
+using GBA.Domain.Repositories.Users;
+using GBA.Services.Services.Messengers;
+using GBA.Services.Services.Orders;
 using Microsoft.Data.SqlClient;
 
 namespace GBA.Ecommerce.Api.Tests;
@@ -188,6 +193,87 @@ public sealed class CartStockSqlTests(CheckoutSqlFixture fixture) {
         }
     }
 
+    [Fact]
+    public async Task A_client_without_a_selected_agreement_checks_out_the_cart_it_sees_without_writing_the_agreement() {
+        if (!Ready(out CartScenario scenario)) return;
+
+        Shopper shopper = scenario.Shoppers[2];
+        await ClearCart(shopper);
+        SetFreeStock(scenario, 5);
+        SetSelected(shopper, false);
+        try {
+            OrderItem item = await NewCartService().Add(NewLine(scenario.ProductNetUid, 1), shopper.ClientNetUid, false);
+            Assert.Single(await NewCartService().GetAllItemsFromCurrentShoppingCartByClientNetId(shopper.ClientNetUid, false));
+            Assert.False(IsSelected(shopper));
+
+            Sale invoice = new() { Comment = "default agreement test", Order = new Order() };
+            invoice.Order.OrderItems.Add(new OrderItem { NetUid = item.NetUid, Qty = 1 });
+            CheckoutResult result = await NewOrderService().GenerateNewSaleWithInvoice(
+                invoice,
+                shopper.ClientNetUid,
+                false,
+                false,
+                new CheckoutAttempt(Guid.NewGuid(), CheckoutFingerprint.Compute(Guid.NewGuid().ToString())));
+
+            Assert.Equal(shopper.ClientAgreementId, SaleClientAgreementId(result.Sale.Id));
+            Assert.False(IsSelected(shopper));
+        } finally {
+            SetSelected(shopper, true);
+            await ClearCart(shopper);
+        }
+    }
+
+    [Fact]
+    public void The_default_agreement_prefers_a_priced_then_an_active_agreement_and_skips_the_sync_placeholder() {
+        if (!Ready(out _)) return;
+
+        using SqlConnection connection = fixture.Open();
+        (long ClientId, Guid ClientNetUid)? client = connection.QueryFirstOrDefault<(long, Guid)?>("""
+            SELECT TOP (1) c.ID, c.NetUID
+            FROM dbo.Client c
+            JOIN dbo.ClientAgreement ca ON ca.ClientID = c.ID AND ca.Deleted = 0
+            JOIN dbo.Agreement a ON a.ID = ca.AgreementID AND a.Deleted = 0 AND a.ForReSale = 0
+            WHERE c.Deleted = 0
+              AND NOT EXISTS (SELECT 1 FROM dbo.ClientSubClient l WHERE l.SubClientID = c.ID AND l.Deleted = 0)
+            GROUP BY c.ID, c.NetUID
+            HAVING COUNT(*) = 2
+            ORDER BY c.ID;
+            """);
+        if (client == null) return;
+
+        List<AgreementFlags> original = connection.Query<AgreementFlags>("""
+            SELECT a.ID AS AgreementId, ca.ID AS ClientAgreementId, a.IsActive, a.IsSelected, a.PricingID AS PricingId, a.IsDefaultForSyncConsignment
+            FROM dbo.ClientAgreement ca
+            JOIN dbo.Agreement a ON a.ID = ca.AgreementID AND a.Deleted = 0 AND a.ForReSale = 0
+            WHERE ca.ClientID = @ClientId AND ca.Deleted = 0
+            ORDER BY ca.ID;
+            """, new { client.Value.ClientId }).ToList();
+        long pricingId = connection.ExecuteScalar<long>("SELECT TOP (1) ID FROM dbo.Pricing WHERE Deleted = 0 ORDER BY ID;");
+        AgreementFlags first = original[0];
+        AgreementFlags second = original[1];
+        ClientAgreementRepository repository = new(connection);
+
+        try {
+            SetFlags(connection, first.AgreementId, isActive: true, pricingId: null, placeholder: false);
+            SetFlags(connection, second.AgreementId, isActive: false, pricingId: pricingId, placeholder: false);
+            Assert.Equal(second.ClientAgreementId, repository.GetSelectedByClientNotSelectedNetId(client.Value.ClientNetUid).Id);
+
+            SetFlags(connection, second.AgreementId, isActive: false, pricingId: null, placeholder: false);
+            Assert.Equal(first.ClientAgreementId, repository.GetSelectedByClientNotSelectedNetId(client.Value.ClientNetUid).Id);
+
+            SetFlags(connection, first.AgreementId, isActive: true, pricingId: pricingId, placeholder: true);
+            SetFlags(connection, second.AgreementId, isActive: false, pricingId: null, placeholder: false);
+            Assert.Equal(second.ClientAgreementId, repository.GetSelectedByClientNotSelectedNetId(client.Value.ClientNetUid).Id);
+        } finally {
+            foreach (AgreementFlags flags in original)
+                connection.Execute("""
+                    UPDATE dbo.Agreement
+                    SET IsActive = @IsActive, IsSelected = @IsSelected, PricingID = @PricingId, IsDefaultForSyncConsignment = @IsDefaultForSyncConsignment
+                    WHERE ID = @AgreementId;
+                    """, flags);
+        }
+    }
+
     private bool Ready(out CartScenario scenario) {
         scenario = null!;
         if (!fixture.IsConfigured || !fixture.HasConcordSchema) return false;
@@ -216,7 +302,7 @@ public sealed class CartStockSqlTests(CheckoutSqlFixture fixture) {
                      ORDER BY o.ID;
                      """).ToList()) {
             List<Shopper> shoppers = connection.Query<Shopper>("""
-                SELECT TOP (8) c.ID AS ClientId, c.NetUID AS ClientNetUid, a.ID AS AgreementId
+                SELECT TOP (8) c.ID AS ClientId, c.NetUID AS ClientNetUid, a.ID AS AgreementId, ca.ID AS ClientAgreementId
                 FROM dbo.Client c
                 JOIN dbo.ClientAgreement ca ON ca.ClientID = c.ID AND ca.Deleted = 0
                 JOIN dbo.Agreement a ON a.ID = ca.AgreementID AND a.Deleted = 0 AND a.IsActive = 1
@@ -327,6 +413,31 @@ public sealed class CartStockSqlTests(CheckoutSqlFixture fixture) {
     private double AvailabilityAmount(long availabilityId) {
         using SqlConnection connection = fixture.Open();
         return connection.ExecuteScalar<double>("SELECT CAST(Amount AS float) FROM dbo.ProductAvailability WHERE ID = @availabilityId;", new { availabilityId });
+    }
+
+    private void SetSelected(Shopper shopper, bool selected) {
+        using SqlConnection connection = fixture.Open();
+        connection.Execute(
+            "UPDATE dbo.Agreement SET IsSelected = @selected WHERE ID = @AgreementId;",
+            new { selected, shopper.AgreementId });
+    }
+
+    private bool IsSelected(Shopper shopper) {
+        using SqlConnection connection = fixture.Open();
+        return connection.ExecuteScalar<bool>("SELECT IsSelected FROM dbo.Agreement WHERE ID = @AgreementId;", new { shopper.AgreementId });
+    }
+
+    private long SaleClientAgreementId(long saleId) {
+        using SqlConnection connection = fixture.Open();
+        return connection.ExecuteScalar<long>("SELECT ClientAgreementID FROM dbo.Sale WHERE ID = @saleId;", new { saleId });
+    }
+
+    private static void SetFlags(SqlConnection connection, long agreementId, bool isActive, long? pricingId, bool placeholder) {
+        connection.Execute("""
+            UPDATE dbo.Agreement
+            SET IsActive = @isActive, IsSelected = 0, PricingID = @pricingId, IsDefaultForSyncConsignment = @placeholder
+            WHERE ID = @agreementId;
+            """, new { agreementId, isActive, pricingId, placeholder });
     }
 
     private double FreeStock(CartScenario scenario) {
@@ -463,6 +574,31 @@ public sealed class CartStockSqlTests(CheckoutSqlFixture fixture) {
             new SearchReindexSignal());
     }
 
+    private OrderService NewOrderService() {
+        RecordingCrmHandler crm = new();
+        return new OrderService(
+            new SaleRepositoriesFactory(),
+            new ClientRepositoriesFactory(),
+            new UserRepositoriesFactory(),
+            new ProductRepositoriesFactory(),
+            new AgreementRepositoriesFactory(),
+            new StorageRepositoryFactory(),
+            new ExchangeRateRepositoriesFactory(),
+            new CurrencyRepositoriesFactory(),
+            new DeliveryRepositoriesFactory(),
+            new RetailClientRepositoriesFactory(),
+            fixture.ConnectionFactory,
+            new PaymentLinkService(),
+            crm.Factory(),
+            new ClientResourceAccessService(
+                fixture.ConnectionFactory,
+                new ClientRepositoriesFactory(),
+                new DeliveryRepositoriesFactory(),
+                new SaleRepositoriesFactory()),
+            new SearchReindexSignal(),
+            new CheckoutExecutor(fixture.ConnectionFactory, new SqlCheckoutLedger()));
+    }
+
     private ProductService NewProductService() {
         return new ProductService(
             new ClientRepositoriesFactory(),
@@ -488,5 +624,15 @@ public sealed class CartStockSqlTests(CheckoutSqlFixture fixture) {
         public long ClientId { get; init; }
         public Guid ClientNetUid { get; init; }
         public long AgreementId { get; init; }
+        public long ClientAgreementId { get; init; }
+    }
+
+    private sealed class AgreementFlags {
+        public long AgreementId { get; init; }
+        public long ClientAgreementId { get; init; }
+        public bool IsActive { get; init; }
+        public bool IsSelected { get; init; }
+        public long? PricingId { get; init; }
+        public bool IsDefaultForSyncConsignment { get; init; }
     }
 }

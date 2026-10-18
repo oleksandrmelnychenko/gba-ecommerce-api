@@ -366,11 +366,13 @@ public sealed class OrderService : IOrderService {
                 OrderSource = OrderSource.Shop,
                 OrderStatus = OrderStatus.NewOrderCart,
                 UserId = _userRepositoriesFactory.NewUserRepository(connection).GetManagerOrGBAIdByClientNetId(clientNetId),
-                ClientAgreement = _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetActiveByRootClientNetId(clientNetId, withVat)
+                ClientAgreement = _clientRepositoriesFactory
+                    .NewClientAgreementRepository(connection)
+                    .GetByIdWithAgreementAndOrganization(clientShoppingCart.ClientAgreementId)
             };
 
             if (order.ClientAgreement?.Agreement?.Organization == null)
-                throw new ArgumentException("A valid client agreement is required.");
+                throw new ArgumentException(ShopClientAgreements.RequiredMessage);
 
             order.ClientAgreementId = order.ClientAgreement.Id;
 
@@ -461,8 +463,7 @@ public sealed class OrderService : IOrderService {
 
         ClientAgreement clientAgreement = clientNetId == Guid.Empty
             ? null
-            : clientAgreementRepository.GetSelectedByClientNetId(clientNetId)
-              ?? clientAgreementRepository.GetSelectedByWorkplaceNetId(clientNetId);
+            : ShopClientAgreements.Resolve(clientAgreementRepository, clientNetId);
 
         Storage storage = null;
         ClientAgreement retailAgreement = null;
@@ -528,9 +529,9 @@ public sealed class OrderService : IOrderService {
 
             ClientAgreement selectedClientAgreement = isWorkplace
                 ? _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetSelectedByWorkplaceNetId(clientNetId)
-                : _clientRepositoriesFactory.NewClientAgreementRepository(connection).GetSelectedByClientNetId(clientNetId);
-            if (selectedClientAgreement == null)
-                throw new ArgumentException("A valid client agreement is required.");
+                : ShopClientAgreements.Resolve(_clientRepositoriesFactory.NewClientAgreementRepository(connection), clientNetId);
+            if (selectedClientAgreement?.Agreement?.Organization == null)
+                throw new ArgumentException(ShopClientAgreements.RequiredMessage);
 
             bool withVat = selectedClientAgreement.Agreement.WithVATAccounting;
 
