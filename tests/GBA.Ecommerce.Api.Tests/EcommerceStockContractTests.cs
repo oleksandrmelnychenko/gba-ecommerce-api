@@ -142,16 +142,15 @@ public sealed class EcommerceStockContractTests {
     }
 
     [Fact]
-    public void Cart_reindex_is_requested_after_stock_mutation() {
+    public void Cart_reindex_is_requested_after_the_stock_mutation_commits() {
         string source = ReadSource("src/GBA.Services/Services/Clients/ClientShoppingCartService.cs");
 
-        int addMutation = source.IndexOf("OrderItem addedItem = AddNewItemToShoppingCart", StringComparison.Ordinal);
-        int addSignal = source.IndexOf("_reindexSignal.Request(orderItem.ProductId);", addMutation, StringComparison.Ordinal);
-        Assert.True(addMutation >= 0 && addSignal > addMutation);
+        int write = source.IndexOf("private T RunCartWrite<T>(", StringComparison.Ordinal);
+        int commit = source.IndexOf("scope.Complete();", write, StringComparison.Ordinal);
+        int signal = source.IndexOf("_reindexSignal.Request(productId);", commit, StringComparison.Ordinal);
 
-        int updateMutation = source.IndexOf("orderItemRepository.UpdateQty(orderItem);", StringComparison.Ordinal);
-        int updateSignal = source.IndexOf("_reindexSignal.Request(orderItem.ProductId);", updateMutation, StringComparison.Ordinal);
-        Assert.True(updateMutation >= 0 && updateSignal > updateMutation);
+        Assert.True(write >= 0 && commit > write && signal > commit);
+        Assert.Equal(1, Count(source, "_reindexSignal.Request("));
     }
 
     private static int Count(string source, string value) {

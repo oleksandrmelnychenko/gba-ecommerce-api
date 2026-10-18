@@ -9,6 +9,9 @@ public sealed class CheckoutConflictException : Exception {
     public const string CartChangedMessage =
         "The shopping cart changed during checkout. Review it and try again.";
 
+    public const string CartStockChangedMessage =
+        "The shopping cart or the stock changed concurrently. Reload the cart and try again.";
+
     public CheckoutConflictException(string message) : base(message) { }
 }
 

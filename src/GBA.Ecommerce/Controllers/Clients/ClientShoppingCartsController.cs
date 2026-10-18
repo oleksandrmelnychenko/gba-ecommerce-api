@@ -8,6 +8,7 @@ using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.EntityHelpers.ClientShoppingCartModels;
+using GBA.Services.Infrastructure.Checkout;
 using GBA.Services.Services.Clients.Contracts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -20,6 +21,7 @@ namespace GBA.Ecommerce.Controllers.Clients;
 [EnableRateLimiting("api")]
 [RequestSizeLimit(524288)]
 [AssignControllerRoute(WebApiEnvironmnet.Current, WebApiVersion.ApiVersion1, ApplicationSegments.ClientShoppingCartItems)]
+[CartConflictFilter]
 public sealed class ClientShoppingCartsController(
     IResponseFactory responseFactory,
     IClientShoppingCartService clientShoppingCartService,

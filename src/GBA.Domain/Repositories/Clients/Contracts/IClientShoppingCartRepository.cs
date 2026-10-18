@@ -21,8 +21,6 @@ public interface IClientShoppingCartRepository {
 
     List<ClientShoppingCart> GetAllExistingUnavailableCarts();
 
-    List<ClientShoppingCart> GetAllExistingExpiredClientShoppingCarts();
-
     List<ClientShoppingCart> GetAllAvailableOffersByClientNetId(Guid netId);
 
     List<ClientShoppingCart> GetAllValidClientShoppingCarts();

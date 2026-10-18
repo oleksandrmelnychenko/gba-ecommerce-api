@@ -104,6 +104,10 @@ public sealed class ClientRepositoriesFactory : IClientRepositoriesFactory {
         return new ClientShoppingCartRepository(connection);
     }
 
+    public IShoppingCartStockRepository NewShoppingCartStockRepository(IDbConnection connection) {
+        return new ShoppingCartStockRepository(connection);
+    }
+
     public IClientBalanceMovementRepository NewClientBalanceMovementRepository(IDbConnection connection) {
         return new ClientBalanceMovementRepository(connection);
     }

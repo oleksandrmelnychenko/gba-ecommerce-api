@@ -591,43 +591,6 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
         return cartDict.Values.ToList();
     }
 
-    public List<ClientShoppingCart> GetAllExistingExpiredClientShoppingCarts() {
-        // Use Dictionary for O(1) lookup instead of O(n) List.Any/First
-        Dictionary<long, ClientShoppingCart> cartDict = new();
-
-        _connection.Query<ClientShoppingCart, OrderItem, ClientShoppingCart>(
-            "SELECT [ClientShoppingCart].* " +
-            ", [OrderItem].* " +
-            "FROM [ClientShoppingCart] " +
-            "LEFT JOIN [ClientAgreement] " +
-            "ON [ClientAgreement].ID = [ClientShoppingCart].ClientAgreementID " +
-            "LEFT JOIN [Client] " +
-            "ON [Client].ID = [ClientAgreement].ClientID " +
-            "LEFT JOIN [OrderItem] " +
-            "ON [OrderItem].ClientShoppingCartID = [ClientShoppingCart].ID " +
-            "AND [OrderItem].Deleted = 0 " +
-            "WHERE [ClientShoppingCart].Deleted = 0 " +
-            "AND [Client].ClearCartAfterDays <> 0 " +
-            "AND [Client].ClearCartAfterDays <= DATEDIFF(day, [OrderItem].Created, GETUTCDATE()) " +
-            "AND [ClientShoppingCart].ValidUntil < @FromDate ",
-            (cart, item) => {
-                // O(1) lookup with TryGetValue instead of O(n) Any + First
-                if (cartDict.TryGetValue(cart.Id, out ClientShoppingCart existingCart)) {
-                    if (item != null) existingCart.OrderItems.Add(item);
-                } else {
-                    if (item != null) cart.OrderItems.Add(item);
-
-                    cartDict[cart.Id] = cart;
-                }
-
-                return cart;
-            },
-            new { FromDate = DateTime.Now.Date }
-        );
-
-        return cartDict.Values.ToList();
-    }
-
     public List<ClientShoppingCart> GetAllOffersFiltered(DateTime from, DateTime to) {
         // Use Dictionary for O(1) lookup instead of O(n) List.Any/First
         Dictionary<long, ClientShoppingCart> cartDict = new();

@@ -53,6 +53,8 @@ public interface IClientRepositoriesFactory {
 
     IClientShoppingCartRepository NewClientShoppingCartRepository(IDbConnection connection);
 
+    IShoppingCartStockRepository NewShoppingCartStockRepository(IDbConnection connection);
+
     IClientBalanceMovementRepository NewClientBalanceMovementRepository(IDbConnection connection);
 
     IDebtorRepository NewDebtorRepository(IDbConnection connection);
