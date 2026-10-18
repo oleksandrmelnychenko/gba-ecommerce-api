@@ -2865,6 +2865,64 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
         return products;
     }
 
+    internal const string CatalogCardsByVendorCodesSql =
+        "SELECT [Product].ID " +
+        ", [Product].NetUID " +
+        ", [Product].VendorCode " +
+        ", [Product].[NameUA] AS [Name] " +
+        ", [Product].[DescriptionUA] AS [Description] " +
+        ", [Product].Size " +
+        ", [Product].PackingStandard " +
+        ", [Product].OrderStandard " +
+        ", [Product].UCGFEA " +
+        ", [Product].Volume " +
+        ", [Product].[Top] " +
+        ", [Product].[Weight] " +
+        ", [Product].HasAnalogue " +
+        ", [Product].HasComponent " +
+        ", [Product].HasImage " +
+        ", [Product].IsForWeb " +
+        ", [Product].IsForSale " +
+        ", [Product].IsForZeroSale " +
+        ", [Product].MainOriginalNumber " +
+        ", [Product].[Image] " +
+        ", [Product].MeasureUnitID AS [MeasureUnitId] " +
+        ", " + GetSingleProductRepository.ProductRoadQuantitySql + " AS [AvailableQtyRoad] " +
+        ", [ProductSlug].* " +
+        "FROM [Product] " +
+        "LEFT JOIN [ProductSlug] " +
+        "ON [ProductSlug].ID = (" +
+        "SELECT TOP(1) [CardSlug].ID " +
+        "FROM [ProductSlug] AS [CardSlug] " +
+        "WHERE [CardSlug].Deleted = 0 " +
+        "AND [CardSlug].[Locale] = @Culture " +
+        "AND [CardSlug].ProductID = [Product].ID " +
+        "ORDER BY [CardSlug].ID) " +
+        "WHERE [Product].ID IN (" +
+        "SELECT [SearchProduct].ID " +
+        "FROM [Product] AS [SearchProduct] " +
+        "WHERE [SearchProduct].VendorCode IN @VendorCodes " +
+        "AND [SearchProduct].Deleted = 0 " +
+        "AND [SearchProduct].IsForWeb = 1 " +
+        "ORDER BY [SearchProduct].ID " +
+        "OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY) " +
+        "ORDER BY [Product].ID";
+
+    public List<FromSearchProduct> GetCatalogCardsByVendorCodes(IReadOnlyCollection<string> vendorCodes, int limit, int offset) {
+        return _connection.Query<FromSearchProduct, ProductSlug, FromSearchProduct>(
+            CatalogCardsByVendorCodesSql,
+            (product, slug) => {
+                product.ProductSlug = slug;
+                return product;
+            },
+            new {
+                VendorCodes = vendorCodes,
+                Limit = limit,
+                Offset = offset,
+                Culture = CultureInfo.CurrentCulture.TwoLetterISOLanguageName
+            }).ToList();
+    }
+
     public List<Product> GetAllFromIdsInPreDefinedQuery(
         string preDefinedQuery,
         Guid nonVatAgreementNetId,

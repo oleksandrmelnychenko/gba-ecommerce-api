@@ -111,12 +111,10 @@ public sealed class CatalogServiceRegressionTests {
 
     [Fact]
     public void Vendor_code_listing_excludes_deleted_and_non_web_products() {
-        string source = File.ReadAllText(RepositoryPath("src/GBA.Services/Services/Products/ProductService.cs"));
-        int start = source.IndexOf("public Task<List<Product>> GetAllByVendorCodes", StringComparison.Ordinal);
-        string method = source[start..source.IndexOf("public Task<List<OrderItem>> GetAllOrderedProductsFiltered", start, StringComparison.Ordinal)];
-
-        Assert.Contains("AND [SearchProduct].Deleted = 0", method, StringComparison.Ordinal);
-        Assert.Contains("AND [SearchProduct].IsForWeb = 1", method, StringComparison.Ordinal);
+        Assert.Contains("AND [SearchProduct].Deleted = 0", GetMultipleProductsRepository.CatalogCardsByVendorCodesSql, StringComparison.Ordinal);
+        Assert.Contains("AND [SearchProduct].IsForWeb = 1", GetMultipleProductsRepository.CatalogCardsByVendorCodesSql, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetCalculatedProduct", GetMultipleProductsRepository.CatalogCardsByVendorCodesSql, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProductAvailability", GetMultipleProductsRepository.CatalogCardsByVendorCodesSql, StringComparison.Ordinal);
     }
 
     [Fact]

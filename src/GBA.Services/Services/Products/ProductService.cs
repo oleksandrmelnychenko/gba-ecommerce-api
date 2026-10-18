@@ -1317,10 +1317,9 @@ public sealed class ProductService : IProductService {
         return clientAgreement?.Agreement != null;
     }
 
-    public Task<List<Product>> GetAllByVendorCodes(List<string> vendorCodes, Guid currentClientNetId, long limit, long offset, bool withVat) {
-        using IDbConnection connection = _connectionFactory.NewSqlConnection();
+    public Task<List<FromSearchProduct>> GetAllByVendorCodes(List<string> vendorCodes, long limit, long offset) {
         if (vendorCodes == null || vendorCodes.Count.Equals(0))
-            return Task.FromResult(new List<Product>());
+            return Task.FromResult(new List<FromSearchProduct>());
         if (vendorCodes.Count > 50 ||
             vendorCodes.Any(code => string.IsNullOrWhiteSpace(code) || code.Length > 100))
             throw new ArgumentException("Vendor codes are invalid.");
@@ -1332,41 +1331,22 @@ public sealed class ProductService : IProductService {
         int safeLimit = (int)Math.Clamp(limit <= 0 ? 20 : limit, 1, 100);
         int safeOffset = (int)Math.Clamp(offset, 0, 5000);
 
-            IGetMultipleProductsRepository getMultipleProductsRepository = _productRepositoriesFactory.NewGetMultipleProductsRepository(connection);
+        using IDbConnection connection = _connectionFactory.NewSqlConnection();
 
-            const string productIdsQuery =
-                "SELECT [SearchProduct].ID " +
-                "FROM [Product] AS [SearchProduct] " +
-                "WHERE [SearchProduct].VendorCode IN @VendorCodes " +
-                "AND [SearchProduct].Deleted = 0 " +
-                "AND [SearchProduct].IsForWeb = 1 " +
-                "ORDER BY [SearchProduct].ID " +
-                "OFFSET @Offset ROWS FETCH NEXT @Limit ROWS ONLY";
-            var queryParameters = new {
-                VendorCodes = normalizedVendorCodes,
-                Offset = safeOffset,
-                Limit = safeLimit
-            };
+        List<FromSearchProduct> products = _productRepositoriesFactory
+            .NewGetMultipleProductsRepository(connection)
+            .GetCatalogCardsByVendorCodes(normalizedVendorCodes, safeLimit, safeOffset);
+        if (products.Count == 0) return Task.FromResult(products);
 
-            if (currentClientNetId.Equals(Guid.Empty))
-                return Task.FromResult(getMultipleProductsRepository.GetAllFromIdsInPreDefinedQuery(
-                    productIdsQuery,
-                    Guid.Empty,
-                    Guid.Empty,
-                    queryParameters));
+        Dictionary<long, List<string>> originalNumbers = GetOriginalNumbersForProducts(
+            connection,
+            products.Select(product => product.Id).ToList());
+        foreach (FromSearchProduct product in products)
+            product.OriginalNumbers = originalNumbers.TryGetValue(product.Id, out List<string>? numbers)
+                ? numbers
+                : new List<string>();
 
-            IClientAgreementRepository clientAgreementRepository = _clientRepositoriesFactory.NewClientAgreementRepository(connection);
-
-            ClientAgreement nonVatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(currentClientNetId, false);
-            ClientAgreement vatAgreement = clientAgreementRepository.GetActiveByRootClientNetId(currentClientNetId, true);
-
-            return Task.FromResult(getMultipleProductsRepository
-                .GetAllFromIdsInPreDefinedQuery(
-                    productIdsQuery,
-                    nonVatAgreement?.NetUid ?? Guid.Empty,
-                    vatAgreement?.NetUid,
-                    queryParameters
-                ));
+        return Task.FromResult(products);
     }
 
     public Task<List<OrderItem>> GetAllOrderedProductsFiltered(DateTime from, DateTime to, long limit, long offset, Guid clientNetId) {

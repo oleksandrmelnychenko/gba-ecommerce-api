@@ -26,7 +26,7 @@ public interface IProductService {
 
     Task<List<FromSearchProduct>> GetAllComponentsByProductNetId(Guid productNetId, Guid currentClientNetId, bool withVat);
 
-    Task<List<Product>> GetAllByVendorCodes(List<string> vendorCodes, Guid currentClientNetId, long limit, long offset, bool withVat);
+    Task<List<FromSearchProduct>> GetAllByVendorCodes(List<string> vendorCodes, long limit, long offset);
 
     Task<SeoProductIndexPage> GetSeoIndex(int limit, long offset);
 

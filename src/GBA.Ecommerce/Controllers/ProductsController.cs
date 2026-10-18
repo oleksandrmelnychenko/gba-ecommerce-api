@@ -182,7 +182,64 @@ public sealed class ProductsController(
     public async Task<IActionResult> GetAllByVendorCodes([FromQuery] List<string> vendorCodes, [FromQuery] long limit = 20, [FromQuery] long offset = 0,
         [FromQuery] int withVat = 0) {
         Guid userNetId = GetUserNetId();
-        return Ok(SuccessResponseBody(await productService.GetAllByVendorCodes(vendorCodes, userNetId, limit, offset, withVat.Equals(1))));
+        string locale = RouteData.Values["culture"]?.ToString() ?? "uk";
+
+        List<FromSearchProduct> products = await productService.GetAllByVendorCodes(vendorCodes, limit, offset);
+        if (products.Count == 0)
+            return Ok(SuccessResponseBody(new List<ProtectedSearchProduct>()));
+
+        List<long> productIds = products.Select(product => product.Id).ToList();
+        ProductPricingContext pricingContext = productService.GetPricingContext(userNetId, withVat.Equals(1));
+        Dictionary<long, ProductPriceInfo> prices = priceCacheService.GetPrices(
+            productIds,
+            userNetId,
+            withVat.Equals(1),
+            locale,
+            pricingContext.CacheKey,
+            ids => productService.GetPricesOnly(ids, userNetId, withVat.Equals(1), locale));
+        Dictionary<long, double> sellableQuantities = productService.GetSellableQuantities(productIds, userNetId);
+
+        return Ok(SuccessResponseBody(ProtectCatalogCards(
+            products,
+            prices,
+            sellableQuantities,
+            pricingContext.CurrencyCode,
+            userNetId != Guid.Empty,
+            PriceObfuscator.GetTimestamp())));
+    }
+
+    internal static List<ProtectedSearchProduct> ProtectCatalogCards(
+        List<FromSearchProduct> products,
+        Dictionary<long, ProductPriceInfo> prices,
+        Dictionary<long, double> sellableQuantities,
+        string configuredCurrencyCode,
+        bool isAuthenticated,
+        long timestamp) {
+        return products
+            .Select(product => {
+                prices.TryGetValue(product.Id, out ProductPriceInfo? priceInfo);
+                sellableQuantities.TryGetValue(product.Id, out double sellableQuantity);
+                ProductPriceInfo resolvedPrice = ResolveSearchPrice(priceInfo, configuredCurrencyCode);
+                double visibleQuantity = ResolveVisibleSearchQuantity(resolvedPrice, sellableQuantity, isAuthenticated);
+
+                product.CurrentPrice = resolvedPrice.Price;
+                product.CurrentLocalPrice = resolvedPrice.LocalPrice;
+                product.CurrentWithVatPrice = resolvedPrice.Price;
+                product.CurrentLocalWithVatPrice = resolvedPrice.LocalPrice;
+                product.CurrencyCode = string.IsNullOrEmpty(resolvedPrice.CurrencyCode)
+                    ? configuredCurrencyCode
+                    : resolvedPrice.CurrencyCode;
+                product.AvailableQtyUk = visibleQuantity;
+                product.AvailableQtyUkVAT = visibleQuantity;
+                product.AvailableQtyPl = 0;
+                product.AvailableQtyPlVAT = 0;
+
+                return ProtectedSearchProduct.FromSearchProduct(product, PriceObfuscator.EncodeMultiple, timestamp);
+            })
+            .OrderByDescending(product => product.AvailableQtyUk > 0)
+            .ThenBy(product => product.Name, StringComparer.CurrentCulture)
+            .ThenBy(product => product.VendorCode, StringComparer.Ordinal)
+            .ToList();
     }
 
     [HttpGet]
