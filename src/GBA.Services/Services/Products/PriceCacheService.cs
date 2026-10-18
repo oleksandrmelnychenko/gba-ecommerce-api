@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using GBA.Domain.Repositories.Products;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -18,13 +19,16 @@ public interface IPriceCacheService {
         Func<List<long>, Dictionary<long, ProductPriceInfo>> fetchFromDb);
 
     void InvalidateForClient(Guid clientNetId);
+
+    void InvalidateAll();
 }
 
 public sealed class PriceCacheService : IPriceCacheService {
     private readonly IMemoryCache _cache;
     private readonly ILogger<PriceCacheService> _logger;
     private readonly ConcurrentDictionary<Guid, long> _clientVersions = new();
-    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(30);
+    private long _generation;
+    internal static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(10);
 
     public PriceCacheService(IMemoryCache cache, ILogger<PriceCacheService> logger) {
         _cache = cache;
@@ -45,10 +49,12 @@ public sealed class PriceCacheService : IPriceCacheService {
         Dictionary<long, ProductPriceInfo> result = new Dictionary<long, ProductPriceInfo>();
         List<long> missingIds = new List<long>();
         long clientVersion = _clientVersions.GetOrAdd(clientNetId, 0);
+        long generation = Interlocked.Read(ref _generation);
 
         // Check cache for each product
         foreach (long productId in productIds) {
             string cacheKey = BuildCacheKey(
+                generation,
                 clientNetId,
                 clientVersion,
                 productId,
@@ -71,6 +77,7 @@ public sealed class PriceCacheService : IPriceCacheService {
 
                 // Cache the fetched price
                 string cacheKey = BuildCacheKey(
+                    generation,
                     clientNetId,
                     clientVersion,
                     kvp.Key,
@@ -93,13 +100,19 @@ public sealed class PriceCacheService : IPriceCacheService {
         _logger.LogDebug("Price cache invalidated for client {ClientNetId}", clientNetId);
     }
 
+    public void InvalidateAll() {
+        Interlocked.Increment(ref _generation);
+        _logger.LogDebug("Price cache invalidated for every client");
+    }
+
     private static string BuildCacheKey(
+        long generation,
         Guid clientNetId,
         long clientVersion,
         long productId,
         bool withVat,
         string locale,
         string pricingContextKey) {
-        return $"price:{clientNetId}:{clientVersion}:{productId}:{(withVat ? 1 : 0)}:{locale}:{pricingContextKey}";
+        return $"price:{generation}:{clientNetId}:{clientVersion}:{productId}:{(withVat ? 1 : 0)}:{locale}:{pricingContextKey}";
     }
 }

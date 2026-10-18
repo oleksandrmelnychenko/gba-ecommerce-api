@@ -1494,11 +1494,14 @@ public sealed class ProductService : IProductService {
         }
 
         string currencyCode = currency?.Code ?? string.Empty;
+        string priceInputsVersion = _pricingRepositoriesFactory
+            .NewPricingRepository(connection)
+            .GetPriceInputsVersion(clientAgreement.Id);
 
         return new ProductPricingContext(
             agreement.WithVATAccounting,
             currencyCode,
-            BuildPricingContextCacheKey(clientAgreement, agreement, storage));
+            BuildPricingContextCacheKey(clientAgreement, agreement, storage) + ":" + priceInputsVersion);
     }
 
     internal static string BuildPricingContextCacheKey(

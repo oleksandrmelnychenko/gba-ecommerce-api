@@ -50,6 +50,46 @@ public sealed class CatalogSqlTests(CheckoutSqlFixture fixture) {
         Assert.Equal(retailStock, card.AvailableQtyUkVAT);
     }
 
+    [Fact]
+    public void The_price_cache_version_follows_price_inputs_but_not_timestamp_touches() {
+        if (!fixture.IsConfigured || !fixture.HasConcordSchema) return;
+
+        using SqlConnection connection = fixture.Open();
+        (long ClientAgreementId, Guid ClientNetUid) client = connection.QueryFirst<(long, Guid)>("""
+            SELECT TOP (1) ca.ID, c.NetUID
+            FROM dbo.ProductGroupDiscount d
+            JOIN dbo.ClientAgreement ca ON ca.ID = d.ClientAgreementID AND ca.Deleted = 0
+            JOIN dbo.Client c ON c.ID = ca.ClientID AND c.Deleted = 0
+            WHERE d.Deleted = 0
+            ORDER BY d.ID;
+            """);
+        PricingRepository repository = new(connection);
+        (long RateId, decimal Amount) rate = connection.QueryFirst<(long, decimal)>(
+            "SELECT TOP (1) ID, Amount FROM dbo.ExchangeRate WHERE Deleted = 0 ORDER BY ID;");
+        (long DiscountId, double Rate) discount = connection.QueryFirst<(long, double)>(
+            "SELECT TOP (1) ID, DiscountRate FROM dbo.ProductGroupDiscount WHERE ClientAgreementID = @ClientAgreementId AND Deleted = 0 ORDER BY ID;",
+            new { client.ClientAgreementId });
+
+        string before = repository.GetPriceInputsVersion(client.ClientAgreementId);
+        try {
+            connection.Execute("UPDATE dbo.ExchangeRate SET Updated = GETUTCDATE() WHERE ID = @RateId;", new { rate.RateId });
+            connection.Execute("UPDATE dbo.ProductGroupDiscount SET Updated = GETUTCDATE() WHERE ID = @DiscountId;", new { discount.DiscountId });
+            Assert.Equal(before, repository.GetPriceInputsVersion(client.ClientAgreementId));
+
+            connection.Execute("UPDATE dbo.ExchangeRate SET Amount = Amount + 0.0100 WHERE ID = @RateId;", new { rate.RateId });
+            string afterRate = repository.GetPriceInputsVersion(client.ClientAgreementId);
+            Assert.NotEqual(before, afterRate);
+
+            connection.Execute("UPDATE dbo.ProductGroupDiscount SET DiscountRate = DiscountRate + 1 WHERE ID = @DiscountId;", new { discount.DiscountId });
+            Assert.NotEqual(afterRate, repository.GetPriceInputsVersion(client.ClientAgreementId));
+        } finally {
+            connection.Execute("UPDATE dbo.ExchangeRate SET Amount = @Amount WHERE ID = @RateId;", new { rate.Amount, rate.RateId });
+            connection.Execute("UPDATE dbo.ProductGroupDiscount SET DiscountRate = @Rate WHERE ID = @DiscountId;", new { discount.Rate, discount.DiscountId });
+        }
+
+        Assert.Equal(before, repository.GetPriceInputsVersion(client.ClientAgreementId));
+    }
+
     private (Product Product, double RetailStock) FindRetailProduct(ProductService service) {
         using SqlConnection connection = fixture.Open();
         Storage storage = new StorageRepository(connection).GetWithHighestPriority();

@@ -18,6 +18,17 @@ public sealed class PricingRepository : IPricingRepository {
         _connection = connection;
     }
 
+    internal const string PriceInputsVersionSql = """
+        SELECT CONCAT(
+            ISNULL(CONVERT(varchar(12), (SELECT CHECKSUM_AGG(BINARY_CHECKSUM([ID], [Amount], [CurrencyID], [Code], [Culture], [Deleted])) FROM [dbo].[ExchangeRate])), '-'), '|',
+            ISNULL(CONVERT(varchar(12), (SELECT CHECKSUM_AGG(BINARY_CHECKSUM([ID], [Amount], [CurrencyFromID], [CurrencyToID], [Code], [Culture], [Deleted])) FROM [dbo].[CrossExchangeRate])), '-'), '|',
+            ISNULL(CONVERT(varchar(12), (SELECT CHECKSUM_AGG(BINARY_CHECKSUM([ID], [Amount], [CurrencyID], [Code], [Culture], [Deleted])) FROM [dbo].[GovExchangeRate])), '-'), '|',
+            ISNULL(CONVERT(varchar(12), (SELECT CHECKSUM_AGG(BINARY_CHECKSUM([ID], [Amount], [CurrencyFromID], [CurrencyToID], [Code], [Culture], [Deleted])) FROM [dbo].[GovCrossExchangeRate])), '-'), '|',
+            ISNULL(CONVERT(varchar(12), (SELECT CHECKSUM_AGG(BINARY_CHECKSUM([ID], [BasePricingID], [ExtraCharge], [CalculatedExtraCharge], [CurrencyID], [ForVat], [ForShares], [Deleted])) FROM [dbo].[Pricing])), '-'), '|',
+            ISNULL(CONVERT(varchar(12), (SELECT CHECKSUM_AGG(BINARY_CHECKSUM([ID], [Amount], [BasePricingID], [PricingID], [ProductGroupID], [CalculatedExtraCharge], [Deleted])) FROM [dbo].[PricingProductGroupDiscount])), '-'), '|',
+            ISNULL(CONVERT(varchar(12), (SELECT CHECKSUM_AGG(BINARY_CHECKSUM([ID], [ProductGroupID], [DiscountRate], [IsActive], [Deleted])) FROM [dbo].[ProductGroupDiscount] WHERE [ClientAgreementID] = @ClientAgreementId)), '-'));
+        """;
+
     public long Add(Pricing pricing) {
         return _connection.Query<long>(
             "INSERT INTO [Pricing] (Name, Comment, ExtraCharge, BasePricingId, CurrencyId, PriceTypeId, Culture, CalculatedExtraCharge, ForVat, Updated) " +
@@ -236,6 +247,10 @@ public sealed class PricingRepository : IPricingRepository {
             "WHERE NetUID = @NetId",
             new { NetId = netId.ToString() }
         ).Single();
+    }
+
+    public string GetPriceInputsVersion(long clientAgreementId) {
+        return _connection.ExecuteScalar<string>(PriceInputsVersionSql, new { ClientAgreementId = clientAgreementId }) ?? string.Empty;
     }
 
     public decimal GetCalculatedExtraChargeForCurrentPricing(long id) {

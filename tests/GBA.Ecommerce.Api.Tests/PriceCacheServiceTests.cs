@@ -83,4 +83,44 @@ public sealed class PriceCacheServiceTests {
         Assert.Equal(515m, uah.Price);
         Assert.Equal(2, fetchCount);
     }
+
+    [Fact]
+    public void A_catalog_change_invalidates_signed_in_prices_too() {
+        using MemoryCache memoryCache = new(new MemoryCacheOptions());
+        PriceCacheService cache = new(memoryCache, NullLogger<PriceCacheService>.Instance);
+        Guid client = Guid.NewGuid();
+        int fetchCount = 0;
+        ProductPriceInfo Fetch(decimal price) => cache.GetPrices(
+            [7], client, false, "uk", "agreement", ids => {
+                fetchCount++;
+                return ids.ToDictionary(id => id, _ => new ProductPriceInfo { Price = price });
+            })[7];
+
+        Assert.Equal(10m, Fetch(10m).Price);
+        cache.InvalidateForClient(Guid.Empty);
+        Assert.Equal(10m, Fetch(11m).Price);
+        Assert.Equal(1, fetchCount);
+
+        cache.InvalidateAll();
+
+        Assert.Equal(11m, Fetch(11m).Price);
+        Assert.Equal(2, fetchCount);
+    }
+
+    [Fact]
+    public void Cached_prices_expire_well_before_the_old_half_hour() {
+        Assert.True(PriceCacheService.CacheDuration <= TimeSpan.FromMinutes(10));
+    }
+
+    [Fact]
+    public async Task The_search_sync_invalidates_every_clients_prices() {
+        Moq.Mock<IPriceCacheService> prices = new();
+        Moq.Mock<Microsoft.AspNetCore.OutputCaching.IOutputCacheStore> outputCache = new();
+        GBA.Ecommerce.Background.OutputCacheSearchInvalidator invalidator = new(outputCache.Object, prices.Object);
+
+        await invalidator.InvalidateProductsAsync(CancellationToken.None);
+
+        prices.Verify(cache => cache.InvalidateAll(), Moq.Times.Once);
+        prices.Verify(cache => cache.InvalidateForClient(Moq.It.IsAny<Guid>()), Moq.Times.Never);
+    }
 }

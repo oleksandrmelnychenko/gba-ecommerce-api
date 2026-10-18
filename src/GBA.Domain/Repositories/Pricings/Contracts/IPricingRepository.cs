@@ -37,6 +37,8 @@ public interface IPricingRepository {
 
     decimal GetCalculatedExtraChargeForCurrentPricing(long id);
 
+    string GetPriceInputsVersion(long clientAgreementId);
+
     decimal GetCalculatedExtraChargeForCurrentPricing(Guid netId);
 
     bool IsAnyAssignedToBasePricing(long basePricingId);

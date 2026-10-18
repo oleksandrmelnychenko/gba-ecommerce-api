@@ -12,7 +12,7 @@ public sealed class OutputCacheSearchInvalidator(
     IPriceCacheService priceCacheService) : ISearchCacheInvalidator {
 
     public async ValueTask InvalidateProductsAsync(CancellationToken cancellationToken) {
-        priceCacheService.InvalidateForClient(Guid.Empty);
+        priceCacheService.InvalidateAll();
         await outputCacheStore.EvictByTagAsync("products", cancellationToken);
     }
 }
