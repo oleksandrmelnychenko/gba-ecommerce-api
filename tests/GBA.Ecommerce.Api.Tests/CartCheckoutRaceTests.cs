@@ -170,6 +170,25 @@ public sealed class CartCheckoutRaceTests {
     }
 
     [Fact]
+    public async Task Cart_lines_are_priced_from_the_unrounded_unit_price_like_the_sale_line() {
+        WithCart();
+        WithStock(Availability(11, 1000));
+        OrderItem added = null!;
+        _orderItems
+            .Setup(repository => repository.Add(It.IsAny<OrderItem>()))
+            .Callback<OrderItem>(item => added = item)
+            .Returns(77);
+        _stock.Setup(repository => repository.Reserve(77, 11, 470)).Returns(true);
+
+        await NewService().Add(NewLine(470), _clientNetId, false);
+
+        Assert.Equal(10.123456789m, added.PricePerItem);
+        Assert.Equal(decimal.Round(10.123456789m * 50.1234m * 470m, 2, MidpointRounding.AwayFromZero), added.TotalAmountLocal);
+        Assert.Equal(decimal.Round(10.123456789m * 470m, 2, MidpointRounding.AwayFromZero), added.TotalAmount);
+        Assert.NotEqual(decimal.Round(decimal.Round(10.123456789m, 2) * 50.1234m, 2) * 470m, added.TotalAmountLocal);
+    }
+
+    [Fact]
     public async Task Adding_many_returns_the_added_lines_and_clamps_each_to_its_free_stock() {
         Product second = new() { Id = 502, NetUid = Guid.NewGuid(), IsForWeb = true, CurrentPrice = 2m };
         _products

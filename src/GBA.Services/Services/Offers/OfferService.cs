@@ -88,18 +88,7 @@ public sealed class OfferService : IOfferService {
 
         StampFirstView(connection, offer);
 
-        foreach (OrderItem orderItem in offer.OrderItems) {
-            orderItem.TotalAmount = decimal.Round(orderItem.Product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
-            orderItem.TotalAmountLocal = orderItem.Product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty);
-
-            orderItem.Product.CurrentLocalPrice = decimal.Round(orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
-
-            orderItem.TotalAmount = decimal.Round(orderItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
-            orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
-        }
-
-        offer.TotalAmount = decimal.Round(offer.OrderItems.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero);
-        offer.TotalLocalAmount = decimal.Round(offer.OrderItems.Sum(o => o.TotalAmountLocal), 2, MidpointRounding.AwayFromZero);
+        PriceOfferLines(offer);
 
         return Task.FromResult(offer);
     }
@@ -119,18 +108,7 @@ public sealed class OfferService : IOfferService {
 
         StampFirstView(connection, offer);
 
-        foreach (OrderItem orderItem in offer.OrderItems) {
-            orderItem.TotalAmount = decimal.Round(orderItem.Product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
-            orderItem.TotalAmountLocal = orderItem.Product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty);
-
-            orderItem.Product.CurrentLocalPrice = decimal.Round(orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
-
-            orderItem.TotalAmount = decimal.Round(orderItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
-            orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
-        }
-
-        offer.TotalAmount = decimal.Round(offer.OrderItems.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero);
-        offer.TotalLocalAmount = decimal.Round(offer.OrderItems.Sum(o => o.TotalAmountLocal), 2, MidpointRounding.AwayFromZero);
+        PriceOfferLines(offer);
 
         return Task.FromResult(offer);
     }
@@ -152,21 +130,30 @@ public sealed class OfferService : IOfferService {
         for (int i = 0; i < offers.Count; i++) {
             offers[i] = shoppingCartRepository.GetByNetId(offers[i].NetUid);
 
-            foreach (OrderItem orderItem in offers[i].OrderItems) {
-                orderItem.TotalAmount = decimal.Round(orderItem.Product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
-                orderItem.TotalAmountLocal = orderItem.Product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty);
-
-                orderItem.Product.CurrentLocalPrice = decimal.Round(orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
-
-                orderItem.TotalAmount = decimal.Round(orderItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
-                orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
-            }
-
-            offers[i].TotalAmount = decimal.Round(offers[i].OrderItems.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero);
-            offers[i].TotalLocalAmount = decimal.Round(offers[i].OrderItems.Sum(o => o.TotalAmountLocal), 2, MidpointRounding.AwayFromZero);
+            PriceOfferLines(offers[i]);
         }
 
         return Task.FromResult(offers);
+    }
+
+    internal static void PriceOfferLines(ClientShoppingCart offer) {
+        decimal totalAmount = 0m;
+        decimal totalLocalAmount = 0m;
+
+        foreach (OrderItem orderItem in offer.OrderItems) {
+            decimal lineAmount = EcommerceLinePricing.UnroundedLine(orderItem.Product.CurrentPrice, orderItem.Qty);
+            decimal lineLocalAmount = EcommerceLinePricing.UnroundedLine(orderItem.Product.CurrentLocalPrice, orderItem.Qty);
+
+            orderItem.TotalAmount = EcommerceLinePricing.Amount(lineAmount);
+            orderItem.TotalAmountLocal = EcommerceLinePricing.Amount(lineLocalAmount);
+            orderItem.Product.CurrentLocalPrice = EcommerceLinePricing.Amount(orderItem.Product.CurrentLocalPrice);
+
+            totalAmount += lineAmount;
+            totalLocalAmount += lineLocalAmount;
+        }
+
+        offer.TotalAmount = EcommerceLinePricing.Amount(totalAmount);
+        offer.TotalLocalAmount = EcommerceLinePricing.Amount(totalLocalAmount);
     }
 
     public Task<CheckoutResult> GenerateNewOrderAndSaleFromOffer(
@@ -440,18 +427,23 @@ public sealed class OfferService : IOfferService {
     }
 
     public Task<Order> DynamicallyCalculateTotalPrices(Order order) {
+        decimal totalAmount = 0m;
+        decimal totalAmountLocal = 0m;
+
         foreach (OrderItem orderItem in order.OrderItems) {
-            orderItem.TotalAmount = decimal.Round(orderItem.Product.CurrentPrice * Convert.ToDecimal(orderItem.ChangedQty), 2, MidpointRounding.AwayFromZero);
-            orderItem.TotalAmountLocal = orderItem.Product.CurrentLocalPrice * Convert.ToDecimal(orderItem.ChangedQty);
+            decimal lineAmount = EcommerceLinePricing.UnroundedLine(orderItem.Product.CurrentPrice, orderItem.ChangedQty);
+            decimal lineAmountLocal = EcommerceLinePricing.UnroundedLine(orderItem.Product.CurrentLocalPrice, orderItem.ChangedQty);
 
-            orderItem.Product.CurrentLocalPrice = decimal.Round(orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
+            orderItem.TotalAmount = EcommerceLinePricing.Amount(lineAmount);
+            orderItem.TotalAmountLocal = EcommerceLinePricing.Amount(lineAmountLocal);
+            orderItem.Product.CurrentLocalPrice = EcommerceLinePricing.Amount(orderItem.Product.CurrentLocalPrice);
 
-            orderItem.TotalAmount = decimal.Round(orderItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
-            orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
+            totalAmount += lineAmount;
+            totalAmountLocal += lineAmountLocal;
         }
 
-        order.TotalAmount = decimal.Round(order.OrderItems.Sum(o => o.TotalAmount), 2, MidpointRounding.AwayFromZero);
-        order.TotalAmountLocal = decimal.Round(order.OrderItems.Sum(o => o.TotalAmountLocal), 2, MidpointRounding.AwayFromZero);
+        order.TotalAmount = EcommerceLinePricing.Amount(totalAmount);
+        order.TotalAmountLocal = EcommerceLinePricing.Amount(totalAmountLocal);
 
         return Task.FromResult(order);
     }

@@ -220,8 +220,8 @@ public sealed class OrderService : IOrderService {
             retailAgreement.Agreement.CurrencyId.Value,
             withVat,
             false);
-        product.CurrentLocalPrice = decimal.Round(
-            product.CurrentPrice * exchangeRateAmount, 2, MidpointRounding.AwayFromZero);
+        product.CurrentPrice = EcommerceLinePricing.Unit(product.CurrentPrice);
+        product.CurrentLocalPrice = EcommerceLinePricing.UnitLocal(product.CurrentPrice, exchangeRateAmount);
 
         // All commercial fields are server-authoritative. The browser only selects
         // the product capability and quantity.
@@ -229,8 +229,8 @@ public sealed class OrderService : IOrderService {
         orderItem.ProductId = product.Id;
         orderItem.PricePerItem = product.CurrentPrice;
         orderItem.ExchangeRateAmount = exchangeRateAmount;
-        orderItem.TotalAmount = decimal.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
-        orderItem.TotalAmountLocal = decimal.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+        orderItem.TotalAmount = EcommerceLinePricing.Line(product.CurrentPrice, orderItem.Qty);
+        orderItem.TotalAmountLocal = EcommerceLinePricing.LineLocal(product.CurrentPrice, exchangeRateAmount, orderItem.Qty);
         orderItem.OverLordQty = orderItem.Qty;
         orderItem.OrderedQty = orderItem.Qty;
         orderItem.OneTimeDiscount = 0;
@@ -283,15 +283,15 @@ public sealed class OrderService : IOrderService {
             throw new InvalidOperationException("Client agreement currency is not configured."),
             clientAgreement.Agreement.WithVATAccounting,
             false);
-        product.CurrentLocalPrice = decimal.Round(
-            product.CurrentPrice * exchangeRateAmount, 2, MidpointRounding.AwayFromZero);
+        product.CurrentPrice = EcommerceLinePricing.Unit(product.CurrentPrice);
+        product.CurrentLocalPrice = EcommerceLinePricing.UnitLocal(product.CurrentPrice, exchangeRateAmount);
 
         orderItem.Product = product;
         orderItem.ProductId = product.Id;
         orderItem.PricePerItem = product.CurrentPrice;
         orderItem.ExchangeRateAmount = exchangeRateAmount;
-        orderItem.TotalAmount = decimal.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
-        orderItem.TotalAmountLocal = decimal.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+        orderItem.TotalAmount = EcommerceLinePricing.Line(product.CurrentPrice, orderItem.Qty);
+        orderItem.TotalAmountLocal = EcommerceLinePricing.LineLocal(product.CurrentPrice, exchangeRateAmount, orderItem.Qty);
         orderItem.OneTimeDiscount = 0;
         orderItem.Discount = 0;
         orderItem.DiscountAmount = 0;
@@ -480,10 +480,10 @@ public sealed class OrderService : IOrderService {
             retailAgreement = GetRetailAgreement(connection, storage, withVat);
         }
 
-        order.TotalAmount = 0m;
-        order.TotalAmountLocal = 0m;
-        order.OverLordTotalAmount = 0m;
-        order.OverLordTotalAmountLocal = 0m;
+        decimal totalAmount = 0m;
+        decimal totalAmountLocal = 0m;
+        decimal overLordTotalAmount = 0m;
+        decimal overLordTotalAmountLocal = 0m;
 
         foreach (OrderItem orderItem in order.OrderItems) {
             if (retailAgreement != null)
@@ -493,16 +493,21 @@ public sealed class OrderService : IOrderService {
 
             if (orderItem.OverLordQty <= 0) orderItem.OverLordQty = orderItem.Qty;
 
-            orderItem.OverLordTotalAmount = decimal.Round(
-                orderItem.PricePerItem * Convert.ToDecimal(orderItem.OverLordQty), 2, MidpointRounding.AwayFromZero);
-            orderItem.OverLordTotalAmountLocal = decimal.Round(
-                orderItem.Product.CurrentLocalPrice * Convert.ToDecimal(orderItem.OverLordQty), 2, MidpointRounding.AwayFromZero);
+            orderItem.OverLordTotalAmount = EcommerceLinePricing.Amount(
+                EcommerceLinePricing.UnroundedLine(orderItem.PricePerItem, orderItem.OverLordQty));
+            orderItem.OverLordTotalAmountLocal = EcommerceLinePricing.Amount(
+                EcommerceLinePricing.UnroundedLine(orderItem.Product.CurrentLocalPrice, orderItem.OverLordQty));
 
-            order.TotalAmount = decimal.Round(order.TotalAmount + orderItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
-            order.TotalAmountLocal = decimal.Round(order.TotalAmountLocal + orderItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
-            order.OverLordTotalAmount = decimal.Round(order.OverLordTotalAmount + orderItem.OverLordTotalAmount, 2, MidpointRounding.AwayFromZero);
-            order.OverLordTotalAmountLocal = decimal.Round(order.OverLordTotalAmountLocal + orderItem.OverLordTotalAmountLocal, 2, MidpointRounding.AwayFromZero);
+            totalAmount += EcommerceLinePricing.UnroundedLine(orderItem.PricePerItem, orderItem.Qty);
+            totalAmountLocal += EcommerceLinePricing.UnroundedLine(orderItem.Product.CurrentLocalPrice, orderItem.Qty);
+            overLordTotalAmount += EcommerceLinePricing.UnroundedLine(orderItem.PricePerItem, orderItem.OverLordQty);
+            overLordTotalAmountLocal += EcommerceLinePricing.UnroundedLine(orderItem.Product.CurrentLocalPrice, orderItem.OverLordQty);
         }
+
+        order.TotalAmount = EcommerceLinePricing.Amount(totalAmount);
+        order.TotalAmountLocal = EcommerceLinePricing.Amount(totalAmountLocal);
+        order.OverLordTotalAmount = EcommerceLinePricing.Amount(overLordTotalAmount);
+        order.OverLordTotalAmountLocal = EcommerceLinePricing.Amount(overLordTotalAmountLocal);
 
         return Task.FromResult(order);
     }

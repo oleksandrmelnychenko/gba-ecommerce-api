@@ -274,6 +274,32 @@ public sealed class CartStockSqlTests(CheckoutSqlFixture fixture) {
         }
     }
 
+    [Fact]
+    public async Task The_card_the_cart_and_the_checkout_preview_price_a_line_with_one_rounding_rule() {
+        if (!Ready(out CartScenario scenario)) return;
+
+        Shopper shopper = scenario.Shoppers[3];
+        await ClearCart(shopper);
+        SetFreeStock(scenario, 1000);
+        try {
+            Product card = await NewProductService().GetByNetId(scenario.ProductNetUid, shopper.ClientNetUid, false);
+            OrderItem added = await NewCartService().Add(NewLine(scenario.ProductNetUid, 470), shopper.ClientNetUid, false);
+
+            Assert.Equal(EcommerceLinePricing.Unit(card.CurrentPrice), StoredPricePerItem(added.Id));
+
+            Order preview = new();
+            preview.OrderItems.Add(new OrderItem { Product = new Product { NetUid = scenario.ProductNetUid }, Qty = 470 });
+            preview = await NewOrderService().DynamicallyCalculateTotalPrices(preview, shopper.ClientNetUid);
+
+            Assert.Equal(EcommerceLinePricing.Amount(card.CurrentLocalPrice * 470m), preview.TotalAmountLocal);
+            Assert.Equal(
+                EcommerceLinePricing.Amount(card.CurrentLocalPrice),
+                EcommerceLinePricing.Amount(preview.OrderItems.Single().Product.CurrentLocalPrice));
+        } finally {
+            await ClearCart(shopper);
+        }
+    }
+
     private bool Ready(out CartScenario scenario) {
         scenario = null!;
         if (!fixture.IsConfigured || !fixture.HasConcordSchema) return false;
@@ -438,6 +464,11 @@ public sealed class CartStockSqlTests(CheckoutSqlFixture fixture) {
             SET IsActive = @isActive, IsSelected = 0, PricingID = @pricingId, IsDefaultForSyncConsignment = @placeholder
             WHERE ID = @agreementId;
             """, new { agreementId, isActive, pricingId, placeholder });
+    }
+
+    private decimal StoredPricePerItem(long orderItemId) {
+        using SqlConnection connection = fixture.Open();
+        return connection.ExecuteScalar<decimal>("SELECT PricePerItem FROM dbo.OrderItem WHERE ID = @orderItemId;", new { orderItemId });
     }
 
     private double FreeStock(CartScenario scenario) {

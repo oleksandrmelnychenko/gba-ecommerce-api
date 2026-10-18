@@ -1052,8 +1052,6 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
 
                 if (image != null && !productToReturn.ProductImages.Any(i => i.Id.Equals(image.Id))) productToReturn.ProductImages.Add(image);
             } else {
-                product.CurrentLocalPrice = decimal.Round(product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
-                product.CurrentPrice = decimal.Round(product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
                 product.MeasureUnit = measureUnit;
 
                 if (image != null) product.ProductImages.Add(image);
@@ -1461,8 +1459,6 @@ public sealed class GetSingleProductRepository : IGetSingleProductRepository {
 
                 if (image != null && !productToReturn.ProductImages.Any(i => i.Id.Equals(image.Id))) productToReturn.ProductImages.Add(image);
             } else {
-                product.CurrentLocalPrice = decimal.Round(product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
-                product.CurrentPrice = decimal.Round(product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
 
                 product.MeasureUnit = measureUnit;
 

@@ -105,15 +105,15 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             connection,
             product,
             clientAgreement);
-        product.CurrentLocalPrice = decimal.Round(
-            product.CurrentPrice * exchangeRateAmount, 2, MidpointRounding.AwayFromZero);
+        product.CurrentPrice = EcommerceLinePricing.Unit(product.CurrentPrice);
+        product.CurrentLocalPrice = EcommerceLinePricing.UnitLocal(product.CurrentPrice, exchangeRateAmount);
 
         orderItem.Product = product;
         orderItem.ProductId = product.Id;
         orderItem.PricePerItem = product.CurrentPrice;
         orderItem.ExchangeRateAmount = exchangeRateAmount;
-        orderItem.TotalAmount = decimal.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
-        orderItem.TotalAmountLocal = decimal.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+        orderItem.TotalAmount = EcommerceLinePricing.Line(product.CurrentPrice, orderItem.Qty);
+        orderItem.TotalAmountLocal = EcommerceLinePricing.LineLocal(product.CurrentPrice, exchangeRateAmount, orderItem.Qty);
         orderItem.OverLordQty = orderItem.Qty;
         orderItem.OrderedQty = orderItem.Qty;
         orderItem.OneTimeDiscount = 0;

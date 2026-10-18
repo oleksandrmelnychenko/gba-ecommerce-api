@@ -44,9 +44,10 @@ public static class PriceObfuscator {
         return EncryptAndEncode(utf8Buffer[..utf8Len]);
     }
 
+    public const string WirePriceFormat = "0.00############";
+
     public static string EncodeMultiple(decimal[] prices, long timestamp) {
-        // Estimate buffer size: ~10 chars per price + separators + timestamp
-        int estimatedSize = prices.Length * 12 + 20;
+        int estimatedSize = prices.Length * 34 + 24;
 
         Span<char> dataBuffer = estimatedSize <= 256
             ? stackalloc char[256]
@@ -56,7 +57,7 @@ public static class PriceObfuscator {
 
         for (int i = 0; i < prices.Length; i++) {
             if (i > 0) dataBuffer[written++] = ',';
-            prices[i].TryFormat(dataBuffer[written..], out int len, "F2", _wireCulture);
+            prices[i].TryFormat(dataBuffer[written..], out int len, WirePriceFormat, _wireCulture);
             written += len;
         }
 

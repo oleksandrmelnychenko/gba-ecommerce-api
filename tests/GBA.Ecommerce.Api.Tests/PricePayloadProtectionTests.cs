@@ -82,6 +82,17 @@ public sealed class PricePayloadProtectionTests {
     }
 
     [Fact]
+    public void Multi_price_payload_keeps_the_unit_price_precision_lines_are_computed_from() {
+        EnsureKeys();
+
+        string encoded = PriceObfuscator.EncodeMultiple([18.10660000000000m, 925.42345678901234m, 1.28m, 0m], 1_700_000_000L);
+        string plaintext = DecryptForTest(encoded);
+
+        Assert.Equal("18.1066,925.42345678901234,1.28,0.00|1700000000", plaintext);
+        Assert.All(plaintext.Split('|')[0].Split(','), part => Assert.Contains(".", part, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void The_search_endpoint_encrypts_prices_and_never_ships_them_raw() {
         string source = File.ReadAllText(
             RepositoryPath("src/GBA.Ecommerce/Controllers/ProductsController.cs"));
