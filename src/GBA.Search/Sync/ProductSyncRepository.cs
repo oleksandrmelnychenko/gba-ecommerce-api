@@ -28,6 +28,14 @@ public interface IProductSyncRepository {
     /// <summary>Returns original-number search aliases for the supplied products.</summary>
     Task<Dictionary<long, List<string>>> GetOriginalNumbersForProductsAsync(
         IEnumerable<long> productIds);
+
+    Task<long> GetLiveProductCountAsync();
+
+    Task<List<long>> GetLiveProductIdsAsync();
+
+    Task<string> GetSourceFingerprintAsync();
+
+    Task<string> GetRetailConfigurationSignatureAsync();
 }
 
 /// <summary>
@@ -73,54 +81,54 @@ SELECT CAST(CASE
     THEN 1 ELSE 0
 END AS bit)";
 
-    internal const string HasRetailConfigurationChangesSql = @"
-SELECT CAST(CASE
-    WHEN EXISTS (
-        SELECT 1
-        FROM Client
-        WHERE IsForRetail = 1
-          AND Deleted = 0
-          AND (Updated > @Since OR Created > @Since)
-    ) OR EXISTS (
-        SELECT 1
-        FROM ClientAgreement ca
-        INNER JOIN Client client ON client.ID = ca.ClientID
-        WHERE client.IsForRetail = 1
-          AND client.Deleted = 0
-          AND (ca.Updated > @Since OR ca.Created > @Since)
-    ) OR EXISTS (
-        SELECT 1
-        FROM Agreement a
-        INNER JOIN ClientAgreement ca ON ca.AgreementID = a.ID
-        INNER JOIN Client client ON client.ID = ca.ClientID
-        WHERE client.IsForRetail = 1
-          AND client.Deleted = 0
-          AND (a.Updated > @Since OR a.Created > @Since)
-    ) OR EXISTS (
-        SELECT 1
-        FROM Storage s
-        WHERE (s.ForEcommerce = 1 OR EXISTS (
-            SELECT 1
-            FROM Agreement a
-            INNER JOIN ClientAgreement ca ON ca.AgreementID = a.ID
-            INNER JOIN Client client ON client.ID = ca.ClientID
-            WHERE a.OrganizationID = s.OrganizationID
-              AND client.IsForRetail = 1
-              AND client.Deleted = 0
-        ))
-          AND (s.Updated > @Since OR s.Created > @Since)
-    ) OR EXISTS (
-        SELECT 1
-        FROM Pricing pricing
-        INNER JOIN Agreement a ON a.PricingID = pricing.ID
-        INNER JOIN ClientAgreement ca ON ca.AgreementID = a.ID
-        INNER JOIN Client client ON client.ID = ca.ClientID
-        WHERE client.IsForRetail = 1
-          AND client.Deleted = 0
-          AND (pricing.Updated > @Since OR pricing.Created > @Since)
-    )
-    THEN 1 ELSE 0
-END AS bit)";
+    internal const string RetailConfigurationSignatureSql = @"
+;WITH RetailConfiguration AS (
+    SELECT TOP (1)
+        s.ID AS StorageId,
+        ca.NetUID AS AgreementNetUid,
+        a.PricingID AS PricingId,
+        a.WithVATAccounting AS WithVat,
+        c.Code AS CurrencyCode,
+        s.Locale AS StorageLocale,
+        s.ForDefective AS StorageForDefective,
+        s.ForVatProducts AS StorageForVatProducts
+    FROM Storage s
+    INNER JOIN Agreement a
+        ON a.OrganizationID = s.OrganizationID
+        AND a.WithVATAccounting = s.ForVatProducts
+        AND a.Deleted = 0
+        AND a.IsActive = 1
+    INNER JOIN ClientAgreement ca
+        ON ca.AgreementID = a.ID
+        AND ca.Deleted = 0
+    INNER JOIN Client client
+        ON client.ID = ca.ClientID
+        AND client.IsForRetail = 1
+        AND client.Deleted = 0
+    INNER JOIN Currency c
+        ON c.ID = a.CurrencyID
+        AND c.Deleted = 0
+    WHERE s.Deleted = 0
+      AND s.ForEcommerce = 1
+    ORDER BY s.RetailPriority, s.ID, a.IsSelected DESC, ca.ID
+),
+BasePricingHierarchy AS (
+    SELECT rc.PricingId AS OriginalPricingId, pr.ID AS CurrentPricingId, pr.BasePricingID
+    FROM RetailConfiguration rc
+    INNER JOIN Pricing pr ON pr.ID = rc.PricingId AND pr.Deleted = 0
+    UNION ALL
+    SELECT bph.OriginalPricingId, pr.ID, pr.BasePricingID
+    FROM Pricing pr
+    INNER JOIN BasePricingHierarchy bph ON pr.ID = bph.BasePricingID
+    WHERE pr.Deleted = 0
+)
+SELECT CONVERT(varchar(64), HASHBYTES('SHA2_256', CONCAT(
+    (SELECT CONCAT(rc.StorageId, '|', rc.AgreementNetUid, '|', rc.PricingId, '|', rc.WithVat, '|', rc.CurrencyCode, '|', rc.StorageLocale, '|', rc.StorageForDefective, '|', rc.StorageForVatProducts) FROM RetailConfiguration rc),
+    '#',
+    (SELECT STRING_AGG(CONCAT(pr.ID, ':', pr.BasePricingID, ':', CONVERT(varchar(64), pr.CalculatedExtraCharge)), ',') WITHIN GROUP (ORDER BY pr.ID)
+     FROM (SELECT DISTINCT CurrentPricingId FROM BasePricingHierarchy) h
+     INNER JOIN Pricing pr ON pr.ID = h.CurrentPricingId)
+)), 2)";
 
     internal const string GlobalRetailDependencyProductIdsSql = @"
 SELECT ppg.ProductID
@@ -136,6 +144,46 @@ INNER JOIN Client client ON client.ID = ca.ClientID AND client.IsForRetail = 1 A
 INNER JOIN ProductProductGroup ppg ON ppg.ProductGroupID = pgd.ProductGroupID AND ppg.Deleted = 0
 INNER JOIN Product p ON p.ID = ppg.ProductID AND p.Deleted = 0
 WHERE pgd.Updated > @Since OR pgd.Created > @Since";
+
+    internal const string LiveProductCountSql = "SELECT COUNT_BIG(*) FROM Product WHERE Deleted = 0";
+
+    internal const string LiveProductIdsSql = "SELECT ID FROM Product WHERE Deleted = 0";
+
+    internal const string SourceFingerprintSql = @"
+SELECT CONCAT(
+    CONVERT(varchar(33), d.create_date, 126), '|',
+    CONVERT(varchar(36), drs.recovery_fork_guid), '|',
+    (SELECT MIN(ID) FROM Product))
+FROM sys.databases d
+LEFT JOIN sys.database_recovery_status drs ON drs.database_id = d.database_id
+WHERE d.database_id = DB_ID()";
+
+    public async Task<long> GetLiveProductCountAsync() {
+        using IDbConnection connection = connectionFactory();
+        connection.Open();
+        return await connection.ExecuteScalarAsync<long>(LiveProductCountSql, commandTimeout: 60);
+    }
+
+    public async Task<List<long>> GetLiveProductIdsAsync() {
+        using IDbConnection connection = connectionFactory();
+        connection.Open();
+        IEnumerable<long> ids = await connection.QueryAsync<long>(LiveProductIdsSql, commandTimeout: 120);
+        return ids.AsList();
+    }
+
+    public async Task<string> GetRetailConfigurationSignatureAsync() {
+        using IDbConnection connection = connectionFactory();
+        connection.Open();
+        string? signature = await connection.ExecuteScalarAsync<string>(RetailConfigurationSignatureSql, commandTimeout: 30);
+        return signature ?? string.Empty;
+    }
+
+    public async Task<string> GetSourceFingerprintAsync() {
+        using IDbConnection connection = connectionFactory();
+        connection.Open();
+        string? fingerprint = await connection.ExecuteScalarAsync<string>(SourceFingerprintSql, commandTimeout: 30);
+        return fingerprint ?? string.Empty;
+    }
 
     internal static IEnumerable<long[]> PartitionProductIds(IReadOnlyCollection<long> ids) {
         return ids
@@ -439,18 +487,6 @@ ORDER BY p.ID";
 
         HashSet<long> ids = new(directIds);
 
-        bool hasRetailConfigurationChanges = await connection.ExecuteScalarAsync<bool>(
-            HasRetailConfigurationChangesSql,
-            new { Since = since },
-            commandTimeout: 30);
-
-        if (hasRetailConfigurationChanges) {
-            IEnumerable<long> allProductIds = await connection.QueryAsync<long>(
-                "SELECT ID FROM Product WHERE Deleted = 0",
-                commandTimeout: 120);
-            return allProductIds.AsList();
-        }
-
         // Pricing/group discount mutations can fan out to every product in an affected
         // group. Keep that expensive expansion out of the common incremental-sync plan:
         // first use two index-friendly EXISTS probes, and compile/run the joins only when
@@ -645,17 +681,26 @@ WHERE pon.Deleted = 0
                 sql, new { ProductIds = batch });
 
             foreach ((long productId, string number) in rows) {
-                if (!result.TryGetValue(productId, out List<string>? list)) {
-                    list = [];
-                    result[productId] = list;
-                }
-                if (!string.IsNullOrWhiteSpace(number)) {
-                    list.Add(number);
-                }
+                AppendOriginalNumber(result, productId, number);
             }
         }
 
         return result;
+    }
+
+    internal static void AppendOriginalNumber(
+        Dictionary<long, List<string>> numbersByProduct,
+        long productId,
+        string? number) {
+        if (!numbersByProduct.TryGetValue(productId, out List<string>? list)) {
+            list = [];
+            numbersByProduct[productId] = list;
+        }
+
+        if (!string.IsNullOrWhiteSpace(number)
+            && !list.Contains(number, StringComparer.OrdinalIgnoreCase)) {
+            list.Add(number);
+        }
     }
 }
 

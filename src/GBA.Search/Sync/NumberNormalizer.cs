@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -6,32 +7,42 @@ using System.Text.RegularExpressions;
 namespace GBA.Search.Sync;
 
 public static partial class NumberNormalizer {
-    private static readonly Dictionary<char, char> CyrillicToLatinMap = new() {
+    private static readonly Dictionary<char, char> LookalikeToLatinMap = new() {
         { 'а', 'a' },
+        { 'в', 'b' },
         { 'е', 'e' },
         { 'і', 'i' },
+        { 'к', 'k' },
+        { 'м', 'm' },
+        { 'н', 'h' },
         { 'о', 'o' },
         { 'р', 'p' },
         { 'с', 'c' },
-        { 'у', 'y' },
-        { 'х', 'x' },
-        { 'к', 'k' },
-        { 'м', 'm' },
-        { 'н', 'n' },
         { 'т', 't' },
-        { 'А', 'a' },
-        { 'Е', 'e' },
-        { 'І', 'i' },
-        { 'О', 'o' },
-        { 'Р', 'p' },
-        { 'С', 'c' },
-        { 'У', 'y' },
-        { 'Х', 'x' },
-        { 'К', 'k' },
-        { 'М', 'm' },
-        { 'Н', 'n' },
-        { 'Т', 't' }
+        { 'у', 'y' },
+        { 'х', 'x' }
     };
+
+    public static IEnumerable<string> LookalikeCharFilterMappings() {
+        foreach ((char cyrillic, char latin) in LookalikeToLatinMap) {
+            yield return $"{cyrillic} => {latin}";
+            yield return $"{char.ToUpperInvariant(cyrillic)} => {latin}";
+        }
+    }
+
+    public static string FoldLookalikes(string value) {
+        if (string.IsNullOrEmpty(value)) {
+            return string.Empty;
+        }
+
+        StringBuilder result = new(value.Length);
+        foreach (char c in value) {
+            char lower = char.ToLowerInvariant(c);
+            result.Append(LookalikeToLatinMap.TryGetValue(lower, out char latin) ? latin : lower);
+        }
+
+        return result.ToString();
+    }
 
     [GeneratedRegex("[^a-zA-Z0-9а-яА-ЯіІїЇєЄґҐ]", RegexOptions.Compiled)]
     private static partial Regex NonAlphanumericRegex();
@@ -42,11 +53,11 @@ public static partial class NumberNormalizer {
         }
 
         if (!ContainsSpecialChars(value)) {
-            return value.ToLowerInvariant();
+            return FoldLookalikes(value);
         }
 
         string result = NonAlphanumericRegex().Replace(value, string.Empty);
-        return result.ToLowerInvariant();
+        return FoldLookalikes(result);
     }
 
     public static string NormalizeQuery(string? query) {
@@ -56,51 +67,26 @@ public static partial class NumberNormalizer {
 
         StringBuilder result = new(query.Length);
         bool lastWasSpace = true;
-        bool inNumber = false;
         bool isStartOfCyrillicWord = true;
 
         foreach (char c in query) {
-            if (c == ' ') {
+            if (char.IsWhiteSpace(c)) {
                 if (!lastWasSpace && result.Length > 0) {
                     result.Append(' ');
                     lastWasSpace = true;
                     isStartOfCyrillicWord = true;
                 }
-                inNumber = false;
             } else if (char.IsDigit(c)) {
                 result.Append(c);
                 lastWasSpace = false;
                 isStartOfCyrillicWord = false;
-                inNumber = true;
             } else if (char.IsLetter(c)) {
-                bool isCyrillic = IsCyrillicChar(c);
-
-                if (CyrillicToLatinMap.TryGetValue(c, out char latinChar)) {
-                    if (inNumber || IsLikelyPartNumber(result)) {
-                        result.Append(latinChar);
-                        isStartOfCyrillicWord = false;
-                    } else if (isCyrillic) {
-                        if (isStartOfCyrillicWord) {
-                            result.Append(char.ToUpperInvariant(c));
-                            isStartOfCyrillicWord = false;
-                        } else {
-                            result.Append(char.ToLowerInvariant(c));
-                        }
-                    } else {
-                        result.Append(char.ToLowerInvariant(c));
-                        isStartOfCyrillicWord = false;
-                    }
-                } else if (isCyrillic) {
-                    if (isStartOfCyrillicWord) {
-                        result.Append(char.ToUpperInvariant(c));
-                        isStartOfCyrillicWord = false;
-                    } else {
-                        result.Append(char.ToLowerInvariant(c));
-                    }
+                if (IsCyrillicChar(c) && isStartOfCyrillicWord) {
+                    result.Append(char.ToUpperInvariant(c));
                 } else {
                     result.Append(char.ToLowerInvariant(c));
-                    isStartOfCyrillicWord = false;
                 }
+                isStartOfCyrillicWord = false;
                 lastWasSpace = false;
             }
         }
@@ -109,21 +95,20 @@ public static partial class NumberNormalizer {
             result.Length--;
         }
 
-        return result.ToString();
+        string[] tokens = result.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        for (int i = 0; i < tokens.Length; i++) {
+            if (tokens[i].Any(char.IsDigit)) {
+                tokens[i] = FoldLookalikes(tokens[i]);
+            }
+        }
+
+        return string.Join(' ', tokens);
     }
 
     private static bool IsCyrillicChar(char c) {
         return c is >= 'а' and <= 'я' || (c >= 'А' && c <= 'Я') ||
                c == 'і' || c == 'І' || c == 'ї' || c == 'Ї' ||
                c == 'є' || c == 'Є' || c == 'ґ' || c == 'Ґ';
-    }
-
-    private static bool IsLikelyPartNumber(StringBuilder sb) {
-        for (int i = sb.Length - 1; i >= 0 && i >= sb.Length - 10; i--) {
-            if (sb[i] == ' ') break;
-            if (char.IsDigit(sb[i])) return true;
-        }
-        return false;
     }
 
     private static bool ContainsSpecialChars(string value) {

@@ -20,6 +20,104 @@ using Moq;
 namespace GBA.Ecommerce.Api.Tests;
 
 public sealed class ElasticsearchSyncSafetyTests {
+    public ElasticsearchSyncSafetyTests() {
+        ElasticsearchSyncService.ResetForcedRebuildBackoff();
+    }
+
+    [Fact]
+    public async Task IncrementalSync_OutdatedIndexSchema_RebuildsWithTheCurrentAnalyzers() {
+        TestProductSyncRepository repository = new();
+        TestSearchSyncStateStore state = new() {
+            Watermark = DateTime.UtcNow.AddMinutes(-1),
+            SourceFingerprint = repository.Fingerprint
+        };
+        ElasticsearchSyncService service = CreateSyncService(
+            repository,
+            state,
+            new TestSearchCacheInvalidator(),
+            new CollectingLogger<ElasticsearchSyncService>(),
+            maxRetries: 0,
+            index: new TestElasticsearchIndexService { SchemaVersion = null });
+
+        SyncResult result = await service.IncrementalSyncAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal(1, repository.AllProductsCalls);
+        Assert.Equal(0, repository.ChangedCalls);
+    }
+
+    [Fact]
+    public async Task IncrementalSync_FailedForcedRebuild_BacksOffAndKeepsSyncingIncrementally() {
+        TestProductSyncRepository repository = new();
+        TestSearchSyncStateStore state = new() {
+            Watermark = DateTime.UtcNow.AddMinutes(-1),
+            SourceFingerprint = repository.Fingerprint
+        };
+        TestElasticsearchIndexService index = new() {
+            SchemaVersion = null,
+            CreateSucceeds = false
+        };
+        ElasticsearchSyncService service = CreateSyncService(
+            repository,
+            state,
+            new TestSearchCacheInvalidator(),
+            new CollectingLogger<ElasticsearchSyncService>(),
+            maxRetries: 0,
+            index: index);
+
+        SyncResult first = await service.IncrementalSyncAsync();
+        SyncResult second = await service.IncrementalSyncAsync();
+
+        Assert.False(first.Success);
+        Assert.True(second.Success);
+        Assert.Equal(1, index.CreateCalls);
+        Assert.Equal(1, repository.ChangedCalls);
+    }
+
+    [Fact]
+    public async Task FullRebuild_FailedSwap_DeletesTheAbandonedIndex() {
+        TestProductSyncRepository repository = new();
+        SuccessfulElasticsearchHandler handler = new();
+        ElasticsearchSyncService service = CreateSyncService(
+            repository,
+            new TestSearchSyncStateStore(),
+            new TestSearchCacheInvalidator(),
+            new CollectingLogger<ElasticsearchSyncService>(),
+            maxRetries: 0,
+            handler,
+            new TestElasticsearchIndexService { SwapSucceeds = false });
+
+        SyncResult result = await service.FullRebuildAsync();
+
+        Assert.False(result.Success);
+        Assert.Contains("DELETE /products_test", handler.Requests);
+    }
+
+    [Fact]
+    public void HealthProbe_LongRunningSyncThatStartedFresh_IsNotStale() {
+        DateTime now = DateTime.UtcNow;
+
+        Assert.True(SearchSyncHealthProbe.IsCoveredByRunningSync(
+            now.AddMinutes(-9),
+            now.AddMinutes(-8),
+            now,
+            300));
+        Assert.False(SearchSyncHealthProbe.IsCoveredByRunningSync(
+            now.AddMinutes(-60),
+            now.AddMinutes(-8),
+            now,
+            300));
+        Assert.False(SearchSyncHealthProbe.IsCoveredByRunningSync(
+            now.AddMinutes(-41),
+            now.AddMinutes(-40),
+            now,
+            300));
+        Assert.False(SearchSyncHealthProbe.IsCoveredByRunningSync(
+            now.AddMinutes(-9),
+            null,
+            now,
+            300));
+    }
     [Fact]
     public async Task IncrementalSync_TransientTimeout_RetriesAndReleasesGate() {
         TestProductSyncRepository repository = new() {
@@ -472,13 +570,278 @@ public sealed class ElasticsearchSyncSafetyTests {
         Assert.Equal(2, processed);
     }
 
+    [Fact]
+    public async Task IncrementalSync_RemovesDocumentsWhoseProductsVanishedFromTheSourceDatabase() {
+        TestProductSyncRepository repository = new() {
+            LiveIds = [10, 11, 12],
+            GetProductsByIds = ids => Task.FromResult(
+                ids.Select(CreateProduct).ToList())
+        };
+        TestElasticsearchIndexService index = new() {
+            IndexedIds = [1, 2, 3, 10, 11]
+        };
+        SuccessfulElasticsearchHandler handler = new();
+        TestSearchSyncStateStore state = new() {
+            Watermark = DateTime.UtcNow.AddMinutes(-1),
+            SourceFingerprint = repository.Fingerprint
+        };
+        ElasticsearchSyncService service = CreateSyncService(
+            repository,
+            state,
+            new TestSearchCacheInvalidator(),
+            new CollectingLogger<ElasticsearchSyncService>(),
+            maxRetries: 0,
+            handler,
+            index);
+
+        SyncResult result = await service.IncrementalSyncAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal(3, result.DocumentsDeleted);
+        Assert.Equal(1, result.DocumentsIndexed);
+        string bulk = string.Join('\n', handler.BulkBodies);
+        Assert.Contains("\"delete\":{\"_index\":\"products\",\"_id\":1}", bulk);
+        Assert.Contains("\"delete\":{\"_index\":\"products\",\"_id\":3}", bulk);
+        Assert.Contains("\"_id\":12,\"require_alias\":true", bulk);
+        Assert.DoesNotContain("\"_id\":10", bulk);
+        Assert.Equal(0, repository.AllProductsCalls);
+        Assert.Equal(1, state.SetCalls);
+    }
+
+    [Fact]
+    public async Task IncrementalSync_MatchingCounts_SkipsTheMembershipScan() {
+        TestProductSyncRepository repository = new() { LiveIds = [10, 11] };
+        TestElasticsearchIndexService index = new() { IndexedIds = [10, 11] };
+        TestSearchSyncStateStore state = new() {
+            Watermark = DateTime.UtcNow.AddMinutes(-1),
+            SourceFingerprint = repository.Fingerprint
+        };
+        ElasticsearchSyncService service = CreateSyncService(
+            repository,
+            state,
+            new TestSearchCacheInvalidator(),
+            new CollectingLogger<ElasticsearchSyncService>(),
+            maxRetries: 0,
+            index: index);
+
+        SyncResult result = await service.IncrementalSyncAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal(0, index.IdScanCalls);
+        Assert.Equal(0, repository.LiveIdCalls);
+    }
+
+    [Fact]
+    public async Task IncrementalSync_SourceDatabaseReplaced_RebuildsInsteadOfTrustingTheWatermark() {
+        TestProductSyncRepository repository = new() { Fingerprint = "2026-10-18|fork-b|38041649" };
+        TestSearchSyncStateStore state = new() {
+            Watermark = DateTime.UtcNow.AddMinutes(-1),
+            SourceFingerprint = "2026-05-19|fork-a|37669239"
+        };
+        ElasticsearchSyncService service = CreateSyncService(
+            repository,
+            state,
+            new TestSearchCacheInvalidator(),
+            new CollectingLogger<ElasticsearchSyncService>(),
+            maxRetries: 0);
+
+        SyncResult result = await service.IncrementalSyncAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal(1, repository.AllProductsCalls);
+        Assert.Equal(0, repository.ChangedCalls);
+        Assert.Equal("2026-10-18|fork-b|38041649", state.SourceFingerprint);
+        Assert.Equal(1, state.SetCalls);
+    }
+
+    [Fact]
+    public async Task IncrementalSync_FirstRunWithoutFingerprint_AdoptsItWithoutRebuilding() {
+        TestProductSyncRepository repository = new();
+        TestSearchSyncStateStore state = new() {
+            Watermark = DateTime.UtcNow.AddMinutes(-1)
+        };
+        ElasticsearchSyncService service = CreateSyncService(
+            repository,
+            state,
+            new TestSearchCacheInvalidator(),
+            new CollectingLogger<ElasticsearchSyncService>(),
+            maxRetries: 0);
+
+        SyncResult result = await service.IncrementalSyncAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal(0, repository.AllProductsCalls);
+        Assert.Equal(1, repository.ChangedCalls);
+        Assert.Equal(repository.Fingerprint, state.SourceFingerprint);
+    }
+
+    [Fact]
+    public async Task IncrementalSync_MissingAlias_RebuildsInsteadOfWritingIntoAnAutoCreatedIndex() {
+        TestProductSyncRepository repository = new();
+        TestSearchSyncStateStore state = new() {
+            Watermark = DateTime.UtcNow.AddMinutes(-1),
+            SourceFingerprint = repository.Fingerprint
+        };
+        ElasticsearchSyncService service = CreateSyncService(
+            repository,
+            state,
+            new TestSearchCacheInvalidator(),
+            new CollectingLogger<ElasticsearchSyncService>(),
+            maxRetries: 0,
+            index: new TestElasticsearchIndexService { AliasExists = false });
+
+        SyncResult result = await service.IncrementalSyncAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal(1, repository.AllProductsCalls);
+        Assert.Equal(0, repository.ChangedCalls);
+    }
+
+    [Fact]
+    public async Task IncrementalSync_TouchedButUnchangedRetailConfiguration_DoesNotReindexTheCatalog() {
+        TestProductSyncRepository repository = new() {
+            LiveIds = [10, 11, 12],
+            GetChangedProductIds = _ => Task.FromResult(new List<long> { 11 }),
+            GetProductsByIds = ids => Task.FromResult(ids.Select(CreateProduct).ToList())
+        };
+        TestSearchSyncStateStore state = new() {
+            Watermark = DateTime.UtcNow.AddMinutes(-1),
+            SourceFingerprint = repository.Fingerprint,
+            RetailSignature = repository.RetailSignature
+        };
+        ElasticsearchSyncService service = CreateSyncService(
+            repository,
+            state,
+            new TestSearchCacheInvalidator(),
+            new CollectingLogger<ElasticsearchSyncService>(),
+            maxRetries: 0);
+
+        SyncResult result = await service.IncrementalSyncAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal(1, result.DocumentsIndexed);
+        Assert.Equal(0, repository.LiveIdCalls);
+    }
+
+    [Fact]
+    public async Task IncrementalSync_ChangedRetailConfiguration_ReindexesEveryLiveProductOnce() {
+        TestProductSyncRepository repository = new() {
+            LiveIds = [10, 11, 12],
+            RetailSignature = "retail-b",
+            GetProductsByIds = ids => Task.FromResult(ids.Select(CreateProduct).ToList())
+        };
+        TestSearchSyncStateStore state = new() {
+            Watermark = DateTime.UtcNow.AddMinutes(-1),
+            SourceFingerprint = repository.Fingerprint,
+            RetailSignature = "retail-a"
+        };
+        ElasticsearchSyncService service = CreateSyncService(
+            repository,
+            state,
+            new TestSearchCacheInvalidator(),
+            new CollectingLogger<ElasticsearchSyncService>(),
+            maxRetries: 0);
+
+        SyncResult first = await service.IncrementalSyncAsync();
+        SyncResult second = await service.IncrementalSyncAsync();
+
+        Assert.Equal(3, first.DocumentsIndexed);
+        Assert.Equal(0, second.DocumentsIndexed);
+        Assert.Equal("retail-b", state.RetailSignature);
+        Assert.Equal(0, repository.AllProductsCalls);
+    }
+
+    [Fact]
+    public void RetailConfigurationSignature_HashesTheValuesTheProjectionUses() {
+        string sql = ProductSyncRepository.RetailConfigurationSignatureSql;
+
+        Assert.Contains("HASHBYTES('SHA2_256'", sql, StringComparison.Ordinal);
+        Assert.Contains("ORDER BY s.RetailPriority, s.ID, a.IsSelected DESC, ca.ID", sql, StringComparison.Ordinal);
+        Assert.Contains("CalculatedExtraCharge", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("Updated", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DiffProductIds_SeparatesOrphansFromMissingProducts() {
+        (List<long> orphans, List<long> missing) = ElasticsearchSyncService.DiffProductIds(
+            [37854037, 38215752, 37952324],
+            [38215752, 38336866]);
+
+        Assert.Equal([37854037, 37952324], orphans);
+        Assert.Equal([38336866], missing);
+    }
+
+    [Fact]
+    public void IndexActionLine_RequiresTheAliasOnlyForLiveWrites() {
+        string liveWrite = ElasticsearchSyncService.BuildIndexActionLine(7, "products", requireAlias: true);
+        string rebuildWrite = ElasticsearchSyncService.BuildIndexActionLine(7, "products_20261018030033714", requireAlias: false);
+
+        Assert.Contains("\"require_alias\":true", liveWrite);
+        Assert.DoesNotContain("require_alias", rebuildWrite);
+    }
+
+    [Fact]
+    public void IndexCleanup_KeepsStateIndexAliasTargetAndNewestVersions() {
+        string[] indices = [
+            "products_sync_state",
+            "products_20261018030033714",
+            "products_20261017030023940",
+            "products_20261016030011111",
+            "products_20260726030021316_2cbda34a83a34d25a82b2925dc17da8b",
+            "products_extra"
+        ];
+
+        IReadOnlyList<string> deleted = ElasticsearchIndexService.SelectIndicesToDelete(
+            "products",
+            indices,
+            new HashSet<string> { "products_20261016030011111" },
+            keep: 2);
+
+        Assert.Equal(["products_20260726030021316_2cbda34a83a34d25a82b2925dc17da8b"], deleted);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void IndexCleanup_NeverDeletesTheNewestIndexEvenWithALowKeepSetting(int keep) {
+        IReadOnlyList<string> deleted = ElasticsearchIndexService.SelectIndicesToDelete(
+            "products",
+            ["products_sync_state", "products_20261018030033714", "products_20261017030023940"],
+            new HashSet<string>(),
+            keep);
+
+        Assert.Equal(["products_20261017030023940"], deleted);
+    }
+
+    [Fact]
+    public void OriginalNumbers_AreDeduplicatedPerProduct() {
+        Dictionary<long, List<string>> numbers = new();
+
+        ProductSyncRepository.AppendOriginalNumber(numbers, 38215752, "5001842840");
+        ProductSyncRepository.AppendOriginalNumber(numbers, 38215752, "9700519532");
+        ProductSyncRepository.AppendOriginalNumber(numbers, 38215752, "9700519532");
+        ProductSyncRepository.AppendOriginalNumber(numbers, 38215752, " ");
+
+        Assert.Equal(["5001842840", "9700519532"], numbers[38215752]);
+    }
+
+    [Fact]
+    public void SourceFingerprint_DetectsRestoresAndRemintedCatalogs() {
+        Assert.Contains("recovery_fork_guid", ProductSyncRepository.SourceFingerprintSql, StringComparison.Ordinal);
+        Assert.Contains("create_date", ProductSyncRepository.SourceFingerprintSql, StringComparison.Ordinal);
+        Assert.Contains("MIN(ID) FROM Product", ProductSyncRepository.SourceFingerprintSql, StringComparison.Ordinal);
+        Assert.Contains("Deleted = 0", ProductSyncRepository.LiveProductCountSql, StringComparison.Ordinal);
+        Assert.Contains("Deleted = 0", ProductSyncRepository.LiveProductIdsSql, StringComparison.Ordinal);
+    }
+
     private static ElasticsearchSyncService CreateSyncService(
         TestProductSyncRepository repository,
         TestSearchSyncStateStore state,
         TestSearchCacheInvalidator cache,
         CollectingLogger<ElasticsearchSyncService> logger,
         int maxRetries,
-        SuccessfulElasticsearchHandler? handler = null) {
+        SuccessfulElasticsearchHandler? handler = null,
+        TestElasticsearchIndexService? index = null) {
         HttpClient http = new(handler ?? new SuccessfulElasticsearchHandler()) {
             BaseAddress = new Uri("http://elasticsearch/")
         };
@@ -495,7 +858,7 @@ public sealed class ElasticsearchSyncSafetyTests {
                 LagWarningSeconds = 60
             }),
             repository,
-            new TestElasticsearchIndexService(),
+            index ?? new TestElasticsearchIndexService { IndexedIds = repository.LiveIds },
             state,
             cache,
             logger);
@@ -534,12 +897,37 @@ public sealed class ElasticsearchSyncSafetyTests {
             _ => Task.FromResult(new List<ProductSyncData>());
 
         public int DeletedCalls { get; private set; }
+        public int AllProductsCalls { get; private set; }
+        public int ChangedCalls { get; private set; }
+        public int LiveIdCalls { get; private set; }
+        public List<long> LiveIds { get; set; } = [];
+        public string Fingerprint { get; set; } = "2026-05-19|fork-a|38041649";
 
-        public Task<List<ProductSyncData>> GetAllProductsAsync() =>
-            Task.FromResult(new List<ProductSyncData>());
+        public Task<List<ProductSyncData>> GetAllProductsAsync() {
+            AllProductsCalls++;
+            return Task.FromResult(new List<ProductSyncData>());
+        }
 
-        public Task<List<long>> GetChangedProductIdsAsync(DateTime since) =>
-            GetChangedProductIds(since);
+        public Task<List<long>> GetChangedProductIdsAsync(DateTime since) {
+            ChangedCalls++;
+            return GetChangedProductIds(since);
+        }
+
+        public Task<long> GetLiveProductCountAsync() =>
+            Task.FromResult((long)LiveIds.Count);
+
+        public Task<List<long>> GetLiveProductIdsAsync() {
+            LiveIdCalls++;
+            return Task.FromResult(LiveIds.ToList());
+        }
+
+        public string RetailSignature { get; set; } = "retail-a";
+
+        public Task<string> GetSourceFingerprintAsync() =>
+            Task.FromResult(Fingerprint);
+
+        public Task<string> GetRetailConfigurationSignatureAsync() =>
+            Task.FromResult(RetailSignature);
 
         public Task<List<ProductSyncData>> GetProductsByIdsAsync(
             IReadOnlyCollection<long> ids) =>
@@ -557,7 +945,36 @@ public sealed class ElasticsearchSyncSafetyTests {
 
     private sealed class TestSearchSyncStateStore : ISearchSyncStateStore {
         public DateTime Watermark { get; set; }
+        public Dictionary<string, string> Markers { get; } = new();
         public int SetCalls { get; private set; }
+
+        public string? SourceFingerprint {
+            get => Markers.GetValueOrDefault(SearchSyncMarkers.SourceDatabase);
+            set {
+                if (value is null) Markers.Remove(SearchSyncMarkers.SourceDatabase);
+                else Markers[SearchSyncMarkers.SourceDatabase] = value;
+            }
+        }
+
+        public string? RetailSignature {
+            get => Markers.GetValueOrDefault(SearchSyncMarkers.RetailConfiguration);
+            set {
+                if (value is null) Markers.Remove(SearchSyncMarkers.RetailConfiguration);
+                else Markers[SearchSyncMarkers.RetailConfiguration] = value;
+            }
+        }
+
+        public Task<string?> GetMarkerAsync(string name, CancellationToken ct = default) =>
+            Task.FromResult(Markers.GetValueOrDefault(name));
+
+        public Task SetMarkerAsync(
+            string name,
+            string value,
+            CancellationToken ct = default) {
+            ct.ThrowIfCancellationRequested();
+            Markers[name] = value;
+            return Task.CompletedTask;
+        }
 
         public Task<DateTime> GetWatermarkAsync(CancellationToken ct = default) =>
             Task.FromResult(Watermark);
@@ -594,6 +1011,27 @@ public sealed class ElasticsearchSyncSafetyTests {
         : IElasticsearchIndexService {
         public bool Healthy { get; set; } = true;
         public bool IndexExists { get; set; } = true;
+        public bool AliasExists { get; set; } = true;
+        public string? SchemaVersion { get; set; } = ElasticsearchIndexService.IndexSchemaVersion;
+        public bool CreateSucceeds { get; set; } = true;
+        public bool SwapSucceeds { get; set; } = true;
+        public int CreateCalls { get; private set; }
+
+        public Task<string?> GetIndexSchemaVersionAsync(CancellationToken ct = default) =>
+            Task.FromResult(SchemaVersion);
+        public List<long> IndexedIds { get; set; } = [];
+        public int IdScanCalls { get; private set; }
+
+        Task<bool> IElasticsearchIndexService.AliasExistsAsync(CancellationToken ct) =>
+            Task.FromResult(AliasExists);
+
+        public Task<long> CountDocumentsAsync(CancellationToken ct = default) =>
+            Task.FromResult((long)IndexedIds.Count);
+
+        public Task<List<long>> GetIndexedProductIdsAsync(CancellationToken ct = default) {
+            IdScanCalls++;
+            return Task.FromResult(IndexedIds.ToList());
+        }
 
         public Task<bool> CreateIndexAsync(CancellationToken ct = default) =>
             Task.FromResult(true);
@@ -610,13 +1048,15 @@ public sealed class ElasticsearchSyncSafetyTests {
         }
 
         public Task<string?> CreateVersionedIndexAsync(
-            CancellationToken ct = default) =>
-            Task.FromResult<string?>("products_test");
+            CancellationToken ct = default) {
+            CreateCalls++;
+            return Task.FromResult<string?>(CreateSucceeds ? "products_test" : null);
+        }
 
         public Task<bool> SwapAliasAsync(
             string targetIndex,
             CancellationToken ct = default) =>
-            Task.FromResult(true);
+            Task.FromResult(SwapSucceeds);
 
         public Task<int> CleanupOldVersionedIndicesAsync(
             int keep,
@@ -627,16 +1067,20 @@ public sealed class ElasticsearchSyncSafetyTests {
     private sealed class SuccessfulElasticsearchHandler : HttpMessageHandler {
         public int TimeoutResponsesRemaining { get; set; }
         public int BulkCalls { get; private set; }
+        public List<string> BulkBodies { get; } = [];
+        public List<string> Requests { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken) {
             cancellationToken.ThrowIfCancellationRequested();
+            Requests.Add($"{request.Method} {request.RequestUri?.AbsolutePath}");
             bool isBulk = request.RequestUri?.AbsolutePath.EndsWith(
                 "/_bulk",
                 StringComparison.Ordinal) == true;
             if (isBulk) {
                 BulkCalls++;
+                BulkBodies.Add(request.Content!.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult());
                 if (TimeoutResponsesRemaining > 0) {
                     TimeoutResponsesRemaining--;
                     throw new TaskCanceledException(

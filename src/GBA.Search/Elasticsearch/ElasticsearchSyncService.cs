@@ -41,6 +41,8 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
 
     // Process-wide single-flight: never let a rebuild and an incremental run overlap.
     private static readonly SemaphoreSlim _gate = new(1, 1);
+    private static readonly TimeSpan ForcedRebuildRetryDelay = TimeSpan.FromMinutes(30);
+    private static long _forcedRebuildRetryAfterTicks;
 
     private static readonly JsonSerializerOptions JsonOptions = new() {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -153,8 +155,12 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         Stopwatch sw = Stopwatch.StartNew();
 
         await _gate.WaitAsync(ct);
+        SearchSyncActivity.MarkStarted(DateTime.UtcNow);
         try {
             _log.LogInformation("Starting Elasticsearch full rebuild (alias-swap)");
+
+            string sourceFingerprint = await _repository.GetSourceFingerprintAsync();
+            string retailSignature = await _repository.GetRetailConfigurationSignatureAsync();
 
             // Build into a brand-new index; the live alias keeps serving the current one
             // until we atomically swap at the end -> zero search downtime during rebuild.
@@ -163,54 +169,63 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
                 return SyncResult.Failed("Failed to create index");
             }
 
-            // Fetch all products
-            List<ProductSyncData> products = await _repository.GetAllProductsAsync();
-            _log.LogInformation("Fetched {Count} products from SQL", products.Count);
-
-            List<long> productIds = products.Select(p => p.Id).ToList();
-            Dictionary<long, List<string>> originalNumbers = await _repository.GetOriginalNumbersForProductsAsync(productIds);
-            _log.LogInformation("Fetched original numbers for {Count} products", originalNumbers.Count);
-
-            // Index in batches into the new index
             int totalIndexed = 0;
-            List<ProductDocument> batch = new List<ProductDocument>(_syncSettings.BatchSize);
+            bool swapped = false;
+            try {
+                // Fetch all products
+                List<ProductSyncData> products = await _repository.GetAllProductsAsync();
+                _log.LogInformation("Fetched {Count} products from SQL", products.Count);
 
-            foreach (ProductSyncData product in products) {
-                ProductDocument doc = CreateDocument(product, originalNumbers.GetValueOrDefault(product.Id));
-                batch.Add(doc);
+                List<long> productIds = products.Select(p => p.Id).ToList();
+                Dictionary<long, List<string>> originalNumbers = await _repository.GetOriginalNumbersForProductsAsync(productIds);
+                _log.LogInformation("Fetched original numbers for {Count} products", originalNumbers.Count);
 
-                if (batch.Count >= _syncSettings.BatchSize) {
-                    totalIndexed += await BulkIndexAsync(batch, ct, newIndex);
-                    batch.Clear();
-                    _log.LogDebug("Indexed batch, total: {Total}", totalIndexed);
+                // Index in batches into the new index
+                List<ProductDocument> batch = new List<ProductDocument>(_syncSettings.BatchSize);
+
+                foreach (ProductSyncData product in products) {
+                    ProductDocument doc = CreateDocument(product, originalNumbers.GetValueOrDefault(product.Id));
+                    batch.Add(doc);
+
+                    if (batch.Count >= _syncSettings.BatchSize) {
+                        totalIndexed += await BulkIndexAsync(batch, ct, newIndex);
+                        batch.Clear();
+                        _log.LogDebug("Indexed batch, total: {Total}", totalIndexed);
+                    }
                 }
-            }
 
-            if (batch.Count > 0) {
-                totalIndexed += await BulkIndexAsync(batch, ct, newIndex);
-            }
+                if (batch.Count > 0) {
+                    totalIndexed += await BulkIndexAsync(batch, ct, newIndex);
+                }
 
-            // Re-enable normal near-real-time refreshes before exposing the new index.
-            // Versioned rebuild indices are created with refresh_interval=-1 for fast bulk loading.
-            StringContent refreshSettings = new(
-                """{"index":{"refresh_interval":"1s"}}""",
-                Encoding.UTF8,
-                "application/json");
-            HttpResponseMessage refreshSettingsResponse =
-                await _http.PutAsync($"{newIndex}/_settings", refreshSettings, ct);
-            string refreshSettingsBody = await refreshSettingsResponse.Content.ReadAsStringAsync(ct);
-            EnsureSuccessfulHttpResponse(
-                refreshSettingsResponse,
-                "refresh interval restore",
-                refreshSettingsBody);
+                // Re-enable normal near-real-time refreshes before exposing the new index.
+                // Versioned rebuild indices are created with refresh_interval=-1 for fast bulk loading.
+                StringContent refreshSettings = new(
+                    """{"index":{"refresh_interval":"1s"}}""",
+                    Encoding.UTF8,
+                    "application/json");
+                HttpResponseMessage refreshSettingsResponse =
+                    await _http.PutAsync($"{newIndex}/_settings", refreshSettings, ct);
+                string refreshSettingsBody = await refreshSettingsResponse.Content.ReadAsStringAsync(ct);
+                EnsureSuccessfulHttpResponse(
+                    refreshSettingsResponse,
+                    "refresh interval restore",
+                    refreshSettingsBody);
 
-            // Make the new index searchable, then atomically swap the alias and prune old indices.
-            HttpResponseMessage refreshResponse = await _http.PostAsync($"{newIndex}/_refresh", null, ct);
-            string refreshBody = await refreshResponse.Content.ReadAsStringAsync(ct);
-            EnsureSuccessfulHttpResponse(refreshResponse, "index refresh", refreshBody);
+                // Make the new index searchable, then atomically swap the alias and prune old indices.
+                HttpResponseMessage refreshResponse = await _http.PostAsync($"{newIndex}/_refresh", null, ct);
+                string refreshBody = await refreshResponse.Content.ReadAsStringAsync(ct);
+                EnsureSuccessfulHttpResponse(refreshResponse, "index refresh", refreshBody);
 
-            if (!await _indexService.SwapAliasAsync(newIndex, ct)) {
-                return SyncResult.Failed("Failed to swap alias to new index");
+                if (!await _indexService.SwapAliasAsync(newIndex, ct)) {
+                    return SyncResult.Failed("Failed to swap alias to new index");
+                }
+
+                swapped = true;
+            } finally {
+                if (!swapped) {
+                    await DeleteAbandonedIndexAsync(newIndex);
+                }
             }
 
             if (_syncSettings.CleanupOldCollections) {
@@ -220,6 +235,8 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             sw.Stop();
 
             await _cacheInvalidator.InvalidateProductsAsync(ct);
+            await _state.SetMarkerAsync(SearchSyncMarkers.SourceDatabase, sourceFingerprint, ct);
+            await _state.SetMarkerAsync(SearchSyncMarkers.RetailConfiguration, retailSignature, ct);
             await _state.SetWatermarkAsync(runStart, ct);
 
             _log.LogInformation(
@@ -233,9 +250,43 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
                 ElapsedMs = sw.ElapsedMilliseconds
             };
         } finally {
+            SearchSyncActivity.MarkFinished();
             _gate.Release();
         }
     }
+
+    private async Task DeleteAbandonedIndexAsync(string index) {
+        try {
+            HttpResponseMessage response = await _http.DeleteAsync(index, CancellationToken.None);
+            if (response.IsSuccessStatusCode) {
+                _log.LogWarning("Deleted abandoned rebuild index {Index}", index);
+            }
+        } catch (Exception exception) {
+            _log.LogWarning(exception, "Could not delete abandoned rebuild index {Index}", index);
+        }
+    }
+
+    private async Task<SyncResult?> TryForcedFullRebuildAsync(string reason, CancellationToken ct) {
+        DateTime now = DateTime.UtcNow;
+        if (now < new DateTime(Interlocked.Read(ref _forcedRebuildRetryAfterTicks), DateTimeKind.Utc)) {
+            return null;
+        }
+
+        _log.LogWarning("{Reason} - performing full rebuild", reason);
+        try {
+            SyncResult result = await FullRebuildAttemptAsync(ct);
+            Interlocked.Exchange(
+                ref _forcedRebuildRetryAfterTicks,
+                result.Success ? 0 : now.Add(ForcedRebuildRetryDelay).Ticks);
+            return result;
+        } catch (Exception) when (!ct.IsCancellationRequested) {
+            Interlocked.Exchange(ref _forcedRebuildRetryAfterTicks, now.Add(ForcedRebuildRetryDelay).Ticks);
+            throw;
+        }
+    }
+
+    internal static void ResetForcedRebuildBackoff() =>
+        Interlocked.Exchange(ref _forcedRebuildRetryAfterTicks, 0);
 
     public Task<SyncResult> IncrementalSyncAsync(CancellationToken ct = default) =>
         ExecuteWithTimeoutRetriesAsync(
@@ -253,35 +304,78 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             return await FullRebuildAttemptAsync(ct);
         }
 
+        if (!await _indexService.AliasExistsAsync(ct)) {
+            return await TryForcedFullRebuildAsync(
+                       $"Search alias {_settings.IndexName} is missing",
+                       ct)
+                   ?? SyncResult.Failed($"Search alias {_settings.IndexName} is missing; full rebuild is backing off");
+        }
+
+        string? indexedSchemaVersion = await _indexService.GetIndexSchemaVersionAsync(ct);
+        if (!string.Equals(indexedSchemaVersion, ElasticsearchIndexService.IndexSchemaVersion, StringComparison.Ordinal)
+            && await TryForcedFullRebuildAsync(
+                $"Search index schema {indexedSchemaVersion ?? "(none)"} differs from {ElasticsearchIndexService.IndexSchemaVersion}",
+                ct) is { } schemaRebuild) {
+            return schemaRebuild;
+        }
+
+        string sourceFingerprint = await _repository.GetSourceFingerprintAsync();
+        string? indexedFingerprint = await _state.GetMarkerAsync(SearchSyncMarkers.SourceDatabase, ct);
+        if (indexedFingerprint is not null
+            && !string.Equals(indexedFingerprint, sourceFingerprint, StringComparison.Ordinal)
+            && await TryForcedFullRebuildAsync(
+                $"Source database identity changed ({indexedFingerprint} -> {sourceFingerprint}); the watermark cannot be trusted",
+                ct) is { } sourceRebuild) {
+            return sourceRebuild;
+        }
+
+        if (indexedFingerprint is null) {
+            await _state.SetMarkerAsync(SearchSyncMarkers.SourceDatabase, sourceFingerprint, ct);
+        }
+
         await _gate.WaitAsync(ct);
+        SearchSyncActivity.MarkStarted(DateTime.UtcNow);
         Stopwatch sw = Stopwatch.StartNew();
         try {
             DateTime since = watermark.AddSeconds(-WatermarkOverlapSeconds);
 
             // Lightweight change detection (ids only), then reuse the fast by-ids reindex
             // path — avoids the heavy "all fields for all changed products" projection.
-            List<long> changedIds = await _repository.GetChangedProductIdsAsync(since);
-            List<long> deletedIds = await _repository.GetDeletedProductIdsAsync(since);
-
-            if (changedIds.Count == 0 && deletedIds.Count == 0) {
-                await _state.SetWatermarkAsync(runStart, ct);
-                return new SyncResult { Success = true, ElapsedMs = sw.ElapsedMilliseconds };
+            string retailSignature = await _repository.GetRetailConfigurationSignatureAsync();
+            string? indexedRetailSignature = await _state.GetMarkerAsync(SearchSyncMarkers.RetailConfiguration, ct);
+            bool retailConfigurationChanged = indexedRetailSignature is not null
+                                              && !string.Equals(indexedRetailSignature, retailSignature, StringComparison.Ordinal);
+            if (retailConfigurationChanged) {
+                _log.LogInformation("Retail pricing/storage configuration changed - reindexing every product");
             }
+
+            List<long> changedIds = retailConfigurationChanged
+                ? await _repository.GetLiveProductIdsAsync()
+                : await _repository.GetChangedProductIdsAsync(since);
+            List<long> deletedIds = await _repository.GetDeletedProductIdsAsync(since);
 
             HashSet<long> ids = new(changedIds);
             ids.UnionWith(deletedIds);
 
             (int indexed, int deleted) = await IndexByIdsAsync(ids, ct);
+            (int reconciledIndexed, int reconciledDeleted) = await ReconcileIndexedProductsAsync(ct);
+            indexed += reconciledIndexed;
+            deleted += reconciledDeleted;
 
             sw.Stop();
             if (indexed > 0 || deleted > 0) {
                 await _cacheInvalidator.InvalidateProductsAsync(ct);
             }
+            if (!string.Equals(indexedRetailSignature, retailSignature, StringComparison.Ordinal)) {
+                await _state.SetMarkerAsync(SearchSyncMarkers.RetailConfiguration, retailSignature, ct);
+            }
             await _state.SetWatermarkAsync(runStart, ct);
 
-            _log.LogInformation(
-                "Elasticsearch incremental sync: {Indexed} indexed, {Deleted} deleted in {ElapsedMs}ms",
-                indexed, deleted, sw.ElapsedMilliseconds);
+            if (indexed > 0 || deleted > 0) {
+                _log.LogInformation(
+                    "Elasticsearch incremental sync: {Indexed} indexed, {Deleted} deleted in {ElapsedMs}ms",
+                    indexed, deleted, sw.ElapsedMilliseconds);
+            }
 
             return new SyncResult {
                 Success = true,
@@ -290,8 +384,55 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
                 ElapsedMs = sw.ElapsedMilliseconds
             };
         } finally {
+            SearchSyncActivity.MarkFinished();
             _gate.Release();
         }
+    }
+
+    private async Task<(int indexed, int deleted)> ReconcileIndexedProductsAsync(CancellationToken ct) {
+        long indexedCount = await _indexService.CountDocumentsAsync(ct);
+        long liveCount = await _repository.GetLiveProductCountAsync();
+        if (indexedCount == liveCount) return (0, 0);
+
+        List<long> indexedIds = await _indexService.GetIndexedProductIdsAsync(ct);
+        List<long> liveIds = await _repository.GetLiveProductIdsAsync();
+        (List<long> orphanIds, List<long> missingIds) = DiffProductIds(indexedIds, liveIds);
+
+        _log.LogWarning(
+            "Search index membership drift: {IndexedCount} documents vs {LiveCount} live products; removing {Orphans} orphaned and indexing {Missing} missing documents",
+            indexedCount,
+            liveCount,
+            orphanIds.Count,
+            missingIds.Count);
+
+        int deleted = 0;
+        foreach (long[] batch in PartitionBulkItems(orphanIds, _syncSettings.BatchSize)) {
+            deleted += await BulkDeleteAsync(batch, ct);
+        }
+
+        (int indexed, int vanished) = await IndexByIdsAsync(missingIds, ct);
+        if (deleted > 0 && missingIds.Count == 0) {
+            await RefreshAliasAsync(ct);
+        }
+
+        return (indexed, deleted + vanished);
+    }
+
+    internal static (List<long> OrphanIds, List<long> MissingIds) DiffProductIds(
+        IReadOnlyCollection<long> indexedIds,
+        IReadOnlyCollection<long> liveIds) {
+        HashSet<long> live = liveIds.ToHashSet();
+        HashSet<long> indexed = indexedIds.ToHashSet();
+        List<long> orphans = indexed.Where(id => !live.Contains(id)).Order().ToList();
+        List<long> missing = live.Where(id => !indexed.Contains(id)).Order().ToList();
+        return (orphans, missing);
+    }
+
+    private async Task RefreshAliasAsync(CancellationToken ct) {
+        HttpResponseMessage refreshResponse =
+            await _http.PostAsync($"{_settings.IndexName}/_refresh", null, ct);
+        string refreshBody = await refreshResponse.Content.ReadAsStringAsync(ct);
+        EnsureSuccessfulHttpResponse(refreshResponse, "index refresh", refreshBody);
     }
 
     private async Task<SyncResult> ExecuteWithTimeoutRetriesAsync(
@@ -413,10 +554,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             deleted += await BulkDeleteAsync(batch, ct);
         }
 
-        HttpResponseMessage refreshResponse =
-            await _http.PostAsync($"{_settings.IndexName}/_refresh", null, ct);
-        string refreshBody = await refreshResponse.Content.ReadAsStringAsync(ct);
-        EnsureSuccessfulHttpResponse(refreshResponse, "index refresh", refreshBody);
+        await RefreshAliasAsync(ct);
         return (indexed, deleted);
     }
 
@@ -426,10 +564,9 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         string? targetIndex = null) {
         if (documents.Count == 0) return 0;
 
-        string index = targetIndex ?? _settings.IndexName;
         StringBuilder sb = new StringBuilder();
         foreach (ProductDocument doc in documents) {
-            sb.AppendLine(JsonSerializer.Serialize(new { index = new { _index = index, _id = doc.Id } }, JsonOptions));
+            sb.AppendLine(BuildIndexActionLine(doc.Id, targetIndex ?? _settings.IndexName, targetIndex == null));
             sb.AppendLine(JsonSerializer.Serialize(doc, JsonOptions));
         }
 
@@ -438,6 +575,13 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         string responseBody = await response.Content.ReadAsStringAsync(ct);
         EnsureSuccessfulHttpResponse(response, "bulk index", responseBody);
         return ValidateBulkResponse(responseBody, "index", documents.Count);
+    }
+
+    internal static string BuildIndexActionLine(long id, string index, bool requireAlias) {
+        object action = requireAlias
+            ? new { index = new { _index = index, _id = id, require_alias = true } }
+            : new { index = new { _index = index, _id = id } };
+        return JsonSerializer.Serialize(action, JsonOptions);
     }
 
     private async Task<int> BulkDeleteAsync(IReadOnlyCollection<long> ids, CancellationToken ct) {

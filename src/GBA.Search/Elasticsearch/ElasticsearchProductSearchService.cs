@@ -25,6 +25,9 @@ public interface IElasticsearchProductSearchService : IProductSearchService {
 public sealed class ElasticsearchProductSearchService : IElasticsearchProductSearchService {
     private const int MaxSearchTerms = 16;
     private const int MaxNgramSearchTermLength = 15;
+    private const int MinNgramSearchTermLength = 3;
+    private const int MaxCompactCodeTerms = 6;
+    private const int MinFuzzyLetters = 4;
 
     private readonly HttpClient _http;
     private readonly ElasticsearchSettings _settings;
@@ -36,6 +39,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
     };
 
     private static readonly Regex SpecialCharsRegex = new(@"[+\-=&|><!(){}\[\]^""~*?:\\/]", RegexOptions.Compiled);
+    private static readonly Regex FuzzyWordRegex = new(@"[\p{L}\p{Nd}]+", RegexOptions.Compiled);
     private static readonly Regex DimensionSeparatorRegex = new(
         @"\d\s*[xх×]\s*\d",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -73,12 +77,20 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
 
         object esQuery = BuildSearchQuery(query, locale, limit, offset);
         SearchResult result = await ExecuteSearchAsync(esQuery, ct);
+        bool isFallback = false;
+        if (result.Total == 0 && BuildFuzzyFallbackQuery(query, limit, offset) is { } fuzzyQuery) {
+            SearchResult fuzzy = await ExecuteSearchAsync(fuzzyQuery, ct);
+            if (fuzzy.Total > 0) {
+                result = fuzzy with { TookMs = result.TookMs + fuzzy.TookMs };
+                isFallback = true;
+            }
+        }
 
         return new ProductSearchResult {
             ProductIds = result.Ids,
             TotalCount = result.Total,
             SearchTimeMs = result.TookMs,
-            IsFallback = false
+            IsFallback = isFallback
         };
     }
 
@@ -90,12 +102,20 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
 
         object esQuery = BuildSearchQuery(query, locale, limit, offset);
         SearchResultWithDocs result = await ExecuteSearchWithDocsAsync(esQuery, ct);
+        bool isFallback = false;
+        if (result.Total == 0 && BuildFuzzyFallbackQuery(query, limit, offset) is { } fuzzyQuery) {
+            SearchResultWithDocs fuzzy = await ExecuteSearchWithDocsAsync(fuzzyQuery, ct);
+            if (fuzzy.Total > 0) {
+                result = fuzzy with { TookMs = result.TookMs + fuzzy.TookMs };
+                isFallback = true;
+            }
+        }
 
         return new ProductSearchResultWithDocs {
             Documents = result.Documents,
             TotalCount = result.Total,
             SearchTimeMs = result.TookMs,
-            IsFallback = false
+            IsFallback = isFallback
         };
     }
 
@@ -158,11 +178,38 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         if (terms.Length == 0)
             return BuildMatchAllQuery(limit, offset);
 
+        string compactCode = NumberNormalizer.FoldLookalikes(string.Concat(terms));
+        bool[] requiredTerms = terms
+            .Select((term, i) => IsNgramSearchable(term)
+                                 || IsDimensionSearchTerm(i < originalTerms.Length ? originalTerms[i] : term))
+            .ToArray();
+        bool hasRequiredTerm = requiredTerms.Any(required => required);
+        bool useCompactCode = terms.Length is > 1 and <= MaxCompactCodeTerms
+                              && compactCode.Length >= MinNgramSearchTermLength;
+
         // Build must clauses - each term must match somewhere (AND logic between terms)
         List<object> mustClauses = new List<object>();
         for (int i = 0; i < terms.Length; i++) {
             string originalTerm = i < originalTerms.Length ? originalTerms[i] : terms[i];
-            mustClauses.Add(BuildTermMatchQuery(terms[i], locale, originalTerm));
+            if (requiredTerms[i]) {
+                mustClauses.Add(BuildTermMatchQuery(terms[i], locale, originalTerm));
+            } else if (!hasRequiredTerm) {
+                mustClauses.Add(BuildShortTermMatchQuery(terms[i], originalTerm));
+            }
+        }
+
+        if (useCompactCode) {
+            mustClauses = [
+                new {
+                    @bool = new {
+                        should = new object[] {
+                            new { @bool = new { must = mustClauses } },
+                            BuildCompactCodeMatchQuery(compactCode)
+                        },
+                        minimum_should_match = 1
+                    }
+                }
+            ];
         }
 
         // Build scoring functions to match SQL V1 ranking:
@@ -189,7 +236,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         // Lower weight for dimension queries - we don't want "d=45" to boost products with "D45" as their main number
         int mainOriginalNumberWeight = isDimensionQuery ? 5000 : 100000;
         functions.Add(new {
-            filter = new { term = new Dictionary<string, object> { ["mainOriginalNumberClean"] = normalizedLower } },
+            filter = BuildExactMatchQuery("mainOriginalNumberClean", compactCode),
             weight = mainOriginalNumberWeight
         });
 
@@ -202,16 +249,34 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
         // 3. Exact match on SearchNameUA (for Cyrillic queries)
         if (hasCyrillicTerms) {
             functions.Add(new {
-                filter = new { term = new Dictionary<string, object> { ["searchNameUA"] = normalizedLower.Replace(" ", "") } },
+                filter = BuildExactMatchQuery("searchNameUA", normalizedLower.Replace(" ", "")),
                 weight = 40000
             });
         }
 
         // 3b. Exact match on VendorCode
         functions.Add(new {
-            filter = new { term = new Dictionary<string, object> { ["vendorCodeClean"] = normalizedLower } },
+            filter = BuildExactMatchQuery("vendorCodeClean", compactCode),
             weight = 40000
         });
+
+        if (useCompactCode) {
+            functions.Add(new {
+                filter = BuildNgramMatchQuery("vendorCodeClean.ngram", compactCode),
+                weight = 5000
+            });
+            functions.Add(new {
+                filter = new {
+                    @bool = new {
+                        should = new object[] {
+                            BuildNgramMatchQuery("mainOriginalNumberClean.ngram", compactCode),
+                            BuildNgramMatchQuery("originalNumbersClean.ngram", compactCode)
+                        }
+                    }
+                },
+                weight = 3000
+            });
+        }
 
         (string primarySearchName, string secondarySearchName) = locale == "uk"
             ? ("searchNameUA", "searchName")
@@ -225,11 +290,12 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             string term = terms[i];
             string originalTerm = i < originalTerms.Length ? originalTerms[i] : term;
             string termLower = term.ToLowerInvariant();
+            bool isNgramTerm = IsNgramSearchable(termLower);
             bool isCyrillic = term.Any(c =>
                 (c >= 'а' && c <= 'я') || (c >= 'А' && c <= 'Я') ||
                 c == 'і' || c == 'ї' || c == 'є' || c == 'ґ' ||
                 c == 'І' || c == 'Ї' || c == 'Є' || c == 'Ґ');
-            if (isCyrillic) {
+            if (isNgramTerm && isCyrillic) {
                 functions.Add(new {
                     filter = BuildNgramMatchQuery($"{primarySearchName}.ngram", termLower),
                     weight = 3000
@@ -246,7 +312,7 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
                     filter = BuildNgramMatchQuery($"{secondaryDesc}.ngram", termLower),
                     weight = 400
                 });
-            } else {
+            } else if (isNgramTerm) {
                 functions.Add(new {
                     filter = BuildNgramMatchQuery("vendorCodeClean.ngram", termLower),
                     weight = 5000
@@ -374,6 +440,105 @@ public sealed class ElasticsearchProductSearchService : IElasticsearchProductSea
             @bool = new {
                 should = shouldClauses,
                 minimum_should_match = 1
+            }
+        };
+    }
+
+    private static bool IsNgramSearchable(string term) => term.Length >= MinNgramSearchTermLength;
+
+    private static object BuildExactMatchQuery(string field, string value) {
+        return new {
+            match = new Dictionary<string, object> {
+                [field] = new {
+                    query = value,
+                    analyzer = "lowercase_analyzer"
+                }
+            }
+        };
+    }
+
+    private static object BuildCompactCodeMatchQuery(string compactCode) {
+        return new {
+            @bool = new {
+                should = new object[] {
+                    BuildNgramMatchQuery("vendorCodeClean.ngram", compactCode),
+                    BuildNgramMatchQuery("mainOriginalNumberClean.ngram", compactCode),
+                    BuildNgramMatchQuery("originalNumbersClean.ngram", compactCode)
+                },
+                minimum_should_match = 1
+            }
+        };
+    }
+
+    private static object BuildShortTermMatchQuery(string term, string originalTerm) {
+        string codePrefix = NumberNormalizer.FoldLookalikes(term);
+        string wordPrefix = new string(originalTerm.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
+        List<object> shouldClauses = [
+            new { prefix = new Dictionary<string, object> { ["vendorCodeClean"] = codePrefix } },
+            new { prefix = new Dictionary<string, object> { ["mainOriginalNumberClean"] = codePrefix } },
+            new { prefix = new Dictionary<string, object> { ["originalNumbersClean"] = codePrefix } }
+        ];
+        if (wordPrefix.Length > 0) {
+            shouldClauses.Add(new { prefix = new Dictionary<string, object> { ["nameUA"] = wordPrefix } });
+            shouldClauses.Add(new { prefix = new Dictionary<string, object> { ["name"] = wordPrefix } });
+        }
+
+        return new {
+            @bool = new {
+                should = shouldClauses,
+                minimum_should_match = 1
+            }
+        };
+    }
+
+    internal static object? BuildFuzzyFallbackQuery(string query, int limit, int offset) {
+        string[] words = FuzzyWordRegex.Matches(query ?? string.Empty)
+            .Select(match => match.Value.ToLowerInvariant())
+            .Take(MaxSearchTerms)
+            .ToArray();
+        if (words.Length == 0 || words.Sum(word => word.Count(char.IsLetter)) < MinFuzzyLetters) {
+            return null;
+        }
+
+        return new {
+            from = offset,
+            size = limit,
+            _source = SourceFields,
+            query = new {
+                function_score = new {
+                    query = new {
+                        @bool = new {
+                            must = new object[] {
+                                new {
+                                    multi_match = new {
+                                        query = string.Join(' ', words),
+                                        fields = new[] { "nameUA", "name" },
+                                        fuzziness = "AUTO",
+                                        prefix_length = 1,
+                                        max_expansions = 50,
+                                        @operator = "and"
+                                    }
+                                }
+                            },
+                            filter = new[] {
+                                new { term = new { isForWeb = true } }
+                            }
+                        }
+                    },
+                    functions = new object[] {
+                        new {
+                            filter = new { term = new { available = true } },
+                            weight = 10
+                        }
+                    },
+                    score_mode = "sum",
+                    boost_mode = "sum"
+                }
+            },
+            sort = new object[] {
+                "_score",
+                new Dictionary<string, object> { ["nameUA.keyword"] = new { order = "asc" } },
+                new { id = new { order = "asc" } }
             }
         };
     }

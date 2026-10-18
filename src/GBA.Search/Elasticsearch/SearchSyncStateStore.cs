@@ -19,6 +19,13 @@ namespace GBA.Search.Elasticsearch;
 public interface ISearchSyncStateStore {
     Task<DateTime> GetWatermarkAsync(CancellationToken ct = default);
     Task SetWatermarkAsync(DateTime watermarkUtc, CancellationToken ct = default);
+    Task<string?> GetMarkerAsync(string name, CancellationToken ct = default);
+    Task SetMarkerAsync(string name, string value, CancellationToken ct = default);
+}
+
+public static class SearchSyncMarkers {
+    public const string SourceDatabase = "source-database";
+    public const string RetailConfiguration = "retail-configuration";
 }
 
 public sealed class SearchSyncStateStore : ISearchSyncStateStore {
@@ -67,4 +74,34 @@ public sealed class SearchSyncStateStore : ISearchSyncStateStore {
             "sync watermark write",
             responseBody);
     }
+
+    public async Task<string?> GetMarkerAsync(string name, CancellationToken ct = default) {
+        HttpResponseMessage response = await _http.GetAsync($"{_stateIndex}/_doc/{MarkerDocId(name)}", ct);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+
+        string responseBody = await response.Content.ReadAsStringAsync(ct);
+        ElasticsearchSyncService.EnsureSuccessfulHttpResponse(
+            response,
+            "sync marker read",
+            responseBody);
+
+        using JsonDocument doc = JsonDocument.Parse(responseBody);
+        return doc.RootElement.TryGetProperty("_source", out JsonElement source)
+               && source.TryGetProperty("value", out JsonElement value)
+               && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+    }
+
+    public async Task SetMarkerAsync(string name, string value, CancellationToken ct = default) {
+        var body = new { value, recordedAt = DateTime.UtcNow };
+        HttpResponseMessage response = await _http.PutAsJsonAsync($"{_stateIndex}/_doc/{MarkerDocId(name)}", body, ct);
+        string responseBody = await response.Content.ReadAsStringAsync(ct);
+        ElasticsearchSyncService.EnsureSuccessfulHttpResponse(
+            response,
+            "sync marker write",
+            responseBody);
+    }
+
+    private static string MarkerDocId(string name) => $"marker-{name}";
 }

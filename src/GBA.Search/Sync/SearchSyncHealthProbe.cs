@@ -29,6 +29,22 @@ public sealed class SearchSyncHealthProbe(
     ISearchSyncStateStore syncStateStore,
     IOptions<SyncSettings> syncSettings,
     ILogger<SearchSyncHealthProbe> logger) {
+    private static readonly TimeSpan MaxCoveredSyncDuration = TimeSpan.FromMinutes(30);
+
+    internal static bool IsCoveredByRunningSync(
+        DateTime watermarkUtc,
+        DateTime? runningSinceUtc,
+        DateTime nowUtc,
+        int lagLimitSeconds) {
+        if (!runningSinceUtc.HasValue) return false;
+
+        TimeSpan runningFor = nowUtc - runningSinceUtc.Value;
+        double watermarkAgeAtStart = (runningSinceUtc.Value - watermarkUtc).TotalSeconds;
+        return runningFor >= TimeSpan.Zero
+               && runningFor <= MaxCoveredSyncDuration
+               && watermarkAgeAtStart <= lagLimitSeconds;
+    }
+
     /// <summary>
     /// Reads the cluster state and persisted watermark without changing either one.
     /// </summary>
@@ -51,7 +67,8 @@ public sealed class SearchSyncHealthProbe(
                 1,
                 syncSettings.Value.LagWarningSeconds);
             bool stale = !hasWatermark ||
-                         lagSeconds > lagLimitSeconds;
+                         lagSeconds > lagLimitSeconds
+                         && !IsCoveredByRunningSync(watermark, SearchSyncActivity.RunningSinceUtc, DateTime.UtcNow, lagLimitSeconds);
             bool ready = healthy && indexExists && !stale;
 
             string? error = ready

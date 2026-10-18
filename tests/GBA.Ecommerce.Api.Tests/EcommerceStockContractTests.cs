@@ -8,9 +8,9 @@ public sealed class EcommerceStockContractTests {
     public void Every_search_projection_selects_one_retail_storage_and_uses_it_for_stock() {
         string source = ReadSource("src/GBA.Search/Sync/ProductSyncRepository.cs");
 
-        Assert.Equal(3, Count(source, "s.ID AS StorageId"));
+        Assert.Equal(4, Count(source, "s.ID AS StorageId"));
         Assert.Equal(12, Count(source, "pa.StorageID = rc.StorageId"));
-        Assert.Equal(3, Count(source, "ORDER BY s.RetailPriority, s.ID, a.IsSelected DESC, ca.ID"));
+        Assert.Equal(4, Count(source, "ORDER BY s.RetailPriority, s.ID, a.IsSelected DESC, ca.ID"));
         Assert.DoesNotContain(
             "SELECT SUM(pa.Amount) FROM ProductAvailability pa INNER JOIN Storage s ON s.ID = pa.StorageID WHERE pa.ProductID = p.ID AND pa.Deleted = 0 AND s.ForDefective = 0 AND s.ForEcommerce = 1",
             source,

@@ -29,15 +29,15 @@ public sealed class RetailCurrencyInvariantTests {
 
         Assert.DoesNotContain("c.Code = 'EUR'", source, StringComparison.Ordinal);
         Assert.Equal(
-            3,
+            4,
             CountOccurrences(
                 source,
                 "ORDER BY s.RetailPriority, s.ID, a.IsSelected DESC, ca.ID"));
-        Assert.Equal(3, CountOccurrences(source, "AND a.IsActive = 1"));
+        Assert.Equal(4, CountOccurrences(source, "AND a.IsActive = 1"));
         Assert.Equal(
             3,
             CountOccurrences(source, "'EUR' AS RetailCurrencyCode"));
-        Assert.Contains("HasRetailConfigurationChangesSql", source, StringComparison.Ordinal);
+        Assert.Contains("RetailConfigurationSignatureSql", source, StringComparison.Ordinal);
     }
 
     [Fact]
