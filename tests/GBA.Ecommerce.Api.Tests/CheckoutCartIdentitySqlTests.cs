@@ -42,8 +42,6 @@ public sealed class CheckoutCartIdentitySqlTests : IDisposable {
         this.fixture = fixture;
         if (!fixture.IsConfigured) return;
 
-        // The shared fixture may contain the full Concord schema for other tests.
-        // Keep the minimal schema in a separate disposable database on the test server.
         string name = "GbaCheckoutCartTest_" + Guid.NewGuid().ToString("N");
         using var server = fixture.Open();
         server.Execute($"CREATE DATABASE [{name}]");

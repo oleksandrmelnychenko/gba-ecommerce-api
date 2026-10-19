@@ -87,8 +87,6 @@ public sealed class SqlCheckoutLedger : ICheckoutLedger {
         ArgumentOutOfRangeException.ThrowIfLessThan(claimLockTimeoutMilliseconds, 0);
 
         _claimSql = BuildClaimSql(claimLockTimeoutMilliseconds);
-        // A pending receipt is inserted inside the checkout transaction. Its initial
-        // lookup can therefore block before TryClaim ever applies its lock timeout.
         _findSql = "SET LOCK_TIMEOUT " + claimLockTimeoutMilliseconds.ToString(CultureInfo.InvariantCulture) + "; " +
             "BEGIN TRY " + FindSql + " SET LOCK_TIMEOUT -1; END TRY " +
             "BEGIN CATCH SET LOCK_TIMEOUT -1; THROW; END CATCH;";

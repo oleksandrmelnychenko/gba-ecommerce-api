@@ -639,8 +639,6 @@ public sealed class OrderService : IOrderService {
                 .NewOrderRepository(connection)
                 .Add(order);
 
-            // These are the exact persisted rows authorized by NetUID above. A product
-            // can occur on multiple cart lines, so it must never be used to replace a row ID.
             foreach (OrderItem orderItem in sale.Order.OrderItems.Where(i => !i.IsNew() && i.Qty > 0))
                 if (currentCart.OrderItems.Any(i => i.Id.Equals(orderItem.Id))) {
                     OrderItem fromCartItem = currentCart.OrderItems.First(i => i.Id.Equals(orderItem.Id));
