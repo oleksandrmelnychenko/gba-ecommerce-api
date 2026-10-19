@@ -19,6 +19,8 @@ public static class AesManager {
 
     private const int Iterations = 1000;
 
+    public const int DerivedKeyMaterialBytes = 48;
+
     private sealed record DerivedKey(string Secret, byte[] Key, byte[] Iv);
 
     private static DerivedKey _cachedKey;
@@ -34,12 +36,7 @@ public static class AesManager {
             return (cached.Key, cached.Iv);
         }
 
-        byte[] derivedBytes = Rfc2898DeriveBytes.Pbkdf2(
-            secret,
-            Salt,
-            Iterations,
-            HashAlgorithmName.SHA1,
-            48);
+        byte[] derivedBytes = DeriveKeyMaterial(secret);
 
         DerivedKey derived = new(secret, derivedBytes[..32], derivedBytes[32..48]);
         if (string.Equals(secret, AuthOptions.KEY, StringComparison.Ordinal)) {
@@ -48,6 +45,9 @@ public static class AesManager {
 
         return (derived.Key, derived.Iv);
     }
+
+    public static byte[] DeriveKeyMaterial(string secret) =>
+        Rfc2898DeriveBytes.Pbkdf2(secret, Salt, Iterations, HashAlgorithmName.SHA1, DerivedKeyMaterialBytes);
 
     public static string Encrypt(string toEncryptString) {
         int maxByteCount = Encoding.Unicode.GetMaxByteCount(toEncryptString.Length);
@@ -79,6 +79,24 @@ public static class AesManager {
     }
 
     public static string Decrypt(string cipherText) => Decrypt(cipherText, AuthOptions.KEY);
+
+    public static string DecryptWithKeyMaterial(string cipherText, byte[] keyMaterial) {
+        if (keyMaterial is not { Length: DerivedKeyMaterialBytes })
+            throw new ArgumentException("AES key material must be 48 bytes", nameof(keyMaterial));
+
+        using Aes decryptor = Aes.Create();
+        decryptor.Key = keyMaterial[..32];
+        decryptor.IV = keyMaterial[32..DerivedKeyMaterialBytes];
+
+        byte[] cipherBytes = Convert.FromBase64String(cipherText.Replace(' ', '+'));
+        using RecyclableMemoryStream ms = MemoryStreamManager.GetStream();
+        using (CryptoStream cs = new(ms, decryptor.CreateDecryptor(), CryptoStreamMode.Write, leaveOpen: true)) {
+            cs.Write(cipherBytes, 0, cipherBytes.Length);
+            cs.FlushFinalBlock();
+        }
+
+        return Encoding.Unicode.GetString(ms.GetBuffer(), 0, (int)ms.Length);
+    }
 
     public static string Decrypt(string cipherText, string secret) {
         // Handle URL-encoded spaces using Span

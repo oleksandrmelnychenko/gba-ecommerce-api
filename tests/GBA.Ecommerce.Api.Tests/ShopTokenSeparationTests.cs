@@ -39,6 +39,8 @@ public sealed class ShopTokenSeparationTests {
     private const string ShopIssuer = "GbaShop";
     private const string ShopAudience = "GbaShop";
     private const string GbaKey = "test-only-gba-server-signing-key-0123456789abcdef";
+    private static readonly RSA GbaRsa = RSA.Create(2048);
+    private static readonly string GbaPublicKeyPem = GbaRsa.ExportSubjectPublicKeyInfoPem();
     private const string GbaIssuer = "ConcordCRM";
     private const string GbaAudience = "https://gba-api-test.example/";
 
@@ -85,15 +87,37 @@ public sealed class ShopTokenSeparationTests {
     }
 
     [Fact]
-    public async Task Transition_flag_accepts_former_shared_customer_tokens_but_never_crm_users_as_customers() {
+    public async Task Hs256_tokens_signed_with_the_former_shared_key_are_accepted_nowhere() {
         await using ShopHost host = await ShopHost.StartAsync(legacy: true, withGbaServer: true);
 
-        Assert.Equal(HttpStatusCode.OK, await host.GetAsync("/customer", GbaToken("Client", "ClientUa")));
-        Assert.Equal(HttpStatusCode.OK, await host.GetAsync("/customer", GbaToken("Workplace", "Workplace")));
-        Assert.Equal(HttpStatusCode.Unauthorized, await host.GetAsync("/customer", GbaToken("User", "GBA")));
-        Assert.Equal(HttpStatusCode.Unauthorized, await host.GetAsync("/customer-plain", GbaToken("User", "Administrator")));
-        Assert.Equal(HttpStatusCode.Forbidden, await host.PostAsync("/es-full", GbaToken("Client", "GBA")));
+        Assert.Equal(HttpStatusCode.Unauthorized, await host.GetAsync("/customer", FormerSharedToken("Client", "ClientUa")));
+        Assert.Equal(HttpStatusCode.Unauthorized, await host.GetAsync("/customer", FormerSharedToken("Workplace", "Workplace")));
+        Assert.Equal(HttpStatusCode.Unauthorized, await host.PostAsync("/es-full", FormerSharedToken("User", "GBA")));
+        Assert.Equal(HttpStatusCode.Unauthorized, await host.PostAsync("/maintenance", FormerSharedToken("User", "Administrator")));
         Assert.Equal(HttpStatusCode.OK, await host.PostAsync("/es-full", GbaToken("User", "GBA")));
+    }
+
+    [Fact]
+    public async Task Crm_tokens_signed_by_an_unpublished_rsa_key_are_rejected() {
+        await using ShopHost host = await ShopHost.StartAsync(legacy: false, withGbaServer: true);
+        using RSA other = RSA.Create(2048);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, await host.PostAsync("/es-full", Mint(
+            new SigningCredentials(new RsaSecurityKey(other), SecurityAlgorithms.RsaSha256),
+            GbaIssuer, GbaAudience, "User", "GBA")));
+    }
+
+    [Fact]
+    public void The_shop_holds_only_the_public_half_of_the_gba_server_key() {
+        GbaServerAuthSettings settings = GbaServerAuthSettings.Create(GbaServer(), Security(legacy: false));
+        RsaSecurityKey key = Assert.Single(settings.ValidationKeys);
+
+        Assert.Null(key.Rsa);
+        Assert.Null(key.Parameters.D);
+        Assert.Equal(PrivateKeyStatus.DoesNotExist, key.PrivateKeyStatus);
+        Assert.Equal(
+            Base64UrlEncoder.Encode(JsonWebKeyConverter.ConvertFromRSASecurityKey(new RsaSecurityKey(GbaRsa.ExportParameters(false))).ComputeJwkThumbprint()),
+            key.KeyId);
     }
 
     [Fact]
@@ -116,21 +140,36 @@ public sealed class ShopTokenSeparationTests {
     }
 
     [Fact]
-    public void Gba_server_settings_must_not_reuse_the_shop_key_or_audience() {
+    public void Gba_server_settings_accept_only_a_strong_public_key_with_its_own_audience() {
         SecuritySettings security = Security(legacy: false);
+        using RSA weak = RSA.Create(1024);
 
+        Assert.Contains("no longer accepted", Assert.Throws<InvalidOperationException>(() => GbaServerAuthSettings.Initialize(
+            new GbaServerAuthSettings { JwtKey = GbaKey, JwtPublicKey = GbaPublicKeyPem, JwtIssuer = GbaIssuer, JwtAudience = GbaAudience },
+            security)).Message, StringComparison.Ordinal);
+        Assert.Contains("private key", Assert.Throws<InvalidOperationException>(() => GbaServerAuthSettings.Initialize(
+            new GbaServerAuthSettings { JwtPublicKey = GbaRsa.ExportPkcs8PrivateKeyPem(), JwtIssuer = GbaIssuer, JwtAudience = GbaAudience },
+            security)).Message, StringComparison.Ordinal);
         Assert.Throws<InvalidOperationException>(() => GbaServerAuthSettings.Initialize(
-            new GbaServerAuthSettings { JwtKey = ShopKey, JwtIssuer = GbaIssuer, JwtAudience = GbaAudience },
+            new GbaServerAuthSettings { JwtPublicKey = GbaPublicKeyPem, JwtIssuer = GbaIssuer, JwtAudience = ShopAudience },
             security));
         Assert.Throws<InvalidOperationException>(() => GbaServerAuthSettings.Initialize(
-            new GbaServerAuthSettings { JwtKey = GbaKey, JwtIssuer = GbaIssuer, JwtAudience = ShopAudience },
+            new GbaServerAuthSettings { JwtPublicKey = weak.ExportSubjectPublicKeyInfoPem(), JwtIssuer = GbaIssuer, JwtAudience = GbaAudience },
             security));
-        Assert.Throws<InvalidOperationException>(() => GbaServerAuthSettings.Initialize(
-            new GbaServerAuthSettings { JwtKey = "too-short", JwtIssuer = GbaIssuer, JwtAudience = GbaAudience },
-            security));
-        Assert.Throws<InvalidOperationException>(() => GbaServerAuthSettings.Initialize(
-            new GbaServerAuthSettings(),
-            Security(legacy: true)));
+        Assert.False(GbaServerAuthSettings.Initialize(new GbaServerAuthSettings(), security).IsConfigured);
+    }
+
+    [Fact]
+    public void Shop_startup_fails_without_its_own_signing_key_or_with_a_raw_legacy_key() {
+        SecuritySettings missing = Security(legacy: false);
+        missing.JwtKey = string.Empty;
+        SecuritySettings rawLegacy = Security(legacy: true);
+        rawLegacy.LegacyRefreshTokenKey = GbaKey;
+
+        Assert.Contains("Security:JwtKey", Assert.Throws<InvalidOperationException>(() => SecuritySettings.Initialize(missing)).Message,
+            StringComparison.Ordinal);
+        Assert.Contains("LegacyRefreshTokenKey", Assert.Throws<InvalidOperationException>(() => SecuritySettings.Initialize(rawLegacy)).Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -162,6 +201,7 @@ public sealed class ShopTokenSeparationTests {
 
         InitializeSecurity(Security(legacy: false, jwtKey: GbaKey), gbaServer: false);
         string legacyRefreshToken = AesManager.Encrypt(payload);
+        Assert.Equal(48, AesManager.DeriveKeyMaterial(GbaKey).Length);
 
         InitializeSecurity(Security(legacy: false), gbaServer: true);
         Assert.ThrowsAny<Exception>(() => RequestTokenService.DecryptRefreshToken(legacyRefreshToken));
@@ -172,6 +212,45 @@ public sealed class ShopTokenSeparationTests {
         string currentRefreshToken = AesManager.Encrypt(payload);
         Assert.NotEqual(legacyRefreshToken, currentRefreshToken);
         Assert.Equal(payload, RequestTokenService.DecryptRefreshToken(currentRefreshToken));
+    }
+
+    [Fact]
+    public async Task Logout_revokes_only_the_presented_refresh_token() {
+        InitializeSecurity(Security(legacy: false), gbaServer: true);
+        string userId = Guid.NewGuid().ToString();
+        string refreshToken = AesManager.Encrypt(JsonSerializer.Serialize(new RefreshToken {
+            UserId = userId,
+            ExpireAt = DateTime.UtcNow.AddDays(1)
+        }));
+        string stale = AesManager.Encrypt(JsonSerializer.Serialize(new RefreshToken {
+            UserId = userId,
+            ExpireAt = DateTime.UtcNow.AddDays(2)
+        }));
+        UserToken row = new() {
+            UserId = userId,
+            Token = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(refreshToken)))
+        };
+
+        Mock<IDbConnection> identityConnection = new();
+        Mock<IDbConnectionFactory> connectionFactory = new();
+        connectionFactory.Setup(factory => factory.NewIdentitySqlConnection()).Returns(identityConnection.Object);
+        Mock<IUserTokenRepository> userTokens = new();
+        userTokens.Setup(repository => repository.GetByUserId(userId)).Returns(row);
+        Mock<IIdentityRepositoriesFactory> identityFactory = new();
+        identityFactory.Setup(factory => factory.NewUserTokenRepository(identityConnection.Object)).Returns(userTokens.Object);
+        RequestTokenService service = new(
+            identityFactory.Object,
+            Mock.Of<IClientRepositoriesFactory>(),
+            connectionFactory.Object,
+            Mock.Of<IStringLocalizer<SharedResource>>());
+
+        Assert.False(await service.RevokeRefreshToken(stale));
+        userTokens.Verify(repository => repository.Update(It.IsAny<UserToken>()), Times.Never);
+
+        Assert.True(await service.RevokeRefreshToken(refreshToken));
+        Assert.Equal(string.Empty, row.Token);
+        userTokens.Verify(repository => repository.Update(row), Times.Once);
+        Assert.False(await service.RevokeRefreshToken("not-a-token"));
     }
 
     [Fact]
@@ -231,11 +310,12 @@ public sealed class ShopTokenSeparationTests {
         PriceEncryptionKey = "GBA_Test_Key_16!",
         PriceEncryptionIV = "GBA_Test_IV__16!",
         CorsOrigins = ["http://localhost"],
-        AcceptLegacySharedTokens = legacy
+        AcceptLegacySharedTokens = legacy,
+        LegacyRefreshTokenKey = legacy ? Convert.ToBase64String(AesManager.DeriveKeyMaterial(GbaKey)) : string.Empty
     };
 
     private static GbaServerAuthSettings GbaServer() => new() {
-        JwtKey = GbaKey,
+        JwtPublicKey = GbaPublicKeyPem,
         JwtIssuer = GbaIssuer,
         JwtAudience = GbaAudience
     };
@@ -246,12 +326,20 @@ public sealed class ShopTokenSeparationTests {
     }
 
     private static string ShopToken(string type, string role) =>
-        Mint(ShopKey, ShopIssuer, ShopAudience, type, role);
+        Mint(Hs256(ShopKey), ShopIssuer, ShopAudience, type, role);
 
     private static string GbaToken(string type, string role) =>
-        Mint(GbaKey, GbaIssuer, GbaAudience, type, role);
+        Mint(new SigningCredentials(new RsaSecurityKey(GbaRsa) {
+            KeyId = GbaServerAuthSettings.ComputeKeyId(GbaRsa.ExportParameters(false))
+        }, SecurityAlgorithms.RsaSha256), GbaIssuer, GbaAudience, type, role);
 
-    private static string Mint(string key, string issuer, string audience, string type, string role) {
+    private static string FormerSharedToken(string type, string role) =>
+        Mint(Hs256(GbaKey), GbaIssuer, GbaAudience, type, role);
+
+    private static SigningCredentials Hs256(string key) =>
+        new(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)), SecurityAlgorithms.HmacSha256);
+
+    private static string Mint(SigningCredentials credentials, string issuer, string audience, string type, string role) {
         DateTime now = DateTime.UtcNow;
         JwtSecurityToken token = new(
             issuer,
@@ -264,7 +352,7 @@ public sealed class ShopTokenSeparationTests {
             ],
             now.AddMinutes(-1),
             now.AddMinutes(15),
-            new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(key)), SecurityAlgorithms.HmacSha256));
+            credentials);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
@@ -280,7 +368,9 @@ public sealed class ShopTokenSeparationTests {
 
         public static async Task<ShopHost> StartAsync(bool legacy, bool withGbaServer) {
             SecuritySettings security = Security(legacy);
-            GbaServerAuthSettings gbaServer = withGbaServer ? GbaServer() : new GbaServerAuthSettings();
+            GbaServerAuthSettings gbaServer = GbaServerAuthSettings.Create(
+                withGbaServer ? GbaServer() : new GbaServerAuthSettings(),
+                security);
 
             WebApplicationBuilder builder = WebApplication.CreateBuilder(new WebApplicationOptions {
                 EnvironmentName = "Testing"

@@ -7,8 +7,8 @@ namespace GBA.Common.IdentityConfiguration;
 public sealed class AuthOptions {
     public const string DEFAULT_PASSWORD_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
-    public const int LIFETIME = 15;
-    public const int REFRESH_LIFETIME = 10080;
+    public static int LIFETIME => SecuritySettings.Instance.AccessTokenLifetimeMinutes;
+    public static int REFRESH_LIFETIME => SecuritySettings.Instance.RefreshTokenLifetimeMinutes;
 
     public static string ISSUER => SecuritySettings.Instance.JwtIssuer;
     public static string AUDIENCE => SecuritySettings.Instance.JwtAudience;

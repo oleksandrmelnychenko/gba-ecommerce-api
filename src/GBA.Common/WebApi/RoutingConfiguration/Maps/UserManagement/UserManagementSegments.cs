@@ -9,6 +9,8 @@ public static class UserManagementSegments {
 
     public const string REFRESH_TOKEN = "token/refresh";
 
+    public const string LOGOUT = "token/logout";
+
     public const string IS_USERNAME_AVAILABLE = "check/phone";
 
     public const string IS_EMAIL_AVAILABLE = "check/email";

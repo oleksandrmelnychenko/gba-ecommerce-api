@@ -8,4 +8,6 @@ public interface IRequestTokenService {
     Task<Tuple<bool, string, CompleteAccessToken>> RequestToken(string userName, string password);
 
     Task<Tuple<bool, string, CompleteAccessToken>> RefreshToken(string refreshToken);
+
+    Task<bool> RevokeRefreshToken(string refreshToken);
 }

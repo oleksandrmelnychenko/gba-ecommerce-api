@@ -63,8 +63,6 @@ public sealed class InternalAdministratorAuthorizationHandler : AuthorizationHan
 }
 
 public static class ShopAuthentication {
-    public const string LegacySharedKeyId = "gba-legacy-shared";
-
     public static IServiceCollection AddShopAuthentication(
         this IServiceCollection services,
         SecuritySettings security,
@@ -82,16 +80,6 @@ public static class ShopAuthentication {
             options.DefaultChallengeScheme = ShopAuthenticationSchemes.Customer;
         }).AddJwtBearer(ShopAuthenticationSchemes.Customer, options => {
             options.TokenValidationParameters = customerParameters;
-            options.Events = new JwtBearerEvents {
-                OnTokenValidated = context => {
-                    if (IsLegacySharedToken(context.SecurityToken) &&
-                        !ShopIdentityTypes.IsCustomer(context.Principal?.Identity as ClaimsIdentity)) {
-                        context.Fail("Tokens signed with the former shared key are accepted only for shop customers.");
-                    }
-
-                    return Task.CompletedTask;
-                }
-            };
         });
 
         List<string> administrativeSchemes = new() { ShopAuthenticationSchemes.Customer };
@@ -137,60 +125,43 @@ public static class ShopAuthentication {
 
     public static TokenValidationParameters BuildCustomerValidationParameters(
         SecuritySettings security,
-        GbaServerAuthSettings gbaServer) {
-        List<SecurityKey> keys = new() { CreateKey(security.JwtKey, null) };
-        List<string> issuers = new() { security.JwtIssuer.Trim() };
-        List<string> audiences = new() { security.JwtAudience.Trim() };
-
-        if (security.AcceptLegacySharedTokens) {
-            if (!gbaServer.IsConfigured)
-                throw new InvalidOperationException(
-                    $"Security:AcceptLegacySharedTokens requires {GbaServerAuthSettings.SectionName} to name the former shared key");
-
-            keys.Add(CreateKey(gbaServer.JwtKey, LegacySharedKeyId));
-            issuers.Add(gbaServer.JwtIssuer);
-            audiences.Add(gbaServer.JwtAudience);
-        }
-
-        return CreateParameters(keys, issuers, audiences, ShopAuthenticationSchemes.CustomerAuthenticationType);
-    }
+        GbaServerAuthSettings gbaServer) =>
+        CreateParameters(
+            new List<SecurityKey> { new SymmetricSecurityKey(Encoding.UTF8.GetBytes(security.JwtKey.Trim())) },
+            security.JwtIssuer.Trim(),
+            security.JwtAudience.Trim(),
+            SecurityAlgorithms.HmacSha256,
+            ShopAuthenticationSchemes.CustomerAuthenticationType);
 
     public static TokenValidationParameters? BuildGbaInternalValidationParameters(GbaServerAuthSettings gbaServer) {
         if (!gbaServer.IsConfigured) return null;
 
         return CreateParameters(
-            new List<SecurityKey> { CreateKey(gbaServer.JwtKey, null) },
-            new List<string> { gbaServer.JwtIssuer },
-            new List<string> { gbaServer.JwtAudience },
+            gbaServer.ValidationKeys.Cast<SecurityKey>().ToList(),
+            gbaServer.JwtIssuer,
+            gbaServer.JwtAudience,
+            SecurityAlgorithms.RsaSha256,
             ShopAuthenticationSchemes.GbaInternal);
-    }
-
-    public static bool IsLegacySharedToken(SecurityToken? token) =>
-        string.Equals(token?.SigningKey?.KeyId, LegacySharedKeyId, StringComparison.Ordinal);
-
-    private static SymmetricSecurityKey CreateKey(string value, string? keyId) {
-        SymmetricSecurityKey key = new(Encoding.UTF8.GetBytes(value.Trim()));
-        if (keyId != null) key.KeyId = keyId;
-        return key;
     }
 
     private static TokenValidationParameters CreateParameters(
         List<SecurityKey> keys,
-        List<string> issuers,
-        List<string> audiences,
+        string issuer,
+        string audience,
+        string algorithm,
         string authenticationType) =>
         new() {
             ValidateIssuerSigningKey = true,
             IssuerSigningKeys = keys,
             TryAllIssuerSigningKeys = true,
             ValidateIssuer = true,
-            ValidIssuers = issuers.Distinct(StringComparer.Ordinal).ToArray(),
+            ValidIssuer = issuer,
             ValidateAudience = true,
-            ValidAudiences = audiences.Distinct(StringComparer.Ordinal).ToArray(),
+            ValidAudience = audience,
             ValidateLifetime = true,
             RequireExpirationTime = true,
             RequireSignedTokens = true,
-            ValidAlgorithms = new[] { SecurityAlgorithms.HmacSha256 },
+            ValidAlgorithms = new[] { algorithm },
             ClockSkew = TimeSpan.Zero,
             AuthenticationType = authenticationType
         };

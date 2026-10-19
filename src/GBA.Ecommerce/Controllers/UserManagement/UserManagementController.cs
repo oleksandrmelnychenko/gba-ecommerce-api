@@ -124,6 +124,18 @@ public sealed class UserManagementController(
         public string Token { get; set; } = string.Empty;
     }
 
+    [HttpPost]
+    [AssignActionRoute(UserManagementSegments.LOGOUT)]
+    [EnableRateLimiting("auth")]
+    [Consumes("application/json")]
+    [RequestSizeLimit(8192)]
+    public async Task<IActionResult> LogoutAsync([FromBody] RefreshTokenRequest request) {
+        if (!string.IsNullOrEmpty(request?.Token))
+            await requestTokenService.RevokeRefreshToken(request.Token);
+
+        return Ok(SuccessResponseBody(null));
+    }
+
     [HttpGet]
     [AssignActionRoute(UserManagementSegments.IS_EMAIL_AVAILABLE)]
     [EnableRateLimiting("auth")]

@@ -226,16 +226,37 @@ public sealed class RequestTokenService : IRequestTokenService {
         };
     }
 
-    internal static string DecryptRefreshToken(string refreshToken) {
+    public Task<bool> RevokeRefreshToken(string refreshToken) {
         try {
-            return AesManager.Decrypt(refreshToken);
-        } catch (Exception) when (CanDecryptWithLegacySharedKey()) {
-            return AesManager.Decrypt(refreshToken, GbaServerAuthSettings.Instance.JwtKey);
+            if (string.IsNullOrEmpty(refreshToken)) return Task.FromResult(false);
+
+            RefreshToken deserializedRefreshToken =
+                JsonSerializer.Deserialize<RefreshToken>(DecryptRefreshToken(refreshToken), _jsonSerializerOptions);
+            if (deserializedRefreshToken == null || string.IsNullOrEmpty(deserializedRefreshToken.UserId))
+                return Task.FromResult(false);
+
+            using IDbConnection connection = _connectionFactory.NewIdentitySqlConnection();
+            IUserTokenRepository userTokenRepository = _identityRepositoriesFactory.NewUserTokenRepository(connection);
+            UserToken currentToken = userTokenRepository.GetByUserId(deserializedRefreshToken.UserId);
+            if (currentToken == null || !IsRefreshTokenMatch(currentToken.Token, refreshToken))
+                return Task.FromResult(false);
+
+            currentToken.Token = string.Empty;
+            userTokenRepository.Update(currentToken);
+            return Task.FromResult(true);
+        } catch (Exception) {
+            return Task.FromResult(false);
         }
     }
 
-    private static bool CanDecryptWithLegacySharedKey() =>
-        SecuritySettings.Instance.AcceptLegacySharedTokens && GbaServerAuthSettings.Instance.IsConfigured;
+    internal static string DecryptRefreshToken(string refreshToken) {
+        try {
+            return AesManager.Decrypt(refreshToken);
+        } catch (Exception) when (SecuritySettings.Instance.AcceptLegacySharedTokens &&
+                                  SecuritySettings.Instance.LegacyRefreshKeyMaterial.Length > 0) {
+            return AesManager.DecryptWithKeyMaterial(refreshToken, SecuritySettings.Instance.LegacyRefreshKeyMaterial);
+        }
+    }
 
     private static bool IsAllowedUserType(IdentityUserType userType) {
         if (userType == IdentityUserType.Client || userType == IdentityUserType.Workplace) return true;
