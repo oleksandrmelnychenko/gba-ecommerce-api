@@ -89,6 +89,7 @@ using GBA.Services.Services.Transporters.Contracts;
 using GBA.Services.Services.UserManagement;
 using GBA.Services.Services.UserManagement.Contracts;
 using GBA.Ecommerce.HealthChecks;
+using GBA.Ecommerce.Auth;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics;
@@ -147,6 +148,9 @@ public class Startup {
 
         SecuritySettings securitySettings = Configuration.GetSection("Security").Get<SecuritySettings>() ?? new SecuritySettings();
         SecuritySettings.Initialize(securitySettings);
+        GbaServerAuthSettings.Initialize(
+            Configuration.GetSection(GbaServerAuthSettings.SectionName).Get<GbaServerAuthSettings>() ?? new GbaServerAuthSettings(),
+            securitySettings);
     }
 
     public IConfiguration Configuration { get; set; }
@@ -366,7 +370,7 @@ public class Startup {
             }).AddEntityFrameworkStores<ConcordIdentityContext>()
             .AddDefaultTokenProviders();
 
-        ConfigureJwtAuthService(services);
+        services.AddShopAuthentication(SecuritySettings.Instance, GbaServerAuthSettings.Instance);
 
         services.AddLocalization(options => options.ResourcesPath = "Resources");
         services.AddSwaggerGen();
@@ -740,27 +744,5 @@ public class Startup {
 #endif
             options.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
         }, poolSize: 64);
-    }
-
-    private static void ConfigureJwtAuthService(IServiceCollection services) {
-        SymmetricSecurityKey signingKey = AuthOptions.GetSymmetricSecurityKey();
-
-        TokenValidationParameters tokenValidationParameters = new() {
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = signingKey,
-            ValidateIssuer = true,
-            ValidIssuer = AuthOptions.ISSUER,
-            ValidateAudience = true,
-            ValidAudience = AuthOptions.AUDIENCE,
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.Zero
-        };
-
-        services.AddAuthentication(options => {
-            options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-            options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-        }).AddJwtBearer(o => {
-            o.TokenValidationParameters = tokenValidationParameters;
-        });
     }
 }

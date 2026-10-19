@@ -11,6 +11,7 @@ public class SecuritySettings {
     public string PriceEncryptionIV { get; set; } = string.Empty;
     public string[] CorsOrigins { get; set; } = Array.Empty<string>();
     public bool EnableSwagger { get; set; }
+    public bool AcceptLegacySharedTokens { get; set; }
 
     private static SecuritySettings _instance = new();
 

@@ -19,7 +19,7 @@ using Microsoft.AspNetCore.RateLimiting;
 namespace GBA.Ecommerce.Controllers;
 
 [AssignControllerRoute(WebApiEnvironmnet.Current, WebApiVersion.ApiVersion1, "elasticsearch")]
-[Authorize(Roles = DefaultPolicies.AdministrativeRolesPolicy)]
+[Authorize(Policy = DefaultPolicies.ShopAdministrativePolicy)]
 public sealed class ElasticsearchController(
     IElasticsearchIndexService indexService,
     IElasticsearchSyncService syncService,

@@ -19,27 +19,34 @@ public static class AesManager {
 
     private const int Iterations = 1000;
 
-    // Cache derived key bytes - they're always the same for the same KEY
-    private static byte[]? _cachedKey;
-    private static byte[]? _cachedIv;
+    private sealed record DerivedKey(string Secret, byte[] Key, byte[] Iv);
+
+    private static DerivedKey _cachedKey;
 
     // Recyclable memory stream manager for reduced allocations
     private static readonly RecyclableMemoryStreamManager MemoryStreamManager = new();
 
-    private static (byte[] key, byte[] iv) GetKeyAndIv() {
-        if (_cachedKey == null || _cachedIv == null) {
-            byte[] derivedBytes = Rfc2898DeriveBytes.Pbkdf2(
-                AuthOptions.KEY,
-                Salt,
-                Iterations,
-                HashAlgorithmName.SHA1,
-                48);
+    private static (byte[] key, byte[] iv) GetKeyAndIv() => GetKeyAndIv(AuthOptions.KEY);
 
-            _cachedKey = derivedBytes[..32];
-            _cachedIv = derivedBytes[32..48];
+    private static (byte[] key, byte[] iv) GetKeyAndIv(string secret) {
+        DerivedKey cached = _cachedKey;
+        if (cached != null && string.Equals(cached.Secret, secret, StringComparison.Ordinal)) {
+            return (cached.Key, cached.Iv);
         }
 
-        return (_cachedKey, _cachedIv);
+        byte[] derivedBytes = Rfc2898DeriveBytes.Pbkdf2(
+            secret,
+            Salt,
+            Iterations,
+            HashAlgorithmName.SHA1,
+            48);
+
+        DerivedKey derived = new(secret, derivedBytes[..32], derivedBytes[32..48]);
+        if (string.Equals(secret, AuthOptions.KEY, StringComparison.Ordinal)) {
+            _cachedKey = derived;
+        }
+
+        return (derived.Key, derived.Iv);
     }
 
     public static string Encrypt(string toEncryptString) {
@@ -71,7 +78,9 @@ public static class AesManager {
         return Convert.ToBase64String(ms.GetBuffer(), 0, (int)ms.Length);
     }
 
-    public static string Decrypt(string cipherText) {
+    public static string Decrypt(string cipherText) => Decrypt(cipherText, AuthOptions.KEY);
+
+    public static string Decrypt(string cipherText, string secret) {
         // Handle URL-encoded spaces using Span
         ReadOnlySpan<char> input = cipherText.AsSpan();
         int spaceCount = 0;
@@ -95,12 +104,12 @@ public static class AesManager {
         }
 
         byte[] cipherBytes = Convert.FromBase64String(normalizedText);
-        return DecryptBytes(cipherBytes);
+        return DecryptBytes(cipherBytes, secret);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static string DecryptBytes(byte[] cipherBytes) {
-        (byte[] key, byte[] iv) = GetKeyAndIv();
+    private static string DecryptBytes(byte[] cipherBytes, string secret) {
+        (byte[] key, byte[] iv) = GetKeyAndIv(secret);
 
         using Aes encryptor = Aes.Create();
         encryptor.Key = key;

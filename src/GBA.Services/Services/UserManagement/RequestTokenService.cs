@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using GBA.Common.Configuration;
 using GBA.Common.Helpers;
 using GBA.Common.IdentityConfiguration;
 using GBA.Common.IdentityConfiguration.Entities;
@@ -57,7 +58,7 @@ public sealed class RequestTokenService : IRequestTokenService {
                 return new Tuple<bool, string, CompleteAccessToken>(false, "Refresh token invalid", null);
 
             using IDbConnection connection = _connectionFactory.NewIdentitySqlConnection();
-            string decryptedToken = AesManager.Decrypt(refreshToken);
+            string decryptedToken = DecryptRefreshToken(refreshToken);
 
             RefreshToken deserializedRefreshToken = JsonSerializer.Deserialize<RefreshToken>(decryptedToken, _jsonSerializerOptions);
             if (deserializedRefreshToken == null || string.IsNullOrEmpty(deserializedRefreshToken.UserId))
@@ -74,6 +75,7 @@ public sealed class RequestTokenService : IRequestTokenService {
                 .AuthAndGetClaimsIdentityByUserId(deserializedRefreshToken.UserId);
 
             if (result == null) throw new Exception("Refresh token invalid");
+            if (!IsAllowedUserType(result.Item2.UserType)) throw new Exception("Refresh token invalid");
 
             return new Tuple<bool, string, CompleteAccessToken>(
                 true,
@@ -223,6 +225,17 @@ public sealed class RequestTokenService : IRequestTokenService {
             UserNetUid = user.NetId
         };
     }
+
+    internal static string DecryptRefreshToken(string refreshToken) {
+        try {
+            return AesManager.Decrypt(refreshToken);
+        } catch (Exception) when (CanDecryptWithLegacySharedKey()) {
+            return AesManager.Decrypt(refreshToken, GbaServerAuthSettings.Instance.JwtKey);
+        }
+    }
+
+    private static bool CanDecryptWithLegacySharedKey() =>
+        SecuritySettings.Instance.AcceptLegacySharedTokens && GbaServerAuthSettings.Instance.IsConfigured;
 
     private static bool IsAllowedUserType(IdentityUserType userType) {
         if (userType == IdentityUserType.Client || userType == IdentityUserType.Workplace) return true;

@@ -1,5 +1,5 @@
 using System.Threading.Tasks;
-using GBA.Common.IdentityConfiguration.Roles;
+using GBA.Common.IdentityConfiguration.Policies;
 using GBA.Common.ResponseBuilder.Contracts;
 using GBA.Common.WebApi;
 using GBA.Common.WebApi.RoutingConfiguration.Maps;
@@ -10,7 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace GBA.Ecommerce.Controllers;
 
 [AssignControllerRoute(WebApiEnvironmnet.Current, WebApiVersion.ApiVersion1, "maintenance")]
-[Authorize(Roles = IdentityRoles.Administrator)]
+[Authorize(Policy = DefaultPolicies.ShopAdministratorPolicy)]
 public sealed class MaintenanceController(
     IClientShoppingCartService clientShoppingCartService,
     IResponseFactory responseFactory) : WebApiControllerBase(responseFactory) {
