@@ -2,6 +2,7 @@ using System;
 using System.Data;
 using System.Globalization;
 using Dapper;
+using Microsoft.Data.SqlClient;
 
 namespace GBA.Services.Infrastructure.Checkout;
 
@@ -80,11 +81,17 @@ public sealed class SqlCheckoutLedger : ICheckoutLedger {
         """;
 
     private readonly string _claimSql;
+    private readonly string _findSql;
 
     public SqlCheckoutLedger(int claimLockTimeoutMilliseconds = DefaultClaimLockTimeoutMilliseconds) {
         ArgumentOutOfRangeException.ThrowIfLessThan(claimLockTimeoutMilliseconds, 0);
 
         _claimSql = BuildClaimSql(claimLockTimeoutMilliseconds);
+        // A pending receipt is inserted inside the checkout transaction. Its initial
+        // lookup can therefore block before TryClaim ever applies its lock timeout.
+        _findSql = "SET LOCK_TIMEOUT " + claimLockTimeoutMilliseconds.ToString(CultureInfo.InvariantCulture) + "; " +
+            "BEGIN TRY " + FindSql + " SET LOCK_TIMEOUT -1; END TRY " +
+            "BEGIN CATCH SET LOCK_TIMEOUT -1; THROW; END CATCH;";
     }
 
     internal static string BuildClaimSql(int claimLockTimeoutMilliseconds) {
@@ -97,9 +104,13 @@ public sealed class SqlCheckoutLedger : ICheckoutLedger {
     public CheckoutLedgerEntry Find(IDbConnection connection, Guid operationNetUid) {
         ArgumentNullException.ThrowIfNull(connection);
 
-        return connection.QuerySingleOrDefault<CheckoutLedgerEntry>(
-            FindSql,
-            new { OperationNetUid = operationNetUid });
+        try {
+            return connection.QuerySingleOrDefault<CheckoutLedgerEntry>(
+                _findSql,
+                new { OperationNetUid = operationNetUid });
+        } catch (SqlException exception) when (exception.Number == 1222) {
+            throw new CheckoutConflictException(CheckoutConflictException.InProgressMessage);
+        }
     }
 
     public CheckoutClaim TryClaim(IDbConnection connection, CheckoutRequest request) {

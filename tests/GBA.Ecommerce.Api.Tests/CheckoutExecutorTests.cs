@@ -147,6 +147,7 @@ public sealed class CheckoutExecutorTests {
 
         Assert.Equal(CheckoutConflictException.InProgressMessage, conflict.Message);
         Assert.Equal(0, created);
+        Assert.Equal(1, ledger.FindCalls);
     }
 
     [Fact]
@@ -199,6 +200,7 @@ public sealed class CheckoutExecutorTests {
         public Func<CheckoutClaim>? OnClaim { get; set; }
 
         public int ClaimCalls { get; private set; }
+        public int FindCalls { get; private set; }
 
         public List<string> CompletedPayloads { get; } = new();
 
@@ -217,6 +219,7 @@ public sealed class CheckoutExecutorTests {
         }
 
         public CheckoutLedgerEntry Find(IDbConnection connection, Guid operationNetUid) {
+            FindCalls++;
             return _entries.GetValueOrDefault(operationNetUid)!;
         }
 

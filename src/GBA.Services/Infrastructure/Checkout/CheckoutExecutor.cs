@@ -72,6 +72,8 @@ public sealed class CheckoutExecutor : ICheckoutExecutor {
         }
 
         if (claim == CheckoutClaim.Claimed) return new CheckoutResult(createdSale, false);
+        if (claim == CheckoutClaim.Busy)
+            throw new CheckoutConflictException(CheckoutConflictException.InProgressMessage);
 
         return FindReplay(request) ??
                throw new CheckoutConflictException(CheckoutConflictException.InProgressMessage);
