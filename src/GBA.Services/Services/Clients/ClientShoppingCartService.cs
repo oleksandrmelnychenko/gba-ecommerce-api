@@ -727,6 +727,9 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
             remaining -= portion;
         }
+
+        if (remaining > QuantityTolerance)
+            throw new CheckoutConflictException(CheckoutConflictException.CartStockChangedMessage);
     }
 
     private OrderItem LoadCartLine(IDbConnection connection, long orderItemId, ClientAgreement clientAgreement) {
