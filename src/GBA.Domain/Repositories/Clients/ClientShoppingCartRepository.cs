@@ -204,6 +204,7 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
             "LEFT JOIN [OrderItem] " +
             "ON [OrderItem].ClientShoppingCartID = [ClientShoppingCart].ID " +
             "AND [OrderItem].Deleted = 0 " +
+            "AND [OrderItem].OrderID IS NULL " +
             "LEFT JOIN [Product] " +
             "ON [OrderItem].ProductID = [Product].ID " +
             "WHERE [ClientShoppingCart].ID = (" +
@@ -216,6 +217,7 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
             "LEFT JOIN [OrderItem] " +
             "ON [OrderItem].ClientShoppingCartID = [ClientShoppingCart].ID " +
             "AND [OrderItem].Deleted = 0 " +
+            "AND [OrderItem].OrderID IS NULL " +
             "WHERE [Client].NetUID = @NetId " +
             "AND [ClientShoppingCart].Deleted = 0 " +
             "AND [ClientShoppingCart].IsOffer = 0 " +
@@ -256,6 +258,7 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
             "LEFT JOIN [OrderItem] " +
             "ON [OrderItem].ClientShoppingCartID = [ClientShoppingCart].ID " +
             "AND [OrderItem].Deleted = 0 " +
+            "AND [OrderItem].OrderID IS NULL " +
             "LEFT JOIN [Product] " +
             "ON [OrderItem].ProductID = [Product].ID " +
             "WHERE [ClientShoppingCart].ID = (" +
@@ -266,6 +269,7 @@ public sealed class ClientShoppingCartRepository : IClientShoppingCartRepository
             "LEFT JOIN [OrderItem] " +
             "ON [OrderItem].ClientShoppingCartID = [ClientShoppingCart].ID " +
             "AND [OrderItem].Deleted = 0 " +
+            "AND [OrderItem].OrderID IS NULL " +
             "WHERE [ClientAgreement].NetUID = @NetId " +
             "AND [ClientShoppingCart].Deleted = 0 " +
             "AND [ClientShoppingCart].IsOffer = 0 " +

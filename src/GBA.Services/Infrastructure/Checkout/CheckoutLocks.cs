@@ -29,6 +29,7 @@ public static class CheckoutLocks {
             [OrderID] = @OrderId,
             [Updated] = GETUTCDATE()
         WHERE [NetUID] = @NetUid
+          AND [ID] = @Id
           AND [ClientShoppingCartID] = @ClientShoppingCartId
           AND [OrderID] IS NULL
           AND [Deleted] = 0
@@ -85,6 +86,7 @@ public static class CheckoutLocks {
         int claimed = connection.Execute(
             ClaimCartItemSql,
             new {
+                cartItem.Id,
                 cartItem.NetUid,
                 ClientShoppingCartId = clientShoppingCartId,
                 OrderId = orderId,

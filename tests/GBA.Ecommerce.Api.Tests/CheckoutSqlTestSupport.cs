@@ -97,13 +97,13 @@ public sealed class CheckoutSqlFixture : IDisposable {
             Directory.Delete(_serverPath, recursive: true);
     }
 
-    private static string[] SplitBatches(string script) {
+    internal static string[] SplitBatches(string script) {
         return Regex.Split(script, @"^\s*GO\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase)
             .Where(batch => !string.IsNullOrWhiteSpace(batch))
             .ToArray();
     }
 
-    private static string FindRepositoryRoot() {
+    internal static string FindRepositoryRoot() {
         DirectoryInfo? directory = new(AppContext.BaseDirectory);
         while (directory != null) {
             if (File.Exists(Path.Combine(directory.FullName, LedgerScriptPath))) return directory.FullName;

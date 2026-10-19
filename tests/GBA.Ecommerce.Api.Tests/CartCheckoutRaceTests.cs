@@ -258,12 +258,15 @@ public sealed class CartCheckoutRaceTests {
         Guid otherClient = Guid.NewGuid();
         _agreements.Setup(repository => repository.GetSelectedByClientNotSelectedNetId(otherClient)).Returns(_agreement);
         WithCart(CartLine(9, ProductId, 2));
-        _stock.Setup(repository => repository.GetReservations(9)).Returns(new List<ShoppingCartReservation>());
+        ShoppingCartReservation reservation = new() { Id = 31, ProductAvailabilityId = 11, Qty = 2 };
+        _stock.Setup(repository => repository.GetReservations(9)).Returns(new List<ShoppingCartReservation> { reservation });
+        _stock.Setup(repository => repository.Release(reservation, 1)).Returns(true);
         _stock.Setup(repository => repository.SetItemQty(9, CartId, 2, 1)).Returns(true);
 
         await NewService().Update(new OrderItem { Id = 9, Qty = 1, OverLordQty = 1 }, otherClient, false);
 
         _stock.Verify(repository => repository.SetItemQty(9, CartId, 2, 1), Times.Once);
+        _stock.Verify(repository => repository.Release(reservation, 1), Times.Once);
     }
 
     [Fact]
