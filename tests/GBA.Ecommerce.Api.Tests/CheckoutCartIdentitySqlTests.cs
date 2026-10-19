@@ -27,6 +27,8 @@ using GBA.Services.Services.Clients;
 using GBA.Services.Services.Clients.Contracts;
 using GBA.Services.Services.Messengers.Contracts;
 using GBA.Services.Services.Orders;
+using GBA.Services.Services.Offers;
+using GBA.Domain.EntityHelpers;
 using Moq;
 using Microsoft.Data.SqlClient;
 
@@ -178,6 +180,133 @@ public sealed class CheckoutCartIdentitySqlTests : IDisposable {
         Assert.Equal(0, db.ExecuteScalar<int>("SELECT COUNT(*) FROM dbo.EcommerceSalesCreationLedger WHERE OperationNetUid=@Id", new { Id = attempt.IdempotencyKey }));
     }
 
+    [CheckoutCartSqlFact]
+    public Task OfferCheckoutUpdatesOnlyTheSelectedRowOfTheSameProduct() => VerifyOfferTransfer(false, 10);
+
+    [CheckoutCartSqlFact]
+    public Task OfferCheckoutKeepsSourceRowsWhenSelectionOrderIsReversed() => VerifyOfferTransfer(true, 10);
+
+    [CheckoutCartSqlFact]
+    public Task OfferCheckoutRecordsAvailableQuantityAgainstTheSelectedSourceRow() => VerifyOfferTransfer(false, 2);
+
+    [CheckoutCartSqlFact]
+    public Task OfferCheckoutMarksTheSelectedRowFullyProcessed() => VerifyOfferTransfer(false, 10, requestedQty: 5);
+
+    [CheckoutCartSqlFact]
+    public Task FailedOfferCheckoutRollsBackStatusesStockAndReceiptBeforeRetry() => VerifyOfferTransfer(false, 10, true);
+
+    private async Task VerifyOfferTransfer(bool both, double available, bool failFirst = false, double requestedQty = 3) {
+        Assert.True(fixture.IsConfigured);
+        using var db = Open();
+        db.Execute(Schema);
+        db.Execute("""
+            ALTER TABLE dbo.OrderItem ADD OrderedQty float NULL,FromOfferQty float NULL,IsFromOffer bit NULL,
+                OfferProcessingStatus int NOT NULL DEFAULT 0,OfferProcessingStatusChangedById bigint NULL,
+                OneTimeDiscount decimal(30,14) NULL,ReturnedQty float NULL,AssignedSpecificationId bigint NULL,
+                IsFromReSale bit NULL,MisplacedSaleId bigint NULL,IsFromShiftedItem bit NULL;
+            ALTER TABLE dbo.ClientShoppingCart ADD NetUID uniqueidentifier NULL,IsOfferProcessed bit NOT NULL DEFAULT 0,
+                Updated datetime NULL,OfferProcessingStatus int NULL,OfferProcessingStatusChangedById bigint NULL,Comment nvarchar(450) NULL;
+            """);
+        Guid offerId = Guid.NewGuid();
+        db.Execute("UPDATE dbo.ClientShoppingCart SET NetUID=@offerId,IsOffer=1; UPDATE dbo.ProductAvailability SET Amount=@available; DELETE dbo.ProductReservation;",
+            new { offerId, available });
+        Guid[] ids = db.Query<Guid>("SELECT NetUID FROM dbo.OrderItem ORDER BY ID").ToArray();
+        Guid actor = Guid.NewGuid();
+        var attempt = new CheckoutAttempt(Guid.NewGuid(), CheckoutFingerprint.Compute("offer-identity", both.ToString()));
+        ClientShoppingCart Request() {
+            var cart = new ClientShoppingCart { NetUid = offerId };
+            cart.OrderItems.Add(new OrderItem { NetUid = ids[1], Qty = requestedQty, ProductId = 999, PricePerItem = 999 });
+            if (both) cart.OrderItems.Add(new OrderItem { NetUid = ids[0], Qty = 1, ProductId = 999 });
+            return cart;
+        }
+
+        if (failFirst) {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => CreateOfferService(actor, true)
+                .GenerateNewOrderAndSaleFromOffer(Request(), actor, false, attempt));
+            Assert.False(db.ExecuteScalar<bool>("SELECT IsOfferProcessed FROM dbo.ClientShoppingCart"));
+            Assert.Equal(2, db.ExecuteScalar<int>("SELECT COUNT(*) FROM dbo.OrderItem WHERE OrderID IS NULL AND OfferProcessingStatus=0"));
+            Assert.Equal(2, db.ExecuteScalar<int>("SELECT COUNT(*) FROM dbo.OrderItem"));
+            Assert.Equal(available, db.ExecuteScalar<double>("SELECT Amount FROM dbo.ProductAvailability"));
+            Assert.Equal(0, db.ExecuteScalar<int>("SELECT COUNT(*) FROM dbo.ProductReservation"));
+            Assert.Equal(0, db.ExecuteScalar<int>("SELECT COUNT(*) FROM dbo.EcommerceSalesCreationLedger"));
+        }
+
+        OfferService service = CreateOfferService(actor);
+        CheckoutResult result = await service.GenerateNewOrderAndSaleFromOffer(Request(), actor, false, attempt);
+        OrderItem[] sources = db.Query<OrderItem>("SELECT * FROM dbo.OrderItem WHERE ID IN (1,2) ORDER BY ID").ToArray();
+        Assert.Equal(new double[] { 2, 5 }, sources.Select(x => x.Qty));
+        Assert.Equal(both ? OfferProcessingStatus.PartiallyProcessed : OfferProcessingStatus.NotProcessed, sources[0].OfferProcessingStatus);
+        Assert.Equal(both ? 1d : 0d, sources[0].OrderedQty);
+        double secondQty = Math.Min(requestedQty, available);
+        Assert.Equal(secondQty >= 5 ? OfferProcessingStatus.FullyProcessed : OfferProcessingStatus.PartiallyProcessed, sources[1].OfferProcessingStatus);
+        Assert.Equal(secondQty, sources[1].OrderedQty);
+        OrderItem[] saleRows = db.Query<OrderItem>("SELECT * FROM dbo.OrderItem WHERE OrderID=100 ORDER BY ID").ToArray();
+        Assert.Equal(both ? 2 : 1, saleRows.Length);
+        Assert.Equal(5d, saleRows[0].FromOfferQty);
+        Assert.Equal(secondQty, saleRows[0].Qty);
+        Assert.Equal(requestedQty, saleRows[0].OrderedQty);
+        Assert.All(saleRows, row => { Assert.True(row.IsFromOffer); Assert.Equal(9m, row.PricePerItem); });
+        if (both) { Assert.Equal(2d, saleRows[1].FromOfferQty); Assert.Equal(1d, saleRows[1].Qty); }
+        double consumed = secondQty + (both ? 1 : 0);
+        Assert.Equal(available - consumed, db.ExecuteScalar<double>("SELECT Amount FROM dbo.ProductAvailability"));
+        Assert.Equal(consumed, db.ExecuteScalar<double>("SELECT SUM(Qty) FROM dbo.ProductReservation"));
+        Assert.True(db.ExecuteScalar<bool>("SELECT IsOfferProcessed FROM dbo.ClientShoppingCart"));
+        CheckoutResult replay = await service.GenerateNewOrderAndSaleFromOffer(Request(), actor, false, attempt);
+        Assert.True(replay.IsReplay);
+        Assert.Equal(result.Sale.NetUid, replay.Sale.NetUid);
+        Assert.Equal(saleRows.Length, db.ExecuteScalar<int>("SELECT COUNT(*) FROM dbo.OrderItem WHERE OrderID=100"));
+        Assert.Equal(available - consumed, db.ExecuteScalar<double>("SELECT Amount FROM dbo.ProductAvailability"));
+    }
+
+    private OfferService CreateOfferService(Guid actor, bool failReload = false) {
+        IDbConnection db = null!;
+        var agreement = new ClientAgreement { Id = 20, NetUid = Guid.NewGuid(), Agreement = new Agreement {
+            Organization = new Organization { Id = 1, NetUid = Guid.NewGuid(), Code = "T" }
+        }};
+        var clients = new Mock<IClientRepositoriesFactory>();
+        var carts = new Mock<IClientShoppingCartRepository>();
+        clients.Setup(x => x.NewClientShoppingCartRepository(It.IsAny<IDbConnection>())).Callback<IDbConnection>(c => db = c).Returns(carts.Object);
+        carts.Setup(x => x.GetByNetId(It.IsAny<Guid>())).Returns((Guid id) => {
+            var offer = db.QuerySingle<ClientShoppingCart>("SELECT * FROM dbo.ClientShoppingCart WHERE NetUID=@id", new { id });
+            offer.ClientAgreement = agreement;
+            offer.CreatedById = 1;
+            offer.ValidUntil = DateTime.Today.AddDays(1);
+            offer.OrderItems = db.Query<OrderItem>("SELECT * FROM dbo.OrderItem WHERE ClientShoppingCartID=10 ORDER BY ID").Select(item => {
+                item.Product = new Product { Id = 7, NetUid = Guid.NewGuid() }; return item;
+            }).ToList();
+            return offer;
+        });
+        carts.Setup(x => x.TrySetProcessedByNetId(It.IsAny<Guid>())).Returns((Guid id) => new ClientShoppingCartRepository(db).TrySetProcessedByNetId(id));
+        carts.Setup(x => x.UpdateProcessingStatus(It.IsAny<ClientShoppingCart>())).Callback<ClientShoppingCart>(offer => new ClientShoppingCartRepository(db).UpdateProcessingStatus(offer));
+        var products = new Mock<IProductRepositoriesFactory> { DefaultValue = DefaultValue.Mock };
+        products.Setup(x => x.NewProductAvailabilityRepository(It.IsAny<IDbConnection>()).GetForEcommercePurchase(7, 1))
+            .Returns(() => db.Query<ProductAvailability>("SELECT * FROM dbo.ProductAvailability").ToList());
+        products.Setup(x => x.NewProductAvailabilityRepository(It.IsAny<IDbConnection>()).Update(It.IsAny<ProductAvailability>()))
+            .Callback<ProductAvailability>(item => db.Execute("UPDATE dbo.ProductAvailability SET Amount=@Amount WHERE ID=@Id", item));
+        products.Setup(x => x.NewProductReservationRepository(It.IsAny<IDbConnection>()).Add(It.IsAny<ProductReservation>()))
+            .Callback<ProductReservation>(item => db.Execute("INSERT dbo.ProductReservation(ID,OrderItemID,Qty) VALUES(@OrderItemId,@OrderItemId,@Qty)", item));
+        var sales = new Mock<ISaleRepositoriesFactory> { DefaultValue = DefaultValue.Mock };
+        sales.Setup(x => x.NewOrderRepository(It.IsAny<IDbConnection>()).Add(It.IsAny<Order>())).Returns(100);
+        sales.Setup(x => x.NewOrderItemRepository(It.IsAny<IDbConnection>()).Add(It.IsAny<OrderItem>()))
+            .Returns((OrderItem item) => new OrderItemRepository(db).Add(item));
+        sales.Setup(x => x.NewOrderItemRepository(It.IsAny<IDbConnection>()).SetOfferProcessingStatuses(It.IsAny<IEnumerable<OrderItem>>()))
+            .Callback<IEnumerable<OrderItem>>(items => new OrderItemRepository(db).SetOfferProcessingStatuses(items));
+        sales.Setup(x => x.NewBaseLifeCycleStatusRepository(It.IsAny<IDbConnection>()).Add(It.IsAny<BaseLifeCycleStatus>())).Returns(1);
+        sales.Setup(x => x.NewBaseSalePaymentStatusRepository(It.IsAny<IDbConnection>()).Add(It.IsAny<BaseSalePaymentStatus>())).Returns(1);
+        sales.Setup(x => x.NewSaleNumberRepository(It.IsAny<IDbConnection>()).GetLastGeneratedByOrganizationNetId(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<int>())).Returns((SaleNumber)null!);
+        sales.Setup(x => x.NewSaleNumberRepository(It.IsAny<IDbConnection>()).Add(It.IsAny<SaleNumber>())).Returns(1);
+        sales.Setup(x => x.NewSaleRepository(It.IsAny<IDbConnection>()).Add(It.IsAny<Sale>())).Returns(200);
+        sales.Setup(x => x.NewSaleRepository(It.IsAny<IDbConnection>()).GetById(200)).Returns(() => failReload
+            ? throw new InvalidOperationException("Synthetic offer sale reload failure.") : new Sale { Id = 200, NetUid = Guid.NewGuid() });
+        var access = new Mock<IClientResourceAccessService>();
+        access.Setup(x => x.CanAccessClientOrAgreement(actor, agreement.NetUid)).Returns(true);
+        var connections = new Mock<IDbConnectionFactory>();
+        connections.Setup(x => x.NewSqlConnection()).Returns(() => new SqlConnection(connectionString));
+        return new OfferService(clients.Object, sales.Object, products.Object,
+            Mock.Of<IUserRepositoriesFactory>(MockBehavior.Loose), connections.Object, new RecordingCrmHandler().Factory(), access.Object,
+            new CheckoutExecutor(connections.Object, new SqlCheckoutLedger()));
+    }
+
     private OrderService CreateService(Guid actor, bool failReload = false) {
         IDbConnection db = null!;
         Guid productId = Guid.NewGuid();
@@ -230,8 +359,8 @@ public sealed class CheckoutCartIdentitySqlTests : IDisposable {
         CREATE TABLE dbo.Product(ID bigint PRIMARY KEY,NetUID uniqueidentifier);
         CREATE TABLE dbo.ClientShoppingCart(ID bigint PRIMARY KEY,Deleted bit NOT NULL,IsOffer bit NOT NULL,
             ClientAgreementID bigint,IsVatCart bit,WorkplaceID bigint NULL);
-        CREATE TABLE dbo.OrderItem(ID bigint PRIMARY KEY,NetUID uniqueidentifier NOT NULL,ProductID bigint,Qty float,
-            PricePerItem decimal(18,2),OrderID bigint NULL,ClientShoppingCartID bigint NULL,Deleted bit NOT NULL,Updated datetime);
+        CREATE TABLE dbo.OrderItem(ID bigint IDENTITY PRIMARY KEY,NetUID uniqueidentifier NOT NULL DEFAULT NEWID(),ProductID bigint,Qty float,
+            PricePerItem decimal(18,2),OrderID bigint NULL,ClientShoppingCartID bigint NULL,Deleted bit NOT NULL DEFAULT 0,Updated datetime);
         CREATE TABLE dbo.ProductAvailability(ID bigint PRIMARY KEY,ProductID bigint,Amount float,Deleted bit);
         CREATE INDEX IX_ProductAvailability_ProductID ON dbo.ProductAvailability(ProductID);
         CREATE TABLE dbo.ProductReservation(ID bigint PRIMARY KEY,OrderItemID bigint,Qty float);
@@ -239,7 +368,8 @@ public sealed class CheckoutCartIdentitySqlTests : IDisposable {
         INSERT dbo.ClientAgreement VALUES(20,NEWID(),1);
         INSERT dbo.Product VALUES(7,NEWID());
         INSERT dbo.ClientShoppingCart VALUES(10,0,0,20,0,NULL);
-        INSERT dbo.OrderItem VALUES(1,NEWID(),7,2,9,NULL,10,0,GETUTCDATE()),(2,NEWID(),7,5,9,NULL,10,0,GETUTCDATE());
+        INSERT dbo.OrderItem(NetUID,ProductID,Qty,PricePerItem,OrderID,ClientShoppingCartID,Deleted,Updated)
+            VALUES(NEWID(),7,2,9,NULL,10,0,GETUTCDATE()),(NEWID(),7,5,9,NULL,10,0,GETUTCDATE());
         INSERT dbo.ProductAvailability VALUES(1,7,10,0);
         INSERT dbo.ProductReservation VALUES(1,1,2),(2,2,5);
         ALTER TABLE dbo.OrderItem ADD InvoiceDocumentQty float NULL,UserID bigint NULL,Comment nvarchar(450) NULL,

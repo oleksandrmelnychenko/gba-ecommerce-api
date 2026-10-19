@@ -183,7 +183,7 @@ public sealed class OfferService : IOfferService {
                     _clientResourceAccessService.CanAccessClientOrAgreement(clientNetId, offer.ClientAgreement.NetUid)))
                 throw new UnauthorizedAccessException();
 
-            List<OrderItem> selectedOrderItems = BuildCanonicalOfferItems(offer, clientShoppingCart);
+            List<(OrderItem Source, OrderItem Item)> selectedOrderItems = BuildCanonicalOfferItems(offer, clientShoppingCart);
             if (!shoppingCartRepository.TrySetProcessedByNetId(clientShoppingCart.NetUid))
                 throw new Exception(OfferResourceNames.OFFER_PROCESSED);
 
@@ -217,12 +217,12 @@ public sealed class OfferService : IOfferService {
 
             CheckoutLocks.LockProductStock(
                 connection,
-                selectedOrderItems.Select(item => item.Product?.Id ?? item.ProductId));
+                selectedOrderItems.Select(selection => selection.Item.Product?.Id ?? selection.Item.ProductId));
 
             if (selectedOrderItems.Any()) {
                 List<OrderItem> offeredOrderItems = new();
 
-                foreach (OrderItem orderItem in selectedOrderItems) {
+                foreach ((OrderItem fromOfferItem, OrderItem orderItem) in selectedOrderItems) {
                     orderItem.ClientShoppingCartId = null;
                     orderItem.OrderId = order.Id;
                     orderItem.ProductId = orderItem.Product.Id;
@@ -240,20 +240,16 @@ public sealed class OfferService : IOfferService {
 
                         if (productAvailabilities.Sum(a => a.Amount) < orderItem.Qty) orderItem.Qty = productAvailabilities.Sum(a => a.Amount);
 
-                        if (offer.OrderItems.Any(i => i.ProductId.Equals(orderItem.ProductId))) {
-                            OrderItem fromOfferItem = offer.OrderItems.First(i => i.ProductId.Equals(orderItem.ProductId));
+                        orderItem.FromOfferQty = fromOfferItem.Qty;
 
-                            orderItem.FromOfferQty = fromOfferItem.Qty;
+                        orderItem.IsFromOffer = true;
 
-                            orderItem.IsFromOffer = true;
+                        fromOfferItem.OfferProcessingStatus =
+                            orderItem.Qty >= fromOfferItem.Qty ? OfferProcessingStatus.FullyProcessed : OfferProcessingStatus.PartiallyProcessed;
 
-                            fromOfferItem.OfferProcessingStatus =
-                                orderItem.Qty >= fromOfferItem.Qty ? OfferProcessingStatus.FullyProcessed : OfferProcessingStatus.PartiallyProcessed;
+                        fromOfferItem.OrderedQty = orderItem.Qty;
 
-                            fromOfferItem.OrderedQty = orderItem.Qty;
-
-                            offeredOrderItems.Add(fromOfferItem);
-                        }
+                        offeredOrderItems.Add(fromOfferItem);
 
                         orderItem.Id = orderItemRepository.Add(orderItem);
 
@@ -381,7 +377,7 @@ public sealed class OfferService : IOfferService {
         }));
     }
 
-    private static List<OrderItem> BuildCanonicalOfferItems(
+    private static List<(OrderItem Source, OrderItem Item)> BuildCanonicalOfferItems(
         ClientShoppingCart offer,
         ClientShoppingCart requestedCart) {
         if (requestedCart?.OrderItems == null ||
@@ -392,7 +388,7 @@ public sealed class OfferService : IOfferService {
             .Where(item => item.NetUid != Guid.Empty)
             .ToDictionary(item => item.NetUid);
         HashSet<Guid> selectedNetIds = new();
-        List<OrderItem> selected = new(requestedCart.OrderItems.Count);
+        List<(OrderItem Source, OrderItem Item)> selected = new(requestedCart.OrderItems.Count);
 
         foreach (OrderItem requested in requestedCart.OrderItems) {
             if (requested == null ||
@@ -405,7 +401,7 @@ public sealed class OfferService : IOfferService {
                 requested.Qty > offered.Qty)
                 throw new ArgumentException("A valid offer selection is required.");
 
-            selected.Add(new OrderItem {
+            selected.Add((offered, new OrderItem {
                 ProductId = offered.ProductId,
                 Product = offered.Product,
                 Qty = requested.Qty,
@@ -420,7 +416,7 @@ public sealed class OfferService : IOfferService {
                 IsFromReSale = offered.IsFromReSale,
                 MisplacedSaleId = offered.MisplacedSaleId,
                 IsFromShiftedItem = offered.IsFromShiftedItem
-            });
+            }));
         }
 
         return selected;
