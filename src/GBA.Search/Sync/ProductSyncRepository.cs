@@ -53,31 +53,31 @@ public sealed class ProductSyncRepository(Func<IDbConnection> connectionFactory)
     : IProductSyncRepository {
     internal const int SqlParameterBatchSize = 2000;
     internal const string DirectChangedProductIdsSql = @"
-SELECT p.ID FROM Product p WHERE p.Deleted = 0 AND p.Updated > @Since
-UNION
-SELECT pon.ProductID FROM ProductOriginalNumber pon INNER JOIN Product p ON p.ID = pon.ProductID AND p.Deleted = 0 WHERE pon.Updated > @Since OR pon.Created > @Since
-UNION
-SELECT pon.ProductID FROM OriginalNumber on_ INNER JOIN ProductOriginalNumber pon ON pon.OriginalNumberID = on_.ID AND pon.Deleted = 0 INNER JOIN Product p ON p.ID = pon.ProductID AND p.Deleted = 0 WHERE on_.Updated > @Since
-UNION
-SELECT pa.ProductID FROM ProductAvailability pa INNER JOIN Product p ON p.ID = pa.ProductID AND p.Deleted = 0 WHERE pa.Updated > @Since
-UNION
-SELECT pp.ProductID FROM ProductPricing pp INNER JOIN Product p ON p.ID = pp.ProductID AND p.Deleted = 0 WHERE pp.Updated > @Since OR pp.Created > @Since
-UNION
-SELECT ppg.ProductID FROM ProductProductGroup ppg INNER JOIN Product p ON p.ID = ppg.ProductID AND p.Deleted = 0 WHERE ppg.Updated > @Since OR ppg.Created > @Since
-UNION
-SELECT ps.ProductID FROM ProductSlug ps INNER JOIN Product p ON p.ID = ps.ProductID AND p.Deleted = 0 WHERE ps.Updated > @Since OR ps.Created > @Since";
+SELECT live.ID
+FROM (
+    SELECT ID FROM Product WHERE Updated > @Since
+    UNION SELECT ProductID FROM ProductOriginalNumber WHERE Updated > @Since
+    UNION SELECT ProductID FROM ProductOriginalNumber WHERE Created > @Since
+    UNION SELECT pon.ProductID FROM OriginalNumber on_ INNER JOIN ProductOriginalNumber pon ON pon.OriginalNumberID = on_.ID AND pon.Deleted = 0 WHERE on_.Updated > @Since
+    UNION SELECT ProductID FROM ProductAvailability WHERE Updated > @Since
+    UNION SELECT ProductID FROM ProductPricing WHERE Updated > @Since
+    UNION SELECT ProductID FROM ProductPricing WHERE Created > @Since
+    UNION SELECT ProductID FROM ProductProductGroup WHERE Updated > @Since
+    UNION SELECT ProductID FROM ProductProductGroup WHERE Created > @Since
+    UNION SELECT ProductID FROM ProductSlug WHERE Updated > @Since
+    UNION SELECT ProductID FROM ProductSlug WHERE Created > @Since
+) AS changed
+CROSS APPLY (
+    SELECT TOP (1) p.ID FROM Product p WHERE p.ID = changed.ID AND p.Deleted = 0
+) AS live
+OPTION (MAXDOP 1, OPTIMIZE FOR (@Since = '9999-12-31T23:59:59.997'), USE HINT ('DISABLE_ROW_MODE_MEMORY_GRANT_FEEDBACK', 'DISABLE_BATCH_MODE_MEMORY_GRANT_FEEDBACK'))";
 
     internal const string HasGlobalRetailDependencyChangesSql = @"
 SELECT CAST(CASE
-    WHEN EXISTS (
-        SELECT 1
-        FROM PricingProductGroupDiscount
-        WHERE Updated > @Since OR Created > @Since
-    ) OR EXISTS (
-        SELECT 1
-        FROM ProductGroupDiscount
-        WHERE Updated > @Since OR Created > @Since
-    )
+    WHEN EXISTS (SELECT 1 FROM PricingProductGroupDiscount WHERE Updated > @Since)
+      OR EXISTS (SELECT 1 FROM PricingProductGroupDiscount WHERE Created > @Since)
+      OR EXISTS (SELECT 1 FROM ProductGroupDiscount WHERE Updated > @Since)
+      OR EXISTS (SELECT 1 FROM ProductGroupDiscount WHERE Created > @Since)
     THEN 1 ELSE 0
 END AS bit)";
 
