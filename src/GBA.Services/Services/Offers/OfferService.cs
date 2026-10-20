@@ -15,6 +15,7 @@ using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities.Clients;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.Entities.Sales;
+using GBA.Domain.EntityHelpers.ProductAvailabilityModels;
 using GBA.Domain.Entities.Sales.LifeCycleStatuses;
 using GBA.Domain.Entities.Sales.PaymentStatuses;
 using GBA.Domain.EntityHelpers;
@@ -194,6 +195,13 @@ public sealed class OfferService : IOfferService {
                     () => shoppingCartRepository.GetByClientNetId(clientNetId, offer.IsVatCart))
                 : null;
 
+            IReadOnlyList<StockReservationReconciliationRow> reconciliationBefore =
+                CheckoutStockReconciliation.Snapshot(
+                    _productRepositoriesFactory,
+                    connection,
+                    currentCart?.OrderItems.Select(item => item.Id) ?? Enumerable.Empty<long>());
+            List<long> reservedOrderItemIds = new();
+
             Order order = new() {
                 OrderSource = OrderSource.Offer,
                 OrderStatus = OrderStatus.NewOrderCart,
@@ -252,11 +260,14 @@ public sealed class OfferService : IOfferService {
                         offeredOrderItems.Add(fromOfferItem);
 
                         orderItem.Id = orderItemRepository.Add(orderItem);
+                        reservedOrderItemIds.Add(orderItem.Id);
 
                         double toDecreaseQty = orderItem.Qty;
 
                         foreach (ProductAvailability productAvailability in productAvailabilities.Where(a => a.Amount > 0)) {
                             if (toDecreaseQty.Equals(0d)) break;
+
+                            double amountBefore = productAvailability.Amount;
 
                             if (productAvailability.Amount >= toDecreaseQty) {
                                 productReservationRepository
@@ -282,7 +293,7 @@ public sealed class OfferService : IOfferService {
                                 productAvailability.Amount = 0d;
                             }
 
-                            productAvailabilityRepository.Update(productAvailability);
+                            productAvailabilityRepository.DecreaseAmount(productAvailability, amountBefore - productAvailability.Amount);
                         }
 
                         BackgroundSyncRunner.Run(async cancellationToken => {
@@ -354,6 +365,16 @@ public sealed class OfferService : IOfferService {
             sale.Id = saleRepository.Add(sale);
 
             Sale createdSale = saleRepository.GetById(sale.Id);
+
+            CheckoutStockReconciliation.Verify(
+                _productRepositoriesFactory,
+                _connectionFactory,
+                connection,
+                reconciliationBefore,
+                reservedOrderItemIds.Concat(currentCart?.OrderItems.Select(item => item.Id) ?? Enumerable.Empty<long>()),
+                "shop:" + OfferCheckoutOperation,
+                attempt.IdempotencyKey,
+                clientNetId);
 
             BackgroundSyncRunner.Run(async cancellationToken => {
                 string saleSyncCrmUrl;

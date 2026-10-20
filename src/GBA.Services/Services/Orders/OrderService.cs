@@ -21,6 +21,7 @@ using GBA.Domain.Entities.Clients;
 using GBA.Domain.Entities.Delivery;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.Entities.Sales;
+using GBA.Domain.EntityHelpers.ProductAvailabilityModels;
 using GBA.Domain.Entities.Sales.LifeCycleStatuses;
 using GBA.Domain.Entities.Sales.PaymentStatuses;
 using GBA.Domain.EntityHelpers;
@@ -362,6 +363,9 @@ public sealed class OrderService : IOrderService {
             if (clientShoppingCart == null || !clientShoppingCart.OrderItems.Any())
                 throw new ArgumentException("You need to add products first.");
 
+            IReadOnlyList<StockReservationReconciliationRow> reconciliationBefore =
+                CheckoutStockReconciliation.Snapshot(_productRepositoriesFactory, connection, clientShoppingCart.OrderItems.Select(item => item.Id));
+
             Order order = new() {
                 OrderSource = OrderSource.Shop,
                 OrderStatus = OrderStatus.NewOrderCart,
@@ -415,6 +419,16 @@ public sealed class OrderService : IOrderService {
             sale.Id = saleRepository.Add(sale);
 
             Sale createdSale = saleRepository.GetById(sale.Id);
+
+            CheckoutStockReconciliation.Verify(
+                _productRepositoriesFactory,
+                _connectionFactory,
+                connection,
+                reconciliationBefore,
+                CheckoutStockReconciliation.OrderItemIds(_productRepositoriesFactory, connection, order.Id),
+                "shop:" + CartCheckoutOperation,
+                attempt.IdempotencyKey,
+                clientNetId);
 
             BackgroundSyncRunner.Run(async cancellationToken => {
                 string saleSyncCrmUrl;
@@ -518,16 +532,18 @@ public sealed class OrderService : IOrderService {
     }
 
     public Task<CheckoutResult> GenerateNewSaleWithInvoice(
-        Sale sale,
+        Sale requestedSale,
         Guid clientNetId,
         bool isWorkplace,
         bool withVatRequested,
         CheckoutAttempt attempt) {
-        ValidateSaleComment(sale);
+        ValidateSaleComment(requestedSale);
 
         CheckoutRequest request = new(InvoiceCheckoutOperation, attempt, clientNetId, clientNetId, withVatRequested);
+        Func<Sale> nextSale = CheckoutRetry.AttemptInput(requestedSale);
 
         return Task.FromResult(_checkoutExecutor.Execute(request, connection => {
+            Sale sale = nextSale();
             IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
             IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
@@ -610,6 +626,9 @@ public sealed class OrderService : IOrderService {
 
             if (currentCart == null || currentCart.OrderItems.Count == 0)
                 throw new ArgumentException("The current shopping cart is empty.");
+
+            IReadOnlyList<StockReservationReconciliationRow> reconciliationBefore =
+                CheckoutStockReconciliation.Snapshot(_productRepositoriesFactory, connection, currentCart.OrderItems.Select(item => item.Id));
 
             Dictionary<Guid, double> observedCartQuantities = currentCart.OrderItems
                 .GroupBy(item => item.NetUid)
@@ -751,6 +770,8 @@ public sealed class OrderService : IOrderService {
                             foreach (ProductAvailability productAvailability in productAvailabilities.Where(a => a.Amount > 0)) {
                                 if (toDecreaseAmount.Equals(0d)) break;
 
+                                double amountBefore = productAvailability.Amount;
+
                                 ProductReservation reservation =
                                     productReservationRepository
                                         .GetByOrderItemAndProductAvailabilityIds(
@@ -793,7 +814,7 @@ public sealed class OrderService : IOrderService {
                                     productAvailability.Amount = 0d;
                                 }
 
-                                productAvailabilityRepository.Update(productAvailability);
+                                productAvailabilityRepository.DecreaseAmount(productAvailability, amountBefore - productAvailability.Amount);
                             }
                         }
                     }
@@ -827,6 +848,8 @@ public sealed class OrderService : IOrderService {
                 foreach (ProductAvailability productAvailability in productAvailabilities.Where(a => a.Amount > 0)) {
                     if (toDecreaseQty.Equals(0d)) break;
 
+                    double amountBefore = productAvailability.Amount;
+
                     if (productAvailability.Amount >= toDecreaseQty) {
                         productReservationRepository
                             .Add(new ProductReservation {
@@ -851,7 +874,7 @@ public sealed class OrderService : IOrderService {
                         productAvailability.Amount = 0d;
                     }
 
-                    productAvailabilityRepository.Update(productAvailability);
+                    productAvailabilityRepository.DecreaseAmount(productAvailability, amountBefore - productAvailability.Amount);
                 }
 
                 _reindexSignal.Request(orderItem.ProductId);
@@ -918,6 +941,17 @@ public sealed class OrderService : IOrderService {
 
             Sale createdSale = saleRepository.GetByIdWithCalculatedDynamicPrices(sale.Id);
 
+            CheckoutStockReconciliation.Verify(
+                _productRepositoriesFactory,
+                _connectionFactory,
+                connection,
+                reconciliationBefore,
+                CheckoutStockReconciliation.OrderItemIds(_productRepositoriesFactory, connection, order.Id)
+                    .Concat(currentCart.OrderItems.Select(item => item.Id)),
+                "shop:" + InvoiceCheckoutOperation,
+                attempt.IdempotencyKey,
+                clientNetId);
+
             BackgroundSyncRunner.Run(async cancellationToken => {
                 string saleSyncCrmUrl;
 
@@ -963,20 +997,22 @@ public sealed class OrderService : IOrderService {
     }
 
     public async Task<RetailCheckoutResult> GenerateNewRetailSale(
-        Sale sale,
+        Sale requestedSale,
         Guid retailClientNetId,
         bool fullPayment,
         CheckoutAttempt attempt) {
-        ValidateSaleComment(sale);
+        ValidateSaleComment(requestedSale);
 
         if (retailClientNetId == Guid.Empty)
             throw new ArgumentException("A valid retail client is required.");
-        if (sale?.Order?.OrderItems == null || sale.Order.OrderItems.Count == 0 || sale.Order.OrderItems.Count > 100)
+        if (requestedSale?.Order?.OrderItems == null || requestedSale.Order.OrderItems.Count == 0 || requestedSale.Order.OrderItems.Count > 100)
             throw new ArgumentException("Order must contain between 1 and 100 items.");
 
         CheckoutRequest request = new(QuickCheckoutOperation, attempt, retailClientNetId, retailClientNetId, fullPayment);
+        Func<Sale> nextSale = CheckoutRetry.AttemptInput(requestedSale);
 
         CheckoutResult result = _checkoutExecutor.Execute(request, connection => {
+            Sale sale = nextSale();
             IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
             IProductAvailabilityRepository productAvailabilityRepository = _productRepositoriesFactory.NewProductAvailabilityRepository(connection);
             IProductReservationRepository productReservationRepository = _productRepositoriesFactory.NewProductReservationRepository(connection);
@@ -1059,6 +1095,8 @@ public sealed class OrderService : IOrderService {
                 orderItem.Id = orderItemRepository.Add(orderItem);
 
                 if (productAvailability.Amount > 0 && !toDecreaseQty.Equals(0d)) {
+                    double amountBefore = productAvailability.Amount;
+
                     if (productAvailability.Amount >= toDecreaseQty) {
                         productReservationRepository
                             .Add(new ProductReservation {
@@ -1079,7 +1117,7 @@ public sealed class OrderService : IOrderService {
                         productAvailability.Amount = 0d;
                     }
 
-                    productAvailabilityRepository.Update(productAvailability);
+                    productAvailabilityRepository.DecreaseAmount(productAvailability, amountBefore - productAvailability.Amount);
                 }
 
                 _reindexSignal.Request(orderItem.ProductId);
@@ -1142,6 +1180,16 @@ public sealed class OrderService : IOrderService {
             sale.Id = saleRepository.Add(sale);
 
             Sale createdSale = saleRepository.GetByIdWithCalculatedDynamicPrices(sale.Id);
+
+            CheckoutStockReconciliation.Verify(
+                _productRepositoriesFactory,
+                _connectionFactory,
+                connection,
+                Array.Empty<StockReservationReconciliationRow>(),
+                CheckoutStockReconciliation.OrderItemIds(_productRepositoriesFactory, connection, order.Id),
+                "shop:" + QuickCheckoutOperation,
+                attempt.IdempotencyKey,
+                retailClientNetId);
 
             if (misplacedOrderItems.Any()) {
                 long misplacedSaleId = misplacedSaleRepository.Add(new MisplacedSale { RetailClientId = retailClient.Id });
@@ -1307,6 +1355,8 @@ public sealed class OrderService : IOrderService {
                 foreach (ProductAvailability productAvailability in productAvailabilities.Where(a => a.Amount > 0)) {
                     if (toDecreaseQty.Equals(0d)) break;
 
+                    double amountBefore = productAvailability.Amount;
+
                     if (productAvailability.Amount >= toDecreaseQty) {
                         productReservationRepository
                             .Add(new ProductReservation {
@@ -1331,7 +1381,7 @@ public sealed class OrderService : IOrderService {
                         productAvailability.Amount = 0d;
                     }
 
-                    productAvailabilityRepository.Update(productAvailability);
+                    productAvailabilityRepository.DecreaseAmount(productAvailability, amountBefore - productAvailability.Amount);
                 }
 
                 _reindexSignal.Request(orderItem.ProductId);

@@ -13,6 +13,10 @@ public interface IProductAvailabilityRepository {
 
     void Update(List<ProductAvailability> productAvailabilities);
 
+    void IncreaseAmount(ProductAvailability productAvailability, double qty);
+
+    void DecreaseAmount(ProductAvailability productAvailability, double qty);
+
     void RemoveById(long id);
 
     ProductAvailability GetByProductIdForCulture(long id, string culture);

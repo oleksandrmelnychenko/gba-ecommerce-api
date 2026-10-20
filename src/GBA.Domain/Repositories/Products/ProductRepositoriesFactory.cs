@@ -56,6 +56,10 @@ public sealed class ProductRepositoriesFactory : IProductRepositoriesFactory {
         return new ProductReservationRepository(connection);
     }
 
+    public IStockReservationReconciliationRepository NewStockReservationReconciliationRepository(IDbConnection connection) {
+        return new StockReservationReconciliationRepository(connection);
+    }
+
     public IProductAvailabilityRepository NewProductAvailabilityRepository(IDbConnection connection) {
         return new ProductAvailabilityRepository(connection);
     }

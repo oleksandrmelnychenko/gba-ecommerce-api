@@ -5,7 +5,9 @@ using System.Text.Json.Serialization;
 using System.Transactions;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities.Sales;
+using GBA.Domain.EntityHelpers.ProductAvailabilityModels;
 using Microsoft.Data.SqlClient;
+using NLog;
 
 namespace GBA.Services.Infrastructure.Checkout;
 
@@ -16,6 +18,8 @@ public interface ICheckoutExecutor {
 }
 
 public sealed class CheckoutExecutor : ICheckoutExecutor {
+    private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
+
     public const string ConcurrentChangeMessage =
         "The checkout collided with a concurrent change and was rolled back. Retry the request with the same key.";
 
@@ -47,28 +51,45 @@ public sealed class CheckoutExecutor : ICheckoutExecutor {
         CheckoutClaim claim;
         Sale createdSale = null;
 
-        try {
-            using TransactionScope scope = CheckoutTransaction.Begin();
-            using IDbConnection connection = _connectionFactory.NewSqlConnection();
-            connection.Open();
+        for (int attempt = 1; ; attempt++) {
+            try {
+                using TransactionScope scope = CheckoutTransaction.Begin();
+                using IDbConnection connection = _connectionFactory.NewSqlConnection();
+                connection.Open();
 
-            claim = _ledger.TryClaim(connection, request);
+                claim = _ledger.TryClaim(connection, request);
 
-            if (claim == CheckoutClaim.Claimed) {
-                createdSale = createSale(connection);
+                if (claim == CheckoutClaim.Claimed) {
+                    createdSale = createSale(connection);
 
-                if (createdSale == null || createdSale.Id <= 0 || createdSale.NetUid == Guid.Empty)
-                    throw new InvalidOperationException("The created sale could not be reloaded.");
+                    if (createdSale == null || createdSale.Id <= 0 || createdSale.NetUid == Guid.Empty)
+                        throw new InvalidOperationException("The created sale could not be reloaded.");
 
-                _ledger.Complete(
-                    connection,
-                    request,
-                    JsonSerializer.Serialize(createdSale, ReceiptJsonOptions));
+                    _ledger.Complete(
+                        connection,
+                        request,
+                        JsonSerializer.Serialize(createdSale, ReceiptJsonOptions));
 
-                scope.Complete();
+                    scope.Complete();
+                }
+
+                break;
+            } catch (Exception exception) when (IsTransientConcurrencyFailure(exception)) {
+                if (attempt >= CheckoutRetry.MaxAttempts)
+                    throw new CheckoutConflictException(ConcurrentChangeMessage);
+
+                _logger.Warn(
+                    "Checkout {Operation} {OperationNetUid} attempt {Attempt}/{MaxAttempts} was rolled back by a transient SQL conflict and will be retried: {Message}",
+                    request.OperationName,
+                    request.OperationNetUid,
+                    attempt,
+                    CheckoutRetry.MaxAttempts,
+                    exception.Message);
+                createdSale = null;
+                CheckoutRetry.Wait(CheckoutRetry.Backoff(attempt));
+            } catch (InsufficientProductAvailabilityException exception) {
+                throw new CheckoutConflictException(exception.Message);
             }
-        } catch (Exception exception) when (IsTransientConcurrencyFailure(exception)) {
-            throw new CheckoutConflictException(ConcurrentChangeMessage);
         }
 
         if (claim == CheckoutClaim.Claimed) return new CheckoutResult(createdSale, false);

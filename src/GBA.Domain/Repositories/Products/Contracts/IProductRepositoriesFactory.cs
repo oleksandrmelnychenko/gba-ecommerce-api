@@ -31,6 +31,8 @@ public interface IProductRepositoriesFactory {
 
     IProductAvailabilityRepository NewProductAvailabilityRepository(IDbConnection connection);
 
+    IStockReservationReconciliationRepository NewStockReservationReconciliationRepository(IDbConnection connection);
+
     IProductSpecificationRepository NewProductSpecificationRepository(IDbConnection connection);
 
     IProductImageRepository NewProductImageRepository(IDbConnection connection);

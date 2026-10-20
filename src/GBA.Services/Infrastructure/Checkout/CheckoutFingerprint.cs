@@ -51,6 +51,22 @@ public static class CheckoutFingerprint {
             sale == null ? string.Empty : JsonSerializer.Serialize(sale, CheckoutExecutor.ReceiptJsonOptions));
     }
 
+    public static byte[] ForCartAdd(IEnumerable<OrderItem> items, bool withVat) {
+        IEnumerable<string> lines = (items ?? Enumerable.Empty<OrderItem>())
+            .Where(item => item != null)
+            .Select(item => string.Create(
+                CultureInfo.InvariantCulture,
+                $"{item.Product?.NetUid ?? Guid.Empty:D}|{item.Product?.Id ?? 0}|{item.ProductId}={item.Qty:R}"));
+
+        return Compute(
+            new[] {
+                    "cart-add",
+                    withVat ? "1" : "0"
+                }
+                .Concat(lines)
+                .ToArray());
+    }
+
     public static byte[] ForOffer(ClientShoppingCart offer, bool addCurrentCartItems) {
         IEnumerable<string> items = (offer?.OrderItems ?? Enumerable.Empty<OrderItem>())
             .Where(item => item != null)

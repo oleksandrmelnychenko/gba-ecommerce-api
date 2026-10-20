@@ -19,6 +19,7 @@ using GBA.Domain.Entities.Clients;
 using GBA.Domain.Entities.Products;
 using GBA.Domain.Entities.Sales;
 using GBA.Domain.EntityHelpers.ClientShoppingCartModels;
+using GBA.Domain.EntityHelpers.ProductAvailabilityModels;
 using GBA.Domain.Repositories.Agreements.Contracts;
 using GBA.Domain.Repositories.Clients.Contracts;
 using GBA.Domain.Repositories.Currencies.Contracts;
@@ -32,10 +33,13 @@ using GBA.Services.Infrastructure.Checkout;
 using GBA.Services.Services.Clients.Contracts;
 using Microsoft.Extensions.Http;
 using GBA.Common.Models;
+using NLog;
 
 namespace GBA.Services.Services.Clients;
 
 public sealed class ClientShoppingCartService : IClientShoppingCartService {
+    private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
+
     private static readonly JsonSerializerOptions _jsonSerializerOptions = new() {
         PropertyNameCaseInsensitive = true
     };
@@ -144,6 +148,11 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
     private readonly IStorageRepositoryFactory _storageRepositoryFactory;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ISearchReindexSignal _reindexSignal;
+    private readonly ICheckoutLedger _checkoutLedger;
+
+    public const string CartAddOperation = "cart-add";
+
+    public const string CartAddManyOperation = "cart-add-many";
 
     public ClientShoppingCartService(
         IClientRepositoriesFactory clientRepositoriesFactory,
@@ -156,7 +165,9 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         IDbConnectionFactory connectionFactory,
         IAgreementRepositoriesFactory agreementRepositoriesFactory,
         IHttpClientFactory httpClientFactory,
-        ISearchReindexSignal reindexSignal) {
+        ISearchReindexSignal reindexSignal,
+        ICheckoutLedger checkoutLedger = null) {
+        _checkoutLedger = checkoutLedger;
         _clientRepositoriesFactory = clientRepositoriesFactory;
         _reindexSignal = reindexSignal;
 
@@ -177,6 +188,10 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
     }
 
     public Task<OrderItem> Add(OrderItem orderItem, Guid clientNetId, bool withVat) {
+        return Add(orderItem, clientNetId, withVat, null);
+    }
+
+    public Task<OrderItem> Add(OrderItem orderItem, Guid clientNetId, bool withVat, Guid? operationNetUid) {
         if (orderItem == null)
             throw new Exception("OrderItem can not be empty.");
         if (!orderItem.IsNew())
@@ -185,7 +200,15 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             throw new Exception("Product need to be specified.");
         if (orderItem.Qty.Equals(0)) throw new Exception("You need to specify Qty of product that will be added.");
 
-        return Task.FromResult(RunCartWrite((connection, effects) => {
+        CartInputSnapshot input = new(new[] { orderItem });
+        CheckoutRequest ledgerRequest = CartLedgerRequest(
+            CartAddOperation,
+            operationNetUid,
+            clientNetId,
+            withVat,
+            CheckoutFingerprint.ForCartAdd(new[] { orderItem }, withVat));
+
+        return Task.FromResult(RunKeyedCartWrite(ledgerRequest, input, (connection, effects) => {
             CartContext context = ResolveCartContext(connection, clientNetId);
 
             ApplyAuthoritativeProduct(connection, context.ClientAgreement, orderItem);
@@ -204,16 +227,20 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                     sellableQuantity
                 );
 
-            OrderItem line = AddToCart(connection, stock, cart, orderItem, availabilities, orderItem.Qty);
+            OrderItem line = AddToCart(connection, stock, cart, orderItem, availabilities, orderItem.Qty, effects);
 
             stock.ExtendCart(cart.Id, DateTime.Now.Date);
             effects.StockChanged(line.ProductId, orderItem.Product.NetUid);
 
             return LoadCartLine(connection, line.Id, context.ClientAgreement);
-        }));
+        }, CartAddOperation));
     }
 
     public Task<List<OrderItem>> Add(List<OrderItem> orderItems, Guid clientNetId, bool withVat) {
+        return Add(orderItems, clientNetId, withVat, null);
+    }
+
+    public Task<List<OrderItem>> Add(List<OrderItem> orderItems, Guid clientNetId, bool withVat, Guid? operationNetUid) {
         List<OrderItem> requested = (orderItems ?? new List<OrderItem>())
             .Where(item => item != null &&
                            item.IsNew() &&
@@ -224,7 +251,15 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             throw new ArgumentException("Between 1 and 100 order items can be added at once.");
         if (requested.Count == 0) return Task.FromResult(new List<OrderItem>());
 
-        return Task.FromResult(RunCartWrite((connection, effects) => {
+        CartInputSnapshot input = new(requested);
+        CheckoutRequest ledgerRequest = CartLedgerRequest(
+            CartAddManyOperation,
+            operationNetUid,
+            clientNetId,
+            withVat,
+            CheckoutFingerprint.ForCartAdd(requested, withVat));
+
+        return Task.FromResult(RunKeyedCartWrite(ledgerRequest, input, (connection, effects) => {
             CartContext context = ResolveCartContext(connection, clientNetId);
 
             foreach (OrderItem orderItem in requested)
@@ -245,7 +280,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 orderItem.OverLordQty = qty;
                 orderItem.OrderedQty = qty;
 
-                OrderItem line = AddToCart(connection, stock, cart, orderItem, availabilities, qty);
+                OrderItem line = AddToCart(connection, stock, cart, orderItem, availabilities, qty, effects);
                 if (!lineIds.Contains(line.Id)) lineIds.Add(line.Id);
                 effects.StockChanged(line.ProductId, orderItem.Product.NetUid);
             }
@@ -255,7 +290,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             return lineIds
                 .Select(id => LoadCartLine(connection, id, context.ClientAgreement))
                 .ToList();
-        }));
+        }, CartAddManyOperation));
     }
 
     public Task<OrderItem> Update(OrderItem orderItem, Guid clientNetId, bool withVat) {
@@ -264,6 +299,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         if (orderItem.IsNew())
             throw new Exception("New OrderItem is not valid input for current request.");
         ValidateRequestedQuantity(orderItem);
+
+        CartInputSnapshot input = new(new[] { orderItem });
 
         return Task.FromResult(RunCartWrite((connection, effects) => {
             CartContext context = ResolveCartContext(connection, clientNetId);
@@ -282,7 +319,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
                 _saleRepositoriesFactory
                     .NewOrderItemRepository(connection)
                     .GetByIdWithIncludes(current.Id, context.ClientAgreement.NetUid));
-        }));
+        }, "cart-update", input.Restore));
     }
 
     public Task<List<OrderItem>> Update(List<OrderItem> orderItems, Guid clientNetId, bool withVat) {
@@ -293,6 +330,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             throw new ArgumentException("Between 1 and 100 order items can be updated at once.");
         foreach (OrderItem orderItem in requested) ValidateRequestedQuantity(orderItem);
         if (requested.Count == 0) return Task.FromResult(new List<OrderItem>());
+
+        CartInputSnapshot input = new(requested);
 
         return Task.FromResult(RunCartWrite((connection, effects) => {
             CartContext context = ResolveCartContext(connection, clientNetId);
@@ -315,7 +354,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             return currentLines
                 .Select(item => NormalizeOverLordQty(orderItemRepository.GetByIdWithIncludes(item.Id, context.ClientAgreement.NetUid)))
                 .ToList();
-        }));
+        }, "cart-update-many", input.Restore));
     }
 
     public Task<IEnumerable<OrderItem>> GetAllItemsFromCurrentShoppingCartByClientNetId(Guid netId, bool withVat) {
@@ -359,7 +398,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             stock.ExtendCart(cart.Id, DateTime.Now.Date);
 
             return 1;
-        });
+        }, "cart-delete");
 
         return Task.CompletedTask;
     }
@@ -387,7 +426,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             if (removed > 0) stock.ExtendCart(cart.Id, DateTime.Now.Date);
 
             return removed;
-        });
+        }, "cart-delete-all");
 
         return Task.CompletedTask;
     }
@@ -407,7 +446,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         foreach (long cartId in expiredCartIds) {
             try {
                 releasedReservations += RunCartWrite((connection, effects) =>
-                    ReleaseExpiredCart(connection, effects, cartId, today, utcNow));
+                    ReleaseExpiredCart(connection, effects, cartId, today, utcNow), "cart-expiry");
             } catch (CheckoutConflictException) {
             }
         }
@@ -432,6 +471,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         int releasedReservations = 0;
 
         foreach (OrderItem item in items.OrderBy(cartItem => cartItem.Id)) {
+            effects.TrackExistingLine(connection, item.Id);
+
             if (!orderItemRepository.RemoveFromShoppingCart(item.NetUid, cartId)) continue;
 
             releasedReservations += stock.ReleaseAll(item.Id);
@@ -506,29 +547,126 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
     private const double QuantityTolerance = 1e-9;
 
-    private T RunCartWrite<T>(Func<IDbConnection, CartWriteEffects, T> work) {
+    private T RunCartWrite<T>(
+        Func<IDbConnection, CartWriteEffects, T> work,
+        string source,
+        Action restoreInput = null,
+        Guid operationNetUid = default) {
         if (Transaction.Current != null)
             throw new InvalidOperationException("Shopping cart writes must own their database transaction.");
 
-        CartWriteEffects effects = new();
-        T result;
+        for (int attempt = 1; ; attempt++) {
+            CartWriteEffects effects = new() { ProductRepositoriesFactory = _productRepositoriesFactory };
+            T result;
 
-        try {
-            using TransactionScope scope = CheckoutTransaction.Begin();
-            using IDbConnection connection = _connectionFactory.NewSqlConnection();
-            connection.Open();
+            try {
+                if (attempt > 1) restoreInput?.Invoke();
 
-            result = work(connection, effects);
+                using TransactionScope scope = CheckoutTransaction.Begin();
+                using IDbConnection connection = _connectionFactory.NewSqlConnection();
+                connection.Open();
 
-            scope.Complete();
-        } catch (Exception exception) when (CheckoutExecutor.IsTransientConcurrencyFailure(exception)) {
-            throw new CheckoutConflictException(CheckoutConflictException.CartStockChangedMessage);
+                result = work(connection, effects);
+
+                CheckoutStockReconciliation.Verify(
+                    _productRepositoriesFactory,
+                    _connectionFactory,
+                    connection,
+                    effects.ReconciliationBefore,
+                    effects.ReconciliationLines,
+                    "shop:" + source,
+                    operationNetUid,
+                    Guid.Empty);
+
+                scope.Complete();
+            } catch (Exception exception) when (CheckoutExecutor.IsTransientConcurrencyFailure(exception)) {
+                if (attempt >= CheckoutRetry.MaxAttempts)
+                    throw new CheckoutConflictException(CheckoutConflictException.CartStockChangedMessage);
+
+                _logger.Warn(
+                    "Shopping cart write {Source} attempt {Attempt}/{MaxAttempts} was rolled back by a transient SQL conflict and will be retried: {Message}",
+                    source,
+                    attempt,
+                    CheckoutRetry.MaxAttempts,
+                    exception.Message);
+                CheckoutRetry.Wait(CheckoutRetry.Backoff(attempt));
+                continue;
+            } catch (InsufficientProductAvailabilityException exception) {
+                throw new CheckoutConflictException(exception.Message);
+            }
+
+            foreach (long productId in effects.ReindexProductIds) _reindexSignal.Request(productId);
+            foreach (Guid productNetId in effects.AvailabilitySyncProductNetIds) QueueAvailabilitySync(productNetId);
+
+            return result;
         }
+    }
 
-        foreach (long productId in effects.ReindexProductIds) _reindexSignal.Request(productId);
-        foreach (Guid productNetId in effects.AvailabilitySyncProductNetIds) QueueAvailabilitySync(productNetId);
+    private T RunKeyedCartWrite<T>(
+        CheckoutRequest ledgerRequest,
+        CartInputSnapshot input,
+        Func<IDbConnection, CartWriteEffects, T> work,
+        string source) where T : class {
+        if (ledgerRequest == null) return RunCartWrite(work, source, input.Restore);
 
-        return result;
+        T replay = FindCartReplay<T>(ledgerRequest);
+        if (replay != null) return replay;
+
+        CheckoutClaim claim = CheckoutClaim.Claimed;
+
+        T result = RunCartWrite((connection, effects) => {
+            claim = _checkoutLedger.TryClaim(connection, ledgerRequest);
+            if (claim != CheckoutClaim.Claimed) return null;
+
+            T value = work(connection, effects);
+
+            _checkoutLedger.Complete(
+                connection,
+                ledgerRequest,
+                JsonSerializer.Serialize(value, CheckoutExecutor.ReceiptJsonOptions));
+
+            return value;
+        }, source, input.Restore, ledgerRequest.OperationNetUid);
+
+        if (claim == CheckoutClaim.Claimed) return result;
+        if (claim == CheckoutClaim.Busy)
+            throw new CheckoutConflictException(CheckoutConflictException.InProgressMessage);
+
+        return FindCartReplay<T>(ledgerRequest) ??
+               throw new CheckoutConflictException(CheckoutConflictException.InProgressMessage);
+    }
+
+    private CheckoutRequest CartLedgerRequest(
+        string operationName,
+        Guid? operationNetUid,
+        Guid clientNetId,
+        bool withVat,
+        byte[] fingerprint) {
+        if (!operationNetUid.HasValue) return null;
+        if (_checkoutLedger == null)
+            throw new InvalidOperationException("Idempotent shopping cart writes require the checkout ledger.");
+
+        return new CheckoutRequest(
+            operationName,
+            new CheckoutAttempt(operationNetUid.Value, fingerprint),
+            clientNetId,
+            clientNetId,
+            withVat);
+    }
+
+    private T FindCartReplay<T>(CheckoutRequest ledgerRequest) where T : class {
+        CheckoutLedgerEntry entry;
+
+        using (IDbConnection connection = _connectionFactory.NewSqlConnection())
+            entry = _checkoutLedger.Find(connection, ledgerRequest.OperationNetUid);
+
+        if (entry == null) return null;
+        if (!ledgerRequest.IsSameRequestAs(entry)) throw new CheckoutKeyReuseException();
+        if (!entry.IsCompleted)
+            throw new CheckoutConflictException(CheckoutConflictException.InProgressMessage);
+
+        return JsonSerializer.Deserialize<T>(entry.ResponsePayload, CheckoutExecutor.ReceiptJsonOptions) ??
+               throw new InvalidOperationException("The stored shopping cart receipt is invalid.");
     }
 
     private CartContext ResolveCartContext(IDbConnection connection, Guid actorNetId) {
@@ -607,10 +745,13 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         OpenCart cart,
         OrderItem orderItem,
         List<ProductAvailability> availabilities,
-        double qty) {
+        double qty,
+        CartWriteEffects effects) {
         OrderItem line = cart.Items.FirstOrDefault(item => item.ProductId.Equals(orderItem.ProductId));
 
         if (line != null) {
+            effects.TrackExistingLine(connection, line.Id);
+
             if (!stock.IncreaseItemQty(line.Id, cart.Id, line.Qty, qty))
                 throw new CheckoutConflictException(CheckoutConflictException.CartStockChangedMessage);
 
@@ -620,6 +761,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
             orderItem.Id = _saleRepositoriesFactory.NewOrderItemRepository(connection).Add(orderItem);
             line = orderItem;
             cart.Items.Add(line);
+            effects.TrackNewLine(line.Id);
         }
 
         Reserve(stock, line.Id, availabilities, qty);
@@ -636,6 +778,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         OrderItem requested,
         CartWriteEffects effects) {
         IOrderItemRepository orderItemRepository = _saleRepositoriesFactory.NewOrderItemRepository(connection);
+
+        effects.TrackExistingLine(connection, current.Id);
 
         requested.ProductId = current.ProductId;
         requested.Product = current.Product;
@@ -679,6 +823,8 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         OpenCart cart,
         OrderItem item,
         CartWriteEffects effects) {
+        effects.TrackExistingLine(connection, item.Id);
+
         if (!_saleRepositoriesFactory
                 .NewOrderItemRepository(connection)
                 .RemoveFromShoppingCart(item.NetUid, cart.Id))
@@ -774,9 +920,52 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
 
     private sealed record OpenCart(long Id, List<OrderItem> Items);
 
+    private sealed class CartInputSnapshot {
+        private readonly List<(OrderItem Item, long Id, double Qty, double OverLordQty, double OrderedQty, long? CartId, long? OrderId, long ProductId, Product Product)> _items;
+
+        public CartInputSnapshot(IEnumerable<OrderItem> items) {
+            _items = items
+                .Where(item => item != null)
+                .Select(item => (item, item.Id, item.Qty, item.OverLordQty, item.OrderedQty, item.ClientShoppingCartId, item.OrderId, item.ProductId, item.Product))
+                .ToList();
+        }
+
+        public void Restore() {
+            foreach ((OrderItem item, long id, double qty, double overLordQty, double orderedQty, long? cartId, long? orderId, long productId, Product product) in _items) {
+                item.Id = id;
+                item.Qty = qty;
+                item.OverLordQty = overLordQty;
+                item.OrderedQty = orderedQty;
+                item.ClientShoppingCartId = cartId;
+                item.OrderId = orderId;
+                item.ProductId = productId;
+                item.Product = product;
+            }
+        }
+    }
+
     private sealed class CartWriteEffects {
         private readonly HashSet<Guid> _availabilitySyncProductNetIds = new();
         private readonly HashSet<long> _reindexProductIds = new();
+        private readonly List<StockReservationReconciliationRow> _reconciliationBefore = new();
+        private readonly HashSet<long> _reconciliationLines = new();
+
+        public IReadOnlyCollection<StockReservationReconciliationRow> ReconciliationBefore => _reconciliationBefore;
+
+        public IReadOnlyCollection<long> ReconciliationLines => _reconciliationLines;
+
+        public IProductRepositoriesFactory ProductRepositoriesFactory { get; init; }
+
+        public void TrackExistingLine(IDbConnection connection, long orderItemId) {
+            if (orderItemId <= 0 || !_reconciliationLines.Add(orderItemId)) return;
+
+            _reconciliationBefore.AddRange(
+                CheckoutStockReconciliation.Snapshot(ProductRepositoriesFactory, connection, new[] { orderItemId }));
+        }
+
+        public void TrackNewLine(long orderItemId) {
+            if (orderItemId > 0) _reconciliationLines.Add(orderItemId);
+        }
 
         public IReadOnlyCollection<Guid> AvailabilitySyncProductNetIds => _availabilitySyncProductNetIds;
 

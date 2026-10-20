@@ -10,6 +10,10 @@ public interface IClientShoppingCartService {
 
     Task<List<OrderItem>> Add(List<OrderItem> orderItems, Guid clientNetId, bool withVat);
 
+    Task<OrderItem> Add(OrderItem orderItem, Guid clientNetId, bool withVat, Guid? operationNetUid);
+
+    Task<List<OrderItem>> Add(List<OrderItem> orderItems, Guid clientNetId, bool withVat, Guid? operationNetUid);
+
     Task<OrderItem> Update(OrderItem orderItem, Guid clientNetId, bool withVat);
 
     Task<List<OrderItem>> Update(List<OrderItem> orderItems, Guid clientNetId, bool withVat);

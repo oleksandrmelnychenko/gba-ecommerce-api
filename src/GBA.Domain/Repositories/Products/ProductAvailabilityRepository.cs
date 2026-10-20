@@ -6,6 +6,7 @@ using System.Linq;
 using Dapper;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.Products;
+using GBA.Domain.EntityHelpers.ProductAvailabilityModels;
 using GBA.Domain.Repositories.Products.Contracts;
 
 namespace GBA.Domain.Repositories.Products;
@@ -50,6 +51,81 @@ public sealed class ProductAvailabilityRepository : IProductAvailabilityReposito
             "WHERE NetUID = @NetUID",
             productAvailabilities
         );
+    }
+
+    public const double AmountTolerance = 0.0000001d;
+
+    internal const string IncreaseAmountSql = """
+        UPDATE [dbo].[ProductAvailability]
+        SET [Amount] = [Amount] + @Qty,
+            [Updated] = GETUTCDATE()
+        WHERE [ID] = @Id;
+        """;
+
+    internal const string DecreaseAmountSql = """
+        UPDATE [dbo].[ProductAvailability]
+        SET [Amount] = CASE WHEN ABS([Amount] - @Qty) <= @Tolerance THEN 0 ELSE [Amount] - @Qty END,
+            [Updated] = GETUTCDATE()
+        WHERE [ID] = @Id
+          AND [Deleted] = 0
+          AND [Amount] - @Qty >= -@Tolerance;
+        """;
+
+    internal const string AvailabilityStateSql = """
+        SELECT [ProductID] AS [ProductId], [StorageID] AS [StorageId], [Amount], [Deleted]
+        FROM [dbo].[ProductAvailability]
+        WHERE [ID] = @Id;
+        """;
+
+    public void IncreaseAmount(ProductAvailability productAvailability, double qty) {
+        long id = RequireIdentity(productAvailability);
+        if (!IsMeaningfulQuantity(qty)) return;
+
+        if (_connection.Execute(IncreaseAmountSql, new { Id = id, Qty = qty }) != 1)
+            throw new DBConcurrencyException(
+                string.Format(CultureInfo.InvariantCulture, "Product availability {0} was not found.", id));
+    }
+
+    public void DecreaseAmount(ProductAvailability productAvailability, double qty) {
+        long id = RequireIdentity(productAvailability);
+        if (!IsMeaningfulQuantity(qty)) return;
+
+        if (_connection.Execute(DecreaseAmountSql, new { Id = id, Qty = qty, Tolerance = AmountTolerance }) == 1)
+            return;
+
+        AvailabilityState state = _connection.QuerySingleOrDefault<AvailabilityState>(AvailabilityStateSql, new { Id = id });
+
+        throw new InsufficientProductAvailabilityException(
+            id,
+            state?.ProductId ?? productAvailability.ProductId,
+            state?.StorageId ?? productAvailability.StorageId,
+            qty,
+            state == null || state.Deleted ? 0d : Math.Max(0d, state.Amount));
+    }
+
+    private static long RequireIdentity(ProductAvailability productAvailability) {
+        ArgumentNullException.ThrowIfNull(productAvailability);
+        if (productAvailability.Id <= 0)
+            throw new ArgumentException("A persisted product availability is required.", nameof(productAvailability));
+
+        return productAvailability.Id;
+    }
+
+    private static bool IsMeaningfulQuantity(double qty) {
+        if (!double.IsFinite(qty) || qty < 0d)
+            throw new ArgumentOutOfRangeException(nameof(qty), "The availability quantity must be a finite non-negative number.");
+
+        return qty > AmountTolerance;
+    }
+
+    private sealed class AvailabilityState {
+        public long ProductId { get; set; }
+
+        public long StorageId { get; set; }
+
+        public double Amount { get; set; }
+
+        public bool Deleted { get; set; }
     }
 
     public ProductAvailability GetByProductAndStorageIds(long productId, long storageId) {

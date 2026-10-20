@@ -29,10 +29,14 @@ public sealed class ClientShoppingCartsController(
     : WebApiControllerBase(responseFactory) {
     [HttpPost]
     [AssignActionRoute(ClientShoppingCartItemsSegments.ADD_NEW)]
-    public async Task<IActionResult> AddNewOrderItemAsync([FromBody] OrderItem orderItem, [FromQuery] int withVat) {
+    public async Task<IActionResult> AddNewOrderItemAsync(
+        [FromBody] OrderItem orderItem,
+        [FromQuery] int withVat,
+        [FromHeader(Name = CheckoutIdempotencyKey.HeaderName)] string? idempotencyKey = null) {
         Guid userNetId = GetUserNetId();
+        if (!TryResolveOperation(idempotencyKey, out Guid? operationNetUid)) return InvalidIdempotencyKey();
         try {
-            return Ok(SuccessResponseBody(await clientShoppingCartService.Add(orderItem, userNetId, withVat.Equals(1))));
+            return Ok(SuccessResponseBody(await clientShoppingCartService.Add(orderItem, userNetId, withVat.Equals(1), operationNetUid)));
         } catch (LocalizedException locExc) {
             return BadRequest(ErrorResponseBody(Localize(locExc), System.Net.HttpStatusCode.BadRequest));
         }
@@ -40,12 +44,16 @@ public sealed class ClientShoppingCartsController(
 
     [HttpPost]
     [AssignActionRoute(ClientShoppingCartItemsSegments.ADD_NEW_WITH_VERIFY)]
-    public async Task<IActionResult> AddNewOrderItemWithVerifyAsync([FromBody] OrderItem orderItem, [FromQuery] int withVat) {
+    public async Task<IActionResult> AddNewOrderItemWithVerifyAsync(
+        [FromBody] OrderItem orderItem,
+        [FromQuery] int withVat,
+        [FromHeader(Name = CheckoutIdempotencyKey.HeaderName)] string? idempotencyKey = null) {
+        if (!TryResolveOperation(idempotencyKey, out Guid? operationNetUid)) return InvalidIdempotencyKey();
         try {
             Guid userNetId = GetUserNetId();
 
             return Ok(SuccessResponseBody(new {
-                orderItem = await clientShoppingCartService.Add(orderItem, userNetId, withVat.Equals(1)),
+                orderItem = await clientShoppingCartService.Add(orderItem, userNetId, withVat.Equals(1), operationNetUid),
                 qtyRemainderProduct = (object)0,
                 message = "",
                 statusCode = TypeOfStatusCode.Success
@@ -73,11 +81,15 @@ public sealed class ClientShoppingCartsController(
 
     [HttpPost]
     [AssignActionRoute(ClientShoppingCartItemsSegments.ADD_NEW_MANY)]
-    public async Task<IActionResult> AddNewOrderItemAsync([FromBody] List<OrderItem> orderItems, [FromQuery] int withVat) {
+    public async Task<IActionResult> AddNewOrderItemAsync(
+        [FromBody] List<OrderItem> orderItems,
+        [FromQuery] int withVat,
+        [FromHeader(Name = CheckoutIdempotencyKey.HeaderName)] string? idempotencyKey = null) {
         Guid userNetId = GetUserNetId();
+        if (!TryResolveOperation(idempotencyKey, out Guid? operationNetUid)) return InvalidIdempotencyKey();
 
         try {
-            return Ok(SuccessResponseBody(await clientShoppingCartService.Add(orderItems, userNetId, withVat.Equals(1))));
+            return Ok(SuccessResponseBody(await clientShoppingCartService.Add(orderItems, userNetId, withVat.Equals(1), operationNetUid)));
         } catch (LocalizedException locExc) {
             return BadRequest(ErrorResponseBody(Localize(locExc), System.Net.HttpStatusCode.BadRequest));
         }
@@ -125,6 +137,21 @@ public sealed class ClientShoppingCartsController(
         await clientShoppingCartService.DeleteAllItemsFromShoppingCartByClientNetId(userNetId, withVat.Equals(1));
 
         return Ok(SuccessResponseBody(null));
+    }
+
+    private static bool TryResolveOperation(string? idempotencyKey, out Guid? operationNetUid) {
+        operationNetUid = null;
+        if (idempotencyKey == null) return true;
+        if (!CheckoutIdempotencyKey.TryParse(idempotencyKey, out Guid parsed)) return false;
+
+        operationNetUid = parsed;
+        return true;
+    }
+
+    private IActionResult InvalidIdempotencyKey() {
+        return BadRequest(ErrorResponseBody(
+            $"{CheckoutIdempotencyKey.HeaderName} must be a non-empty UUID.",
+            System.Net.HttpStatusCode.BadRequest));
     }
 
     private string Localize(LocalizedException locExc) {
