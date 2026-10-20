@@ -281,8 +281,9 @@ public sealed class CheckoutCartIdentitySqlTests : IDisposable {
         var products = new Mock<IProductRepositoriesFactory> { DefaultValue = DefaultValue.Mock };
         products.Setup(x => x.NewProductAvailabilityRepository(It.IsAny<IDbConnection>()).GetForEcommercePurchase(7, 1))
             .Returns(() => db.Query<ProductAvailability>("SELECT * FROM dbo.ProductAvailability").ToList());
-        products.Setup(x => x.NewProductAvailabilityRepository(It.IsAny<IDbConnection>()).Update(It.IsAny<ProductAvailability>()))
-            .Callback<ProductAvailability>(item => db.Execute("UPDATE dbo.ProductAvailability SET Amount=@Amount WHERE ID=@Id", item));
+        products.Setup(x => x.NewProductAvailabilityRepository(It.IsAny<IDbConnection>()).DecreaseAmount(It.IsAny<ProductAvailability>(), It.IsAny<double>()))
+            .Callback<ProductAvailability, double>((item, qty) => Assert.Equal(1, db.Execute(
+                "UPDATE dbo.ProductAvailability SET Amount=Amount-@Qty WHERE ID=@Id AND Amount>=@Qty", new { item.Id, Qty = qty })));
         products.Setup(x => x.NewProductReservationRepository(It.IsAny<IDbConnection>()).Add(It.IsAny<ProductReservation>()))
             .Callback<ProductReservation>(item => db.Execute("INSERT dbo.ProductReservation(ID,OrderItemID,Qty) VALUES(@OrderItemId,@OrderItemId,@Qty)", item));
         var sales = new Mock<ISaleRepositoriesFactory> { DefaultValue = DefaultValue.Mock };

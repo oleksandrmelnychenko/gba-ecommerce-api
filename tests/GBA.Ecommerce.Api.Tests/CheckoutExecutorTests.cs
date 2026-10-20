@@ -159,6 +159,95 @@ public sealed class CheckoutExecutorTests {
         Assert.Throws<CheckoutConflictException>(() => NewExecutor(ledger).FindReplay(request));
     }
 
+    [Theory]
+    [InlineData(1205)]
+    [InlineData(1222)]
+    public void A_transient_conflict_rolls_the_attempt_back_and_reruns_the_whole_checkout(int number) {
+        FakeLedger ledger = new();
+        Sale sale = NewSale();
+        int attempts = 0;
+        List<TransactionStatus> outcomes = new();
+        Action<TimeSpan> wait = CheckoutRetry.Wait;
+        CheckoutRetry.Wait = _ => { };
+
+        try {
+            CheckoutResult result = NewExecutor(ledger).Execute(NewRequest(), _ => {
+                attempts++;
+                Transaction.Current!.TransactionCompleted += (_, completed) =>
+                    outcomes.Add(completed.Transaction!.TransactionInformation.Status);
+                if (attempts == 1) throw TestSqlExceptions.Create(number);
+                return sale;
+            });
+
+            Assert.False(result.IsReplay);
+            Assert.Same(sale, result.Sale);
+        } finally {
+            CheckoutRetry.Wait = wait;
+        }
+
+        Assert.Equal(2, attempts);
+        Assert.Equal(2, ledger.ClaimCalls);
+        Assert.Single(ledger.CompletedPayloads);
+        Assert.Equal(new[] { TransactionStatus.Aborted, TransactionStatus.Committed }, outcomes);
+    }
+
+    [Fact]
+    public void Persistent_conflicts_are_bounded_and_surface_as_a_retry_with_the_same_key_conflict() {
+        FakeLedger ledger = new();
+        int attempts = 0;
+        Action<TimeSpan> wait = CheckoutRetry.Wait;
+        CheckoutRetry.Wait = _ => { };
+
+        try {
+            CheckoutConflictException conflict = Assert.Throws<CheckoutConflictException>(() =>
+                NewExecutor(ledger).Execute(NewRequest(), _ => {
+                    attempts++;
+                    throw TestSqlExceptions.Create(1205);
+                }));
+
+            Assert.Equal(CheckoutExecutor.ConcurrentChangeMessage, conflict.Message);
+        } finally {
+            CheckoutRetry.Wait = wait;
+        }
+
+        Assert.Equal(CheckoutRetry.MaxAttempts, attempts);
+        Assert.Empty(ledger.CompletedPayloads);
+    }
+
+    [Fact]
+    public void Insufficient_stock_is_a_conflict_carrying_the_stock_message_and_is_not_retried() {
+        FakeLedger ledger = new();
+        int attempts = 0;
+
+        CheckoutConflictException conflict = Assert.Throws<CheckoutConflictException>(() =>
+            NewExecutor(ledger).Execute(NewRequest(), _ => {
+                attempts++;
+                throw new GBA.Domain.EntityHelpers.ProductAvailabilityModels.InsufficientProductAvailabilityException(
+                    11, 501, 7, 2d, 1d);
+            }));
+
+        Assert.Equal(1, attempts);
+        Assert.Contains("Недостатньо вільного залишку", conflict.Message, StringComparison.Ordinal);
+        Assert.Contains("має вільно 1, потрібно 2", conflict.Message, StringComparison.Ordinal);
+        Assert.Empty(ledger.CompletedPayloads);
+    }
+
+    [Fact]
+    public void Retried_attempts_receive_a_pristine_copy_of_the_request_input() {
+        Sale original = NewSale();
+        original.Comment = "first";
+        Func<Sale> next = CheckoutRetry.AttemptInput(original);
+
+        Sale first = next();
+        first.Comment = "mutated by a rolled back attempt";
+        Sale second = next();
+
+        Assert.Same(original, first);
+        Assert.NotSame(original, second);
+        Assert.Equal("first", second.Comment);
+        Assert.Equal(original.NetUid, second.NetUid);
+    }
+
     [Fact]
     public void Checkout_refuses_to_join_a_transaction_it_does_not_own() {
         using TransactionScope ambient = new();
