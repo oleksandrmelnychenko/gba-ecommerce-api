@@ -2709,9 +2709,9 @@ public sealed class ConsignmentInfoRepository : IConsignmentInfoRepository {
 
                     if (!consignmentMovementType.Equals(ConsignmentMovementType.All)) {
                         if (consignmentMovementType.Equals(ConsignmentMovementType.Accounting))
-                            builder.Append("AND [Organization].[VatRateID] IS NOT NULL ");
+                            builder.Append("AND EXISTS (SELECT 1 FROM [VatRate] WHERE [VatRate].[ID] = [Organization].[VatRateID] AND [VatRate].[Value] <> 0) ");
                         else if (consignmentMovementType.Equals(ConsignmentMovementType.Management))
-                            builder.Append("AND [Organization].[VatRateID] IS NULL ");
+                            builder.Append("AND NOT EXISTS (SELECT 1 FROM [VatRate] WHERE [VatRate].[ID] = [Organization].[VatRateID] AND [VatRate].[Value] <> 0) ");
                     }
 
                     break;
