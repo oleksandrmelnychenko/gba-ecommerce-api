@@ -115,37 +115,7 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
         bool withVat) {
         List<OrderItem> orderItems = new();
 
-        string sqlExpression =
-            ";WITH [GroupedOrderedProducts_CTE] " +
-            "AS ( " +
-            "SELECT [Product].ID " +
-            ", SUM([OrderItem].Qty) AS [OrderedQty] " +
-            "FROM [Product] " +
-            "LEFT JOIN [OrderItem] " +
-            "ON [OrderItem].ProductID = [Product].ID " +
-            "AND [OrderItem].Qty > 0 " +
-            "AND [OrderItem].Deleted = 0 " +
-            "LEFT JOIN [Order] " +
-            "ON [Order].ID = [OrderItem].OrderID " +
-            "LEFT JOIN [Sale] " +
-            "ON [Sale].OrderID = [Order].ID " +
-            "LEFT JOIN [ClientAgreement] " +
-            "ON [Sale].ClientAgreementID = [ClientAgreement].ID " +
-            "LEFT JOIN [Client] " +
-            "ON [Client].ID = [ClientAgreement].ClientID " +
-            "WHERE [Sale].ChangedToInvoice IS NOT NULL " +
-            "AND [Sale].ChangedToInvoice >= @From " +
-            "AND [Sale].ChangedToInvoice <= @To " +
-            "AND [Client].NetUID = @NetId " +
-            "GROUP BY [Product].ID " +
-            "), " +
-            "[RowedOrderedProducts_CTE] " +
-            "AS ( " +
-            "SELECT [GroupedOrderedProducts_CTE].ID " +
-            ", [GroupedOrderedProducts_CTE].OrderedQty " +
-            ", ROW_NUMBER() OVER(ORDER BY [GroupedOrderedProducts_CTE].OrderedQty DESC) AS [RowNumber] " +
-            "FROM [GroupedOrderedProducts_CTE] " +
-            ") " +
+        string sqlExpression = OrderedProductsHistorySql.GroupedProductsCte +
             "SELECT 0 AS ID " +
             ", [RowedOrderedProducts_CTE].OrderedQty AS [Qty] " +
             ", [Product].ID " +
@@ -190,6 +160,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "LEFT JOIN [ProductAvailability] " +
             "ON [ProductAvailability].ProductID = [Product].ID " +
             "AND [ProductAvailability].Deleted = 0 " +
+            "AND EXISTS (SELECT 1 FROM [Storage] WHERE [Storage].ID = [ProductAvailability].StorageID AND " +
+            OrderedProductsHistorySql.EligibleStoragePredicate(withVat) + ") " +
             "LEFT JOIN [Storage] " +
             "ON [Storage].ID = [ProductAvailability].StorageID " +
             "LEFT JOIN [views].[MeasureUnitView] AS [MeasureUnit] " +
@@ -207,26 +179,8 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
             "ON [ProductImage].ProductID = [Product].ID " +
             "WHERE [RowedOrderedProducts_CTE].RowNumber > @Offset " +
             "AND [RowedOrderedProducts_CTE].RowNumber <= @Limit + @Offset ";
-        if (withVat)
-            sqlExpression +=
-                "AND [Storage].Locale = @Culture " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].OrganizationID = @OrganizationId ";
-        else
-            sqlExpression +=
-                "AND [Storage].ID IN ( " +
-                "SELECT ID FROM Storage " +
-                "WHERE Deleted = 0 " +
-                "AND [Storage].Locale = @Culture " +
-                "AND [Storage].ForDefective = 0 " +
-                "AND [Storage].AvailableForReSale = 1 " +
-                "UNION " +
-                "SELECT ID FROM Storage " +
-                "WHERE [Storage].Deleted = 0 " +
-                "AND OrganizationID = @OrganizationId) ";
-
         sqlExpression +=
-            "ORDER BY [RowedOrderedProducts_CTE].OrderedQty DESC, " +
+            "ORDER BY [RowedOrderedProducts_CTE].OrderedQty DESC, [RowedOrderedProducts_CTE].ID, " +
             "CASE WHEN [Storage].Locale = @Culture THEN 0 ELSE 1 END";
 
         Type[] types = {
@@ -279,8 +233,6 @@ public sealed class GetMultipleProductsRepository : IGetMultipleProductsReposito
                 product.MeasureUnit = measureUnit;
 
                 product.CurrentLocalPrice = decimal.Round(product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
-
-                product.ProductAvailabilities.Add(productAvailability);
 
                 orderItem.Product = product;
 

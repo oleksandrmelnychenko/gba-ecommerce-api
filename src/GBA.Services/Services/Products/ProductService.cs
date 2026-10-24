@@ -1353,11 +1353,13 @@ public sealed class ProductService : IProductService {
         using IDbConnection connection = _connectionFactory.NewSqlConnection();
         ClientAgreement clientAgreement = ResolveClientAgreement(_clientRepositoriesFactory.NewClientAgreementRepository(connection), clientNetId);
 
+        var period = OrderHistoryPeriod.FromCalendarDates(from, to, DateTime.UtcNow);
+
         return Task.FromResult(_productRepositoriesFactory
             .NewGetMultipleProductsRepository(connection)
             .GetAllOrderedProductsFiltered(
-                from.Year.Equals(1) ? DateTime.UtcNow.Date : from,
-                to.Year.Equals(1) ? DateTime.UtcNow.Date.AddHours(23).AddMinutes(59).AddSeconds(59) : to.AddHours(23).AddMinutes(59).AddSeconds(59),
+                period.FromUtc,
+                period.ToUtcExclusive,
                 limit <= 0 ? 20 : limit,
                 offset < 0 ? 0 : offset,
                 clientNetId,
