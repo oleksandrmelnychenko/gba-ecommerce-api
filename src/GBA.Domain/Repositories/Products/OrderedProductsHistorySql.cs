@@ -13,7 +13,7 @@ public static class OrderedProductsHistorySql {
             INNER JOIN [Product] ON [Product].ID = [OrderItem].ProductID
             INNER JOIN [ClientAgreement] ON [ClientAgreement].ID = [Sale].ClientAgreementID
             INNER JOIN [Client] ON [Client].ID = [ClientAgreement].ClientID
-            WHERE [Sale].Deleted = 0 AND [Client].NetUID = @NetId
+            WHERE [Sale].Deleted = 0 AND [Sale].IsMerged = 0 AND [Client].NetUID = @NetId
               AND (([Order].OrderSource = 0 AND [Sale].Created >= @From AND [Sale].Created < @To)
                 OR ([Order].OrderSource <> 0 AND [Sale].ChangedToInvoice >= @From AND [Sale].ChangedToInvoice < @To))
             GROUP BY [Product].ID

@@ -39,6 +39,11 @@ public sealed class OrderHistorySqlTests {
                 (12,12,1,0,'2026-10-24T10:00:00',NULL),
                 (13,13,1,0,'2026-10-22','2026-10-24T10:00:00'),
                 (14,14,1,0,'2026-10-24T10:00:00',NULL);
+            ALTER TABLE #Sale ADD IsMerged bit NOT NULL DEFAULT 0;
+            INSERT #Order VALUES(15,0,0);
+            INSERT #Sale(ID,OrderID,ClientAgreementID,Deleted,Created,ChangedToInvoice,IsMerged)
+                VALUES(15,15,1,0,'2026-10-24T10:00:00',NULL,1);
+            INSERT #OrderItem VALUES(15,15,1,0,500);
             INSERT #OrderItem VALUES(1,1,1,0,16),(2,2,2,0,8),(3,3,3,0,4),(4,4,4,0,100),(5,5,5,0,100),(6,6,6,0,100),(7,7,7,0,100),(8,8,8,0,100),(9,9,9,0,100),(10,10,10,1,100),(11,11,10,0,0),(12,12,10,0,-5),(13,13,10,0,100),(14,14,3,0,4);
             INSERT #Storage VALUES(1,0,'uk',0,1,7),(2,0,'uk',0,0,8),(3,1,'uk',0,1,7);
             INSERT #ProductAvailability VALUES(1,1,1,5,0),(2,2,2,30,0),(3,2,3,40,0);
