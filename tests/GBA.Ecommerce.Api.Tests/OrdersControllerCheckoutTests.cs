@@ -24,6 +24,61 @@ public sealed class OrdersControllerCheckoutTests {
     private static readonly Guid UserNetId = Guid.NewGuid();
     private const string InvoiceJson = "{\"Comment\":\"Leave at the door\",\"Order\":{\"OrderItems\":[{\"NetUid\":\"8f0a7f0e-7a52-4b56-9d1f-6c8b8f4f2c10\"}]}}";
 
+    [Theory]
+    [InlineData(CheckoutFailureDetails.StockChanged, false, false)]
+    [InlineData(CheckoutFailureDetails.CartChanged, false, false)]
+    [InlineData(CheckoutFailureDetails.ReservationConflict, false, false)]
+    [InlineData(CheckoutFailureDetails.ConcurrencyConflict, true, false)]
+    [InlineData(CheckoutFailureDetails.InProgress, true, null)]
+    [InlineData(CheckoutFailureDetails.Conflict, false, null)]
+    public async Task Guest_checkout_conflicts_distinguish_rejected_orders_from_pending_or_unknown_outcomes(
+        string code, bool retryable, bool? created) {
+        Mock<IOrderService> service = new();
+        service.Setup(s => s.GenerateNewRetailSale(It.IsAny<Sale>(), It.IsAny<Guid>(), false, It.IsAny<CheckoutAttempt>()))
+            .ThrowsAsync(new CheckoutConflictException("Checkout outcome", code));
+        OrdersController controller = NewController(service.Object, Mock.Of<IOfferService>());
+
+        IActionResult result = await controller.GenerateNewSaleWithInvoiceAsync(
+            CheckoutExecutorTests.NewSale(), Guid.NewGuid(), "", 0, Guid.NewGuid().ToString());
+
+        var response = Assert.IsAssignableFrom<IWebResponse>(Assert.IsType<ConflictObjectResult>(result).Value);
+        var details = Assert.IsType<CheckoutFailureDetails>(response.Body);
+        Assert.Equal(code, details.Code);
+        Assert.Equal(retryable, details.Retryable);
+        Assert.Equal(created, details.OrderCreated);
+        Assert.Equal("Checkout outcome", response.Message);
+        Assert.False(controller.Response.Headers.ContainsKey(CheckoutIdempotencyKey.ReplayedHeaderName));
+    }
+
+    [Fact]
+    public async Task Guest_reused_key_is_not_evidence_that_the_current_order_was_created() {
+        Mock<IOrderService> service = new();
+        service.Setup(s => s.GenerateNewRetailSale(It.IsAny<Sale>(), It.IsAny<Guid>(), false, It.IsAny<CheckoutAttempt>()))
+            .ThrowsAsync(new CheckoutKeyReuseException());
+        OrdersController controller = NewController(service.Object, Mock.Of<IOfferService>());
+        IActionResult result = await controller.GenerateNewSaleWithInvoiceAsync(
+            CheckoutExecutorTests.NewSale(), Guid.NewGuid(), "", 0, Guid.NewGuid().ToString());
+        var response = Assert.IsAssignableFrom<IWebResponse>(Assert.IsType<UnprocessableEntityObjectResult>(result).Value);
+        var details = Assert.IsType<CheckoutFailureDetails>(response.Body);
+        Assert.Equal(CheckoutFailureDetails.KeyReused, details.Code);
+        Assert.False(details.Retryable);
+        Assert.Null(details.OrderCreated);
+        string json = System.Text.Json.JsonSerializer.Serialize(details, new System.Text.Json.JsonSerializerOptions {
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+        });
+        Assert.Contains("\"OrderCreated\":null", json);
+    }
+
+    [Fact]
+    public async Task Unknown_guest_failure_is_not_relabelled_as_a_proven_rollback() {
+        Mock<IOrderService> service = new();
+        service.Setup(s => s.GenerateNewRetailSale(It.IsAny<Sale>(), It.IsAny<Guid>(), false, It.IsAny<CheckoutAttempt>()))
+            .ThrowsAsync(new InvalidOperationException("A receipt response could not be recovered."));
+        OrdersController controller = NewController(service.Object, Mock.Of<IOfferService>());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => controller.GenerateNewSaleWithInvoiceAsync(
+            CheckoutExecutorTests.NewSale(), Guid.NewGuid(), "", 0, Guid.NewGuid().ToString()));
+    }
+
     [Fact]
     public async Task Cart_checkout_without_an_idempotency_key_is_rejected_before_any_write() {
         Mock<IOrderService> orderService = new(MockBehavior.Strict);

@@ -12,7 +12,17 @@ public sealed class CheckoutConflictException : Exception {
     public const string CartStockChangedMessage =
         "The shopping cart or the stock changed concurrently. Reload the cart and try again.";
 
-    public CheckoutConflictException(string message) : base(message) { }
+    public string Code { get; }
+
+    public CheckoutConflictException(string message, string code = null) : base(message) {
+        Code = code ?? (message switch {
+            InProgressMessage => CheckoutFailureDetails.InProgress,
+            CartChangedMessage => CheckoutFailureDetails.CartChanged,
+            CartStockChangedMessage => CheckoutFailureDetails.StockChanged,
+            CheckoutExecutor.ConcurrentChangeMessage => CheckoutFailureDetails.ConcurrencyConflict,
+            _ => CheckoutFailureDetails.Conflict
+        });
+    }
 }
 
 public sealed class CheckoutKeyReuseException : Exception {

@@ -288,9 +288,13 @@ public sealed class OrdersController(
         try {
             result = await checkout();
         } catch (CheckoutKeyReuseException exception) {
-            return UnprocessableEntity(ErrorResponseBody(exception.Message, HttpStatusCode.UnprocessableEntity));
+            IWebResponse response = ErrorResponseBody(exception.Message, HttpStatusCode.UnprocessableEntity);
+            response.Body = CheckoutFailureDetails.ReusedKey();
+            return UnprocessableEntity(response);
         } catch (CheckoutConflictException exception) {
-            return Conflict(ErrorResponseBody(exception.Message, HttpStatusCode.Conflict));
+            IWebResponse response = ErrorResponseBody(exception.Message, HttpStatusCode.Conflict);
+            response.Body = CheckoutFailureDetails.From(exception);
+            return Conflict(response);
         }
 
         (object body, bool isReplay) = project(result);

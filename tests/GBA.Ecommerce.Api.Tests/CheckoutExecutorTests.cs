@@ -227,9 +227,34 @@ public sealed class CheckoutExecutorTests {
             }));
 
         Assert.Equal(1, attempts);
+        Assert.Equal(CheckoutFailureDetails.StockChanged, conflict.Code);
         Assert.Contains("Недостатньо вільного залишку", conflict.Message, StringComparison.Ordinal);
         Assert.Contains("має вільно 1, потрібно 2", conflict.Message, StringComparison.Ordinal);
         Assert.Empty(ledger.CompletedPayloads);
+    }
+
+    [Fact]
+    public void Reservation_reconciliation_failure_rolls_back_without_receipt_or_post_commit_effect_and_is_explicit() {
+        FakeLedger ledger = new();
+        bool effectRan = false;
+        TransactionStatus? status = null;
+        int attempts = 0;
+
+        var failure = Assert.Throws<CheckoutConflictException>(() => NewExecutor(ledger).Execute(NewRequest(), _ => {
+            attempts++;
+            Transaction.Current!.TransactionCompleted += (_, args) => status = args.Transaction!.TransactionInformation.Status;
+            TransactionalEffects.AfterCommit(() => effectRan = true);
+            throw new GBA.Domain.EntityHelpers.ProductAvailabilityModels.StockReservationMismatchException(
+                Array.Empty<GBA.Domain.EntityHelpers.ProductAvailabilityModels.StockReservationMismatch>());
+        }));
+
+        Assert.Equal(1, attempts);
+        Assert.Equal(TransactionStatus.Aborted, status);
+        Assert.False(effectRan);
+        Assert.Empty(ledger.CompletedPayloads);
+        Assert.Equal(CheckoutFailureDetails.ReservationConflict, failure.Code);
+        Assert.False(CheckoutFailureDetails.From(failure).OrderCreated);
+        Assert.Contains("Замовлення не створено", failure.Message);
     }
 
     [Fact]

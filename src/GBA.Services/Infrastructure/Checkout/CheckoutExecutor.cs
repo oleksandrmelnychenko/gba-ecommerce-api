@@ -88,7 +88,15 @@ public sealed class CheckoutExecutor : ICheckoutExecutor {
                 createdSale = null;
                 CheckoutRetry.Wait(CheckoutRetry.Backoff(attempt));
             } catch (InsufficientProductAvailabilityException exception) {
-                throw new CheckoutConflictException(exception.Message);
+                throw new CheckoutConflictException(exception.Message, CheckoutFailureDetails.StockChanged);
+            } catch (StockReservationMismatchException exception) {
+                // The transaction scope has already disposed/rolled back. Keep the detailed
+                // diagnostic in the service log, and give the buyer a definite rejection.
+                _logger.Warn(exception, "Checkout {Operation} {OperationNetUid} was rolled back because its reservations did not reconcile.",
+                    request.OperationName, request.OperationNetUid);
+                throw new CheckoutConflictException(
+                    "Не вдалося узгодити резерв товару. Замовлення не створено; оновіть кошик і повторіть оформлення.",
+                    CheckoutFailureDetails.ReservationConflict);
             }
         }
 
