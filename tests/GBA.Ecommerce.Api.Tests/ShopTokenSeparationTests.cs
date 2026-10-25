@@ -218,8 +218,10 @@ public sealed class ShopTokenSeparationTests {
     public async Task Logout_revokes_only_the_presented_refresh_token() {
         InitializeSecurity(Security(legacy: false), gbaServer: true);
         string userId = Guid.NewGuid().ToString();
+        string sessionId = Guid.NewGuid().ToString("N");
         string refreshToken = AesManager.Encrypt(JsonSerializer.Serialize(new RefreshToken {
             UserId = userId,
+            SessionId = sessionId,
             ExpireAt = DateTime.UtcNow.AddDays(1)
         }));
         string stale = AesManager.Encrypt(JsonSerializer.Serialize(new RefreshToken {
@@ -227,6 +229,7 @@ public sealed class ShopTokenSeparationTests {
             ExpireAt = DateTime.UtcNow.AddDays(2)
         }));
         UserToken row = new() {
+            Id = 17,
             UserId = userId,
             Token = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(refreshToken)))
         };
@@ -236,6 +239,16 @@ public sealed class ShopTokenSeparationTests {
         connectionFactory.Setup(factory => factory.NewIdentitySqlConnection()).Returns(identityConnection.Object);
         Mock<IUserTokenRepository> userTokens = new();
         userTokens.Setup(repository => repository.GetByUserId(userId)).Returns(row);
+        userTokens.Setup(repository => repository.TryReplace(
+                row.Id,
+                row.UserId,
+                It.IsAny<string>(),
+                It.IsAny<string>()))
+            .Returns((long _, string _, string expected, string replacement) => {
+                if (!string.Equals(row.Token, expected, StringComparison.Ordinal)) return false;
+                row.Token = replacement;
+                return true;
+            });
         Mock<IIdentityRepositoriesFactory> identityFactory = new();
         identityFactory.Setup(factory => factory.NewUserTokenRepository(identityConnection.Object)).Returns(userTokens.Object);
         RequestTokenService service = new(
@@ -245,12 +258,264 @@ public sealed class ShopTokenSeparationTests {
             Mock.Of<IStringLocalizer<SharedResource>>());
 
         Assert.False(await service.RevokeRefreshToken(stale));
-        userTokens.Verify(repository => repository.Update(It.IsAny<UserToken>()), Times.Never);
+        userTokens.Verify(repository => repository.TryReplace(
+            It.IsAny<long>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<string>()), Times.Never);
 
         Assert.True(await service.RevokeRefreshToken(refreshToken));
         Assert.Equal(string.Empty, row.Token);
-        userTokens.Verify(repository => repository.Update(row), Times.Once);
-        Assert.False(await service.RevokeRefreshToken("not-a-token"));
+        userTokens.Verify(repository => repository.TryReplace(
+            row.Id,
+            row.UserId,
+            It.IsAny<string>(),
+            string.Empty), Times.Once);
+        Assert.True(await service.RevokeRefreshToken("not-a-token"));
+    }
+
+    [Fact]
+    public async Task Logout_does_not_mask_identity_store_failures_as_an_invalid_token() {
+        InitializeSecurity(Security(legacy: false), gbaServer: true);
+        string userId = Guid.NewGuid().ToString();
+        string refreshToken = AesManager.Encrypt(JsonSerializer.Serialize(new RefreshToken {
+            UserId = userId,
+            ExpireAt = DateTime.UtcNow.AddDays(1)
+        }));
+
+        Mock<IDbConnection> identityConnection = new();
+        Mock<IDbConnectionFactory> connectionFactory = new();
+        connectionFactory.Setup(factory => factory.NewIdentitySqlConnection()).Returns(identityConnection.Object);
+        Mock<IUserTokenRepository> userTokens = new();
+        userTokens.Setup(repository => repository.GetByUserId(userId))
+            .Throws(new DataException("identity store unavailable"));
+        Mock<IIdentityRepositoriesFactory> identityFactory = new();
+        identityFactory.Setup(factory => factory.NewUserTokenRepository(identityConnection.Object)).Returns(userTokens.Object);
+        RequestTokenService service = new(
+            identityFactory.Object,
+            Mock.Of<IClientRepositoriesFactory>(),
+            connectionFactory.Object,
+            Mock.Of<IStringLocalizer<SharedResource>>());
+
+        DataException error = await Assert.ThrowsAsync<DataException>(
+            () => service.RevokeRefreshToken(refreshToken));
+
+        Assert.Equal("identity store unavailable", error.Message);
+    }
+
+    [Fact]
+    public async Task Logout_is_idempotent_when_the_refresh_token_row_is_already_missing() {
+        InitializeSecurity(Security(legacy: false), gbaServer: true);
+        string userId = Guid.NewGuid().ToString();
+        string refreshToken = AesManager.Encrypt(JsonSerializer.Serialize(new RefreshToken {
+            UserId = userId,
+            ExpireAt = DateTime.UtcNow.AddDays(1)
+        }));
+
+        Mock<IDbConnection> identityConnection = new();
+        Mock<IDbConnectionFactory> connectionFactory = new();
+        connectionFactory.Setup(factory => factory.NewIdentitySqlConnection()).Returns(identityConnection.Object);
+        Mock<IUserTokenRepository> userTokens = new();
+        userTokens.Setup(repository => repository.GetByUserId(userId)).Returns((UserToken)null!);
+        Mock<IIdentityRepositoriesFactory> identityFactory = new();
+        identityFactory.Setup(factory => factory.NewUserTokenRepository(identityConnection.Object)).Returns(userTokens.Object);
+        RequestTokenService service = new(
+            identityFactory.Object,
+            Mock.Of<IClientRepositoriesFactory>(),
+            connectionFactory.Object,
+            Mock.Of<IStringLocalizer<SharedResource>>());
+
+        Assert.True(await service.RevokeRefreshToken(refreshToken));
+        userTokens.Verify(repository => repository.TryReplace(
+            It.IsAny<long>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Logout_does_not_mask_compare_and_swap_failures() {
+        InitializeSecurity(Security(legacy: false), gbaServer: true);
+        string userId = Guid.NewGuid().ToString();
+        string refreshToken = AesManager.Encrypt(JsonSerializer.Serialize(new RefreshToken {
+            UserId = userId,
+            ExpireAt = DateTime.UtcNow.AddDays(1)
+        }));
+        UserToken row = new() {
+            Id = 23,
+            UserId = userId,
+            Token = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(refreshToken)))
+        };
+
+        Mock<IDbConnection> identityConnection = new();
+        Mock<IDbConnectionFactory> connectionFactory = new();
+        connectionFactory.Setup(factory => factory.NewIdentitySqlConnection()).Returns(identityConnection.Object);
+        Mock<IUserTokenRepository> userTokens = new();
+        userTokens.Setup(repository => repository.GetByUserId(userId)).Returns(row);
+        userTokens.Setup(repository => repository.TryReplace(
+                row.Id,
+                row.UserId,
+                row.Token,
+                string.Empty))
+            .Throws(new DataException("compare-and-swap unavailable"));
+        Mock<IIdentityRepositoriesFactory> identityFactory = new();
+        identityFactory.Setup(factory => factory.NewUserTokenRepository(identityConnection.Object)).Returns(userTokens.Object);
+        RequestTokenService service = new(
+            identityFactory.Object,
+            Mock.Of<IClientRepositoriesFactory>(),
+            connectionFactory.Object,
+            Mock.Of<IStringLocalizer<SharedResource>>());
+
+        DataException error = await Assert.ThrowsAsync<DataException>(
+            () => service.RevokeRefreshToken(refreshToken));
+
+        Assert.Equal("compare-and-swap unavailable", error.Message);
+    }
+
+    [Fact]
+    public async Task Concurrent_logout_prevents_an_inflight_refresh_from_restoring_the_session() {
+        InitializeSecurity(Security(legacy: false), gbaServer: true);
+        string userId = Guid.NewGuid().ToString();
+        string refreshToken = AesManager.Encrypt(JsonSerializer.Serialize(new RefreshToken {
+            UserId = userId,
+            ExpireAt = DateTime.UtcNow.AddDays(1)
+        }));
+        string storedToken = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(refreshToken)));
+        const long tokenId = 29;
+        object tokenLock = new();
+        TaskCompletionSource lookupStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource<Tuple<ClaimsIdentity, UserIdentity>> releaseLookup =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        Mock<IDbConnection> identityConnection = new();
+        Mock<IDbConnectionFactory> connectionFactory = new();
+        connectionFactory.Setup(factory => factory.NewIdentitySqlConnection()).Returns(identityConnection.Object);
+        Mock<IUserTokenRepository> userTokens = new();
+        userTokens.Setup(repository => repository.GetByUserId(userId))
+            .Returns(() => {
+                lock (tokenLock) {
+                    return new UserToken {Id = tokenId, UserId = userId, Token = storedToken};
+                }
+            });
+        userTokens.Setup(repository => repository.TryReplace(
+                tokenId,
+                userId,
+                It.IsAny<string>(),
+                It.IsAny<string>()))
+            .Returns((long _, string _, string expected, string replacement) => {
+                lock (tokenLock) {
+                    if (!string.Equals(storedToken, expected, StringComparison.Ordinal)) return false;
+                    storedToken = replacement;
+                    return true;
+                }
+            });
+        UserIdentity user = new() {
+            Id = userId,
+            UserName = "shop-client",
+            NetId = Guid.NewGuid(),
+            UserType = IdentityUserType.Client
+        };
+        Mock<IIdentityRepository> identities = new();
+        identities.Setup(repository => repository.AuthAndGetClaimsIdentityByUserId(userId))
+            .Returns(() => {
+                lookupStarted.TrySetResult();
+                return releaseLookup.Task;
+            });
+        Mock<IIdentityRepositoriesFactory> identityFactory = new();
+        identityFactory.Setup(factory => factory.NewUserTokenRepository(identityConnection.Object)).Returns(userTokens.Object);
+        identityFactory.Setup(factory => factory.NewIdentityRepository()).Returns(identities.Object);
+        RequestTokenService service = new(
+            identityFactory.Object,
+            Mock.Of<IClientRepositoriesFactory>(),
+            connectionFactory.Object,
+            Mock.Of<IStringLocalizer<SharedResource>>());
+
+        Task<Tuple<bool, string, CompleteAccessToken>> refresh = service.RefreshToken(refreshToken);
+        await lookupStarted.Task;
+
+        Assert.True(await service.RevokeRefreshToken(refreshToken));
+        releaseLookup.SetResult(new Tuple<ClaimsIdentity, UserIdentity>(
+            new ClaimsIdentity(
+                new GenericIdentity(user.UserName, "Token"),
+                [new Claim("type", "Client")]),
+            user));
+
+        Tuple<bool, string, CompleteAccessToken> result = await refresh;
+        Assert.False(result.Item1);
+        Assert.Null(result.Item3);
+        Assert.Equal(string.Empty, storedToken);
+    }
+
+    [Fact]
+    public async Task Refresh_rotates_the_current_token_with_compare_and_swap() {
+        InitializeSecurity(Security(legacy: false), gbaServer: true);
+        string userId = Guid.NewGuid().ToString();
+        string sessionId = Guid.NewGuid().ToString("N");
+        string refreshToken = AesManager.Encrypt(JsonSerializer.Serialize(new RefreshToken {
+            UserId = userId,
+            SessionId = sessionId,
+            ExpireAt = DateTime.UtcNow.AddDays(1)
+        }));
+        string storedToken = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(refreshToken)));
+        const long tokenId = 31;
+        UserIdentity user = new() {
+            Id = userId,
+            UserName = "shop-client",
+            NetId = Guid.NewGuid(),
+            UserType = IdentityUserType.Client
+        };
+
+        Mock<IDbConnection> identityConnection = new();
+        Mock<IDbConnectionFactory> connectionFactory = new();
+        connectionFactory.Setup(factory => factory.NewIdentitySqlConnection()).Returns(identityConnection.Object);
+        Mock<IUserTokenRepository> userTokens = new();
+        userTokens.Setup(repository => repository.GetByUserId(userId))
+            .Returns(() => new UserToken {Id = tokenId, UserId = userId, Token = storedToken});
+        userTokens.Setup(repository => repository.TryReplace(
+                tokenId,
+                userId,
+                It.IsAny<string>(),
+                It.IsAny<string>()))
+            .Returns((long _, string _, string expected, string replacement) => {
+                if (!string.Equals(storedToken, expected, StringComparison.Ordinal)) return false;
+                storedToken = replacement;
+                return true;
+            });
+        Mock<IIdentityRepository> identities = new();
+        identities.Setup(repository => repository.AuthAndGetClaimsIdentityByUserId(userId))
+            .ReturnsAsync(new Tuple<ClaimsIdentity, UserIdentity>(
+                new ClaimsIdentity(
+                    new GenericIdentity(user.UserName, "Token"),
+                    [new Claim("type", "Client")]),
+                user));
+        Mock<IIdentityRepositoriesFactory> identityFactory = new();
+        identityFactory.Setup(factory => factory.NewUserTokenRepository(identityConnection.Object)).Returns(userTokens.Object);
+        identityFactory.Setup(factory => factory.NewIdentityRepository()).Returns(identities.Object);
+        RequestTokenService service = new(
+            identityFactory.Object,
+            Mock.Of<IClientRepositoriesFactory>(),
+            connectionFactory.Object,
+            Mock.Of<IStringLocalizer<SharedResource>>());
+
+        Tuple<bool, string, CompleteAccessToken> result = await service.RefreshToken(refreshToken);
+
+        Assert.True(result.Item1);
+        Assert.NotNull(result.Item3);
+        Assert.NotEqual(refreshToken, result.Item3.RefreshToken);
+        Assert.Equal(
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(result.Item3.RefreshToken))),
+            storedToken);
+        JwtSecurityToken rotatedAccessToken = new JwtSecurityTokenHandler()
+            .ReadJwtToken(result.Item3.AccessToken);
+        Assert.Equal(
+            sessionId,
+            Assert.Single(
+                rotatedAccessToken.Claims,
+                claim => claim.Type == RequestTokenService.SessionIdClaimType).Value);
+        RefreshToken rotatedRefreshToken = JsonSerializer.Deserialize<RefreshToken>(
+            RequestTokenService.DecryptRefreshToken(result.Item3.RefreshToken))!;
+        Assert.Equal(sessionId, rotatedRefreshToken.SessionId);
+        Assert.False(await service.RevokeRefreshToken(refreshToken));
     }
 
     [Fact]

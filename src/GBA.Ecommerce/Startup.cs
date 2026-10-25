@@ -239,6 +239,16 @@ public class Startup {
                         QueueLimit = 0
                     }));
 
+            options.AddPolicy("logout", context =>
+                RateLimitPartition.GetFixedWindowLimiter(
+                    GetClientPartitionKey(context),
+                    _ => new FixedWindowRateLimiterOptions {
+                        PermitLimit = 30,
+                        Window = TimeSpan.FromMinutes(1),
+                        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                        QueueLimit = 0
+                    }));
+
             options.AddPolicy("search", context =>
                 RateLimitPartition.GetSlidingWindowLimiter(
                     GetClientPartitionKey(context),

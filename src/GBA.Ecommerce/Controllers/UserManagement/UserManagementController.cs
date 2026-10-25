@@ -126,12 +126,24 @@ public sealed class UserManagementController(
 
     [HttpPost]
     [AssignActionRoute(UserManagementSegments.LOGOUT)]
-    [EnableRateLimiting("auth")]
+    [EnableRateLimiting("logout")]
     [Consumes("application/json")]
     [RequestSizeLimit(8192)]
     public async Task<IActionResult> LogoutAsync([FromBody] RefreshTokenRequest request) {
-        if (!string.IsNullOrEmpty(request?.Token))
-            await requestTokenService.RevokeRefreshToken(request.Token);
+        try {
+            if (!string.IsNullOrEmpty(request?.Token) &&
+                !await requestTokenService.RevokeRefreshToken(request.Token))
+                return Conflict(ErrorResponseBody(
+                    "The session changed while logout was in progress. Please retry.",
+                    HttpStatusCode.Conflict));
+        } catch (Exception exc) {
+            Logger.Error(exc, "Shop logout refresh-token revocation failed.");
+            return StatusCode(
+                (int)HttpStatusCode.ServiceUnavailable,
+                ErrorResponseBody(
+                    "Logout could not be completed. Please retry.",
+                    HttpStatusCode.ServiceUnavailable));
+        }
 
         return Ok(SuccessResponseBody(null));
     }

@@ -1,8 +1,11 @@
 using System.Data;
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Principal;
+using System.Text.Json;
 using GBA.Common.Configuration;
 using GBA.Common.Helpers;
+using GBA.Common.IdentityConfiguration.Entities;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities.Clients;
 using GBA.Domain.EntityHelpers;
@@ -49,6 +52,7 @@ public sealed class RequestTokenServiceTests {
         Assert.True(result.Item1);
         Assert.NotNull(result.Item3);
         Assert.Equal(consoleIdentity.NetId, result.Item3.UserNetUid);
+        AssertSessionBinding(result.Item3);
         context.ClientRepository.Verify(
             repository => repository.GetClientNetIdByMobileNumber(It.IsAny<string>()),
             Times.Never);
@@ -113,6 +117,7 @@ public sealed class RequestTokenServiceTests {
         Assert.True(result.Item1);
         Assert.NotNull(result.Item3);
         Assert.Equal(identity.NetId, result.Item3.UserNetUid);
+        AssertSessionBinding(result.Item3);
         context.IdentityRepository.Verify(
             repository => repository.AuthAndGetClaimsIdentityByNetId(
                 client.NetUid.ToString(),
@@ -185,6 +190,18 @@ public sealed class RequestTokenServiceTests {
 
     private static Tuple<ClaimsIdentity, string, UserIdentity> FailedIdentity() {
         return new Tuple<ClaimsIdentity, string, UserIdentity>(null!, "Invalid credentials", null!);
+    }
+
+    private static void AssertSessionBinding(CompleteAccessToken tokens) {
+        JwtSecurityToken accessToken = new JwtSecurityTokenHandler().ReadJwtToken(tokens.AccessToken);
+        string sessionId = Assert.Single(
+            accessToken.Claims,
+            claim => claim.Type == RequestTokenService.SessionIdClaimType).Value;
+        Assert.True(Guid.TryParseExact(sessionId, "N", out _));
+
+        RefreshToken refreshToken = JsonSerializer.Deserialize<RefreshToken>(
+            RequestTokenService.DecryptRefreshToken(tokens.RefreshToken))!;
+        Assert.Equal(sessionId, refreshToken.SessionId);
     }
 
     private sealed record TestContext(

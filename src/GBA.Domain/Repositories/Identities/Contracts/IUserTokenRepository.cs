@@ -9,5 +9,7 @@ public interface IUserTokenRepository {
 
     void Update(UserToken userToken);
 
+    bool TryReplace(long id, string userId, string expectedToken, string replacementToken);
+
     UserToken GetByUserId(string userId);
 }

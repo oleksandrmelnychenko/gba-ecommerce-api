@@ -28,6 +28,8 @@ using Microsoft.IdentityModel.Tokens;
 namespace GBA.Services.Services.UserManagement;
 
 public sealed class RequestTokenService : IRequestTokenService {
+    public const string SessionIdClaimType = "gba:session_id";
+
     private static readonly JsonSerializerOptions _jsonSerializerOptions = new() {
         PropertyNameCaseInsensitive = true
     };
@@ -77,11 +79,15 @@ public sealed class RequestTokenService : IRequestTokenService {
             if (result == null) throw new Exception("Refresh token invalid");
             if (!IsAllowedUserType(result.Item2.UserType)) throw new Exception("Refresh token invalid");
 
-            return new Tuple<bool, string, CompleteAccessToken>(
-                true,
-                string.Empty,
-                GenerateAccessAndRefreshToken(userTokenRepository, result.Item1.Claims, result.Item2)
-            );
+            CompleteAccessToken rotatedToken = GenerateAccessAndRefreshToken(
+                userTokenRepository,
+                result.Item1.Claims,
+                result.Item2,
+                currentToken,
+                deserializedRefreshToken.SessionId);
+            if (rotatedToken == null) throw new Exception("Refresh token invalid");
+
+            return new Tuple<bool, string, CompleteAccessToken>(true, string.Empty, rotatedToken);
         } catch (Exception) {
             return new Tuple<bool, string, CompleteAccessToken>(false, "Refresh token invalid", null);
         }
@@ -184,27 +190,46 @@ public sealed class RequestTokenService : IRequestTokenService {
     private CompleteAccessToken GenerateAccessAndRefreshToken(
         IUserTokenRepository userTokensRepository,
         IEnumerable<Claim> claims,
-        UserIdentity user) {
+        UserIdentity user,
+        UserToken expectedCurrentToken = null,
+        string sessionId = null) {
         DateTime now = DateTime.UtcNow;
+        string boundSessionId = Guid.TryParseExact(sessionId, "N", out _)
+            ? sessionId.ToLowerInvariant()
+            : Guid.NewGuid().ToString("N");
+        IEnumerable<Claim> accessClaims = claims
+            .Where(claim => !string.Equals(
+                claim.Type,
+                SessionIdClaimType,
+                StringComparison.Ordinal))
+            .Append(new Claim(SessionIdClaimType, boundSessionId));
 
         JwtSecurityToken jwt = new(
             AuthOptions.ISSUER,
             AuthOptions.AUDIENCE,
             notBefore: now,
-            claims: claims,
+            claims: accessClaims,
             expires: now.Add(TimeSpan.FromMinutes(AuthOptions.LIFETIME)),
             signingCredentials: new SigningCredentials(AuthOptions.GetSymmetricSecurityKey(), SecurityAlgorithms.HmacSha256)
         );
 
         RefreshToken newRefreshToken = new() {
             UserId = user.Id,
+            SessionId = boundSessionId,
             ExpireAt = DateTime.UtcNow.AddMinutes(AuthOptions.REFRESH_LIFETIME)
         };
 
         string encryptedRefreshToken = AesManager.Encrypt(JsonSerializer.Serialize(newRefreshToken));
         string hashedRefreshToken = HashRefreshToken(encryptedRefreshToken);
 
-        if (userTokensRepository.IsTokenExistForUser(user.Id)) {
+        if (expectedCurrentToken != null) {
+            if (!userTokensRepository.TryReplace(
+                    expectedCurrentToken.Id,
+                    expectedCurrentToken.UserId,
+                    expectedCurrentToken.Token,
+                    hashedRefreshToken))
+                return null;
+        } else if (userTokensRepository.IsTokenExistForUser(user.Id)) {
             UserToken userToken = userTokensRepository.GetByUserId(user.Id);
 
             userToken.Token = hashedRefreshToken;
@@ -227,26 +252,44 @@ public sealed class RequestTokenService : IRequestTokenService {
     }
 
     public Task<bool> RevokeRefreshToken(string refreshToken) {
+        if (string.IsNullOrEmpty(refreshToken)) return Task.FromResult(true);
+
+        RefreshToken deserializedRefreshToken;
         try {
-            if (string.IsNullOrEmpty(refreshToken)) return Task.FromResult(false);
-
-            RefreshToken deserializedRefreshToken =
+            deserializedRefreshToken =
                 JsonSerializer.Deserialize<RefreshToken>(DecryptRefreshToken(refreshToken), _jsonSerializerOptions);
-            if (deserializedRefreshToken == null || string.IsNullOrEmpty(deserializedRefreshToken.UserId))
-                return Task.FromResult(false);
-
-            using IDbConnection connection = _connectionFactory.NewIdentitySqlConnection();
-            IUserTokenRepository userTokenRepository = _identityRepositoriesFactory.NewUserTokenRepository(connection);
-            UserToken currentToken = userTokenRepository.GetByUserId(deserializedRefreshToken.UserId);
-            if (currentToken == null || !IsRefreshTokenMatch(currentToken.Token, refreshToken))
-                return Task.FromResult(false);
-
-            currentToken.Token = string.Empty;
-            userTokenRepository.Update(currentToken);
+        } catch (FormatException) {
             return Task.FromResult(true);
-        } catch (Exception) {
-            return Task.FromResult(false);
+        } catch (CryptographicException) {
+            return Task.FromResult(true);
+        } catch (JsonException) {
+            return Task.FromResult(true);
         }
+
+        if (deserializedRefreshToken == null || string.IsNullOrEmpty(deserializedRefreshToken.UserId))
+            return Task.FromResult(true);
+
+        // Malformed or already-absent credentials are an idempotent no-op. A valid current token
+        // is revoked with compare-and-swap; connection and repository failures must escape so
+        // callers never report logout success while the durable token remains active.
+        using IDbConnection connection = _connectionFactory.NewIdentitySqlConnection();
+        IUserTokenRepository userTokenRepository = _identityRepositoriesFactory.NewUserTokenRepository(connection);
+        UserToken currentToken = userTokenRepository.GetByUserId(deserializedRefreshToken.UserId);
+        if (currentToken == null || string.IsNullOrEmpty(currentToken.Token))
+            return Task.FromResult(true);
+        if (!IsRefreshTokenMatch(currentToken.Token, refreshToken))
+            return Task.FromResult(false);
+
+        string expectedToken = currentToken.Token;
+        if (userTokenRepository.TryReplace(
+                currentToken.Id,
+                currentToken.UserId,
+                expectedToken,
+                string.Empty))
+            return Task.FromResult(true);
+
+        UserToken concurrentToken = userTokenRepository.GetByUserId(deserializedRefreshToken.UserId);
+        return Task.FromResult(concurrentToken == null || string.IsNullOrEmpty(concurrentToken.Token));
     }
 
     internal static string DecryptRefreshToken(string refreshToken) {

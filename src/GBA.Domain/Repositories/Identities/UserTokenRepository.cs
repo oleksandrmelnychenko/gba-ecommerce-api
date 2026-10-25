@@ -46,12 +46,25 @@ public sealed class UserTokenRepository : IUserTokenRepository {
         );
     }
 
+    public bool TryReplace(long id, string userId, string expectedToken, string replacementToken) {
+        int affectedRows = _connection.Execute(
+            "UPDATE UserToken " +
+            "SET Token = @ReplacementToken " +
+            "WHERE ID = @Id " +
+            "AND UserID = @UserId " +
+            "AND Token = @ExpectedToken",
+            new { Id = id, UserId = userId, ExpectedToken = expectedToken, ReplacementToken = replacementToken }
+        );
+
+        return affectedRows == 1;
+    }
+
     public UserToken GetByUserId(string userId) {
         return _connection.Query<UserToken>(
                 "SELECT TOP(1) * FROM UserToken " +
                 "WHERE UserID = @UserId",
                 new { UserId = userId }
             )
-            .Single();
+            .SingleOrDefault();
     }
 }
