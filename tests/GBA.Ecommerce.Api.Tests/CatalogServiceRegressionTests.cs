@@ -1,3 +1,13 @@
+using GBA.Common.Middleware;
+using GBA.Common.ResponseBuilder;
+using GBA.Common.ResponseBuilder.Contracts;
+using GBA.Ecommerce.Controllers;
+using GBA.Search.Elasticsearch;
+using GBA.Search.Models;
+using GBA.Services.Services.Clients.Contracts;
+using GBA.Services.Services.Products.Contracts;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using System.Data;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
@@ -177,12 +187,81 @@ public sealed class CatalogServiceRegressionTests {
         throw new FileNotFoundException($"Could not locate repository file: {relativePath}");
     }
 
+    [Theory]
+    [InlineData(true,0)] [InlineData(true,1)] [InlineData(false,0)] [InlineData(false,1)]
+    public async Task Authenticated_detail_search_slug_and_related_cards_share_account_stock_without_switching_agreement_VAT(bool agreementVat,int queryVat) {
+        PriceTokenTestSupport.EnsureKeys();
+        Guid account=Guid.NewGuid(),productNetId=Guid.Parse("8ba390ef-c4be-4729-b840-00a9e6b8d012");
+        ServiceFixture fixture=new();
+        var agreement=new ClientAgreement { NetUid=Guid.NewGuid(),Agreement=new Agreement {OrganizationId=42,CurrencyId=2,WithVATAccounting=agreementVat}};
+        fixture.ClientAgreementRepository.Setup(x=>x.GetSelectedByClientNotSelectedNetId(account)).Returns(agreement);
+        var availabilityRow=new ProductAvailability {Id=18,Amount=99};
+        var product=new Product {Id=7,NetUid=productNetId,VendorCode="39999CNT",CurrentPrice=15.25m,CurrentWithVatPrice=18.30m,
+            AvailableQtyUk=agreementVat?0:99,AvailableQtyUkVAT=agreementVat?99:0,AvailableQtyPl=13,AvailableQtyRoad=8};
+        product.ProductAvailabilities.Add(availabilityRow);
+        fixture.SingleProductRepository.Setup(x=>x.GetProductByNetId(productNetId,agreement.NetUid,agreementVat,2,42)).Returns(product);
+        fixture.SingleProductRepository.Setup(x=>x.GetNetIdBySlug("39999CNT")).Returns(productNetId);
+        fixture.AvailabilityRepository.Setup(x=>x.GetEcommerceSellableQuantities(It.Is<IReadOnlyCollection<long>>(ids=>ids.SequenceEqual(new[]{7L})),null,42))
+            .Returns(new Dictionary<long,double>{{7,7.25}});
+        var facade=new Mock<IProductService>();
+        facade.Setup(x=>x.GetByNetId(productNetId,account,queryVat==1)).Returns(()=>fixture.Service.GetByNetId(productNetId,account,queryVat==1));
+        facade.Setup(x=>x.GetPricingContext(account,queryVat==1)).Returns(new ProductPricingContext(agreementVat,"EUR","scope-42"));
+        facade.Setup(x=>x.GetSellableQuantities(It.IsAny<List<long>>(),account)).Returns((List<long> ids,Guid client)=>fixture.Service.GetSellableQuantities(ids,client));
+        var search=new Mock<IElasticsearchProductSearchService>();
+        search.Setup(x=>x.SearchWithDocsAsync("39999CNT","uk",20,0,It.IsAny<CancellationToken>())).ReturnsAsync(new ProductSearchResultWithDocs {Documents=[new(){Id=7,NetUid=productNetId.ToString(),VendorCode="39999CNT",Name="Product"}]});
+        var prices=new Mock<IPriceCacheService>();
+        prices.Setup(x=>x.GetPrices(It.IsAny<List<long>>(),account,queryVat==1,"uk","scope-42",It.IsAny<Func<List<long>,Dictionary<long,ProductPriceInfo>>>()))
+            .Returns(new Dictionary<long,ProductPriceInfo>{{7,new(){Price=15.25m,LocalPrice=15.25m,CurrencyCode="EUR"}}});
+        var controller=new ProductsController(facade.Object,search.Object,prices.Object,Mock.Of<IClientResourceAccessService>(),new ResponseFactory());
+        var context=new DefaultHttpContext();context.Items[UserNetIdMiddleware.NetIdKey]=account;
+        controller.ControllerContext=new ControllerContext{HttpContext=context,RouteData=new Microsoft.AspNetCore.Routing.RouteData()};controller.RouteData.Values["culture"]="uk";
+        var detailBody=Assert.IsAssignableFrom<IWebResponse>(Assert.IsType<OkObjectResult>(await controller.GetProductByNetId(productNetId,queryVat)).Value);
+        var detail=Assert.IsType<Product>(detailBody.Body);
+        var searchBody=Assert.IsAssignableFrom<IWebResponse>(Assert.IsType<OkObjectResult>(await controller.GetAllFromSearchAsync("39999CNT",20,0,queryVat)).Value);
+        var card=Assert.Single(Assert.IsType<List<ProtectedSearchProduct>>(searchBody.Body));
+        Assert.Equal(productNetId,card.NetUid);Assert.Equal(detail.NetUid,card.NetUid);
+        Assert.Equal(7.25,detail.AvailableQtyUk);Assert.Equal(7.25,detail.AvailableQtyUkVAT);
+        Assert.Equal(detail.AvailableQtyUk,card.AvailableQtyUk);Assert.Equal(detail.AvailableQtyUkVAT,card.AvailableQtyUkVAT);
+        Assert.Equal(15.25m,detail.CurrentPrice);Assert.Equal(18.30m,detail.CurrentWithVatPrice);
+        Assert.Same(availabilityRow,Assert.Single(detail.ProductAvailabilities));Assert.Equal(99,availabilityRow.Amount);
+        Assert.Equal(13,detail.AvailableQtyPl);Assert.Equal(8,detail.AvailableQtyRoad);
+        var slug=await fixture.Service.GetProductBySlug("39999CNT",account,queryVat==1);
+        Assert.Equal(card.AvailableQtyUk,slug.AvailableQtyUk);Assert.Equal(card.AvailableQtyUkVAT,slug.AvailableQtyUkVAT);
+        var related=Assert.Single(ProductService.WithSellableStock([new(){Id=7}],new(){{7,7.25}}));
+        Assert.Equal(card.AvailableQtyUk,related.AvailableQtyUk);Assert.Equal(card.AvailableQtyUkVAT,related.AvailableQtyUkVAT);
+        fixture.SingleProductRepository.Verify(x=>x.GetProductByNetId(productNetId,agreement.NetUid,agreementVat,2,42),Times.Exactly(2));
+        fixture.AvailabilityRepository.Verify(x=>x.GetEcommerceSellableQuantities(It.Is<IReadOnlyCollection<long>>(ids=>ids.SequenceEqual(new[]{7L})),null,42),Times.Exactly(3));
+        fixture.AvailabilityRepository.VerifyNoOtherCalls();fixture.AgreementRepositoriesFactory.VerifyNoOtherCalls();
+    }
+
+    [Theory][InlineData(-8d)][InlineData(double.NaN)][InlineData(double.PositiveInfinity)][InlineData(0d)]
+    public async Task Authenticated_detail_clamps_invalid_or_exhausted_authoritative_stock_like_related_cards(double amount) {
+        Guid account=Guid.NewGuid(),netId=Guid.NewGuid();ServiceFixture fixture=new();
+        var agreement=new ClientAgreement {NetUid=Guid.NewGuid(),Agreement=new Agreement {OrganizationId=42,WithVATAccounting=true}};
+        fixture.ClientAgreementRepository.Setup(x=>x.GetSelectedByClientNotSelectedNetId(account)).Returns(agreement);
+        fixture.SingleProductRepository.Setup(x=>x.GetProductByNetId(netId,agreement.NetUid,true,null,42)).Returns(new Product{Id=7,AvailableQtyUkVAT=99});
+        fixture.AvailabilityRepository.Setup(x=>x.GetEcommerceSellableQuantities(It.IsAny<IReadOnlyCollection<long>>(),null,42)).Returns(new Dictionary<long,double>{{7,amount}});
+        var detail=await fixture.Service.GetByNetId(netId,account,false);
+        var related=Assert.Single(ProductService.WithSellableStock([new(){Id=7}],new(){{7,amount}}));
+        Assert.Equal(0,detail.AvailableQtyUk);Assert.Equal(0,detail.AvailableQtyUkVAT);
+        Assert.Equal(related.AvailableQtyUk,detail.AvailableQtyUk);Assert.Equal(related.AvailableQtyUkVAT,detail.AvailableQtyUkVAT);
+    }
+
+    [Fact] public async Task Authenticated_detail_without_organization_never_reads_other_organization_stock() {
+        Guid netId=Guid.NewGuid();ServiceFixture fixture=new();
+        fixture.SingleProductRepository.Setup(x=>x.GetProductByNetId(netId,null,false,null,null)).Returns(new Product{Id=7,AvailableQtyUk=99,AvailableQtyUkVAT=88});
+        var detail=await fixture.Service.GetByNetId(netId,Guid.NewGuid(),true);
+        Assert.Equal(0,detail.AvailableQtyUk);Assert.Equal(0,detail.AvailableQtyUkVAT);
+        fixture.AvailabilityRepository.VerifyNoOtherCalls();
+    }
+
     private sealed class ServiceFixture {
         public ServiceFixture() {
             ConnectionFactory.Setup(factory => factory.NewSqlConnection()).Returns(Connection.Object);
             ProductRepositoriesFactory
                 .Setup(factory => factory.NewGetSingleProductRepository(Connection.Object))
                 .Returns(SingleProductRepository.Object);
+            ProductRepositoriesFactory.Setup(factory=>factory.NewProductAvailabilityRepository(Connection.Object)).Returns(AvailabilityRepository.Object);
             ClientRepositoriesFactory
                 .Setup(factory => factory.NewClientAgreementRepository(Connection.Object))
                 .Returns(ClientAgreementRepository.Object);
@@ -204,6 +283,7 @@ public sealed class CatalogServiceRegressionTests {
         public Mock<IDbConnectionFactory> ConnectionFactory { get; } = new();
         public Mock<IProductRepositoriesFactory> ProductRepositoriesFactory { get; } = new();
         public Mock<IClientRepositoriesFactory> ClientRepositoriesFactory { get; } = new();
+        public Mock<IProductAvailabilityRepository> AvailabilityRepository { get; } = new();
         public Mock<IGetSingleProductRepository> SingleProductRepository { get; } = new();
         public Mock<IClientAgreementRepository> ClientAgreementRepository { get; } = new();
         public Mock<IAgreementRepositoriesFactory> AgreementRepositoriesFactory { get; } = new();

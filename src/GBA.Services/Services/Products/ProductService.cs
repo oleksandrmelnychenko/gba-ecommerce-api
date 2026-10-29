@@ -93,17 +93,29 @@ public sealed class ProductService : IProductService {
 
         ClientAgreement clientAgreement = ResolveClientAgreement(clientAgreementRepository, clientNetId);
 
-        return Task.FromResult(
-            _productRepositoriesFactory
-                .NewGetSingleProductRepository(connection)
-                .GetProductByNetId(
-                    productNetId,
-                    clientAgreement?.NetUid,
-                    clientAgreement?.Agreement?.WithVATAccounting ?? false,
-                    clientAgreement?.Agreement?.CurrencyId,
-                    clientAgreement?.Agreement?.OrganizationId
-                )
-        );
+        Product product = _productRepositoriesFactory
+            .NewGetSingleProductRepository(connection)
+            .GetProductByNetId(
+                productNetId,
+                clientAgreement?.NetUid,
+                clientAgreement?.Agreement?.WithVATAccounting ?? false,
+                clientAgreement?.Agreement?.CurrencyId,
+                clientAgreement?.Agreement?.OrganizationId);
+        if (product == null) return Task.FromResult<Product>(null);
+
+        // Storefront UK/VAT slots are compatibility aliases for the same account-scoped
+        // sellable stock (as in search and related cards), not two additive stock pools.
+        // The browser's display mode must not replace the selected agreement's pricing
+        // or its cart/reservation storage scope. Reuse that exact availability authority.
+        Dictionary<long, double> quantities = product.Id > 0 && clientAgreement?.Agreement?.OrganizationId is long organizationId
+            ? _productRepositoriesFactory.NewProductAvailabilityRepository(connection)
+                .GetEcommerceSellableQuantities(new[] { product.Id }, null, organizationId)
+            : new Dictionary<long, double>();
+        quantities.TryGetValue(product.Id, out double sellable);
+        sellable = NormalizeSellableQuantity(sellable);
+        product.AvailableQtyUk = sellable;
+        product.AvailableQtyUkVAT = sellable;
+        return Task.FromResult(product);
     }
 
     internal static ClientAgreement ResolveClientAgreement(
@@ -1211,12 +1223,15 @@ public sealed class ProductService : IProductService {
             GetSellableQuantities(products.Select(product => product.Id).ToList(), currentClientNetId));
     }
 
+    private static double NormalizeSellableQuantity(double quantity) =>
+        double.IsFinite(quantity) ? Math.Max(0d, quantity) : 0d;
+
     internal static List<FromSearchProduct> WithSellableStock(
         List<FromSearchProduct> products,
         Dictionary<long, double> sellableQuantities) {
         foreach (FromSearchProduct product in products) {
             sellableQuantities.TryGetValue(product.Id, out double sellable);
-            sellable = double.IsFinite(sellable) ? Math.Max(0d, sellable) : 0d;
+            sellable = NormalizeSellableQuantity(sellable);
             product.AvailableQtyUk = sellable;
             product.AvailableQtyUkVAT = sellable;
         }
