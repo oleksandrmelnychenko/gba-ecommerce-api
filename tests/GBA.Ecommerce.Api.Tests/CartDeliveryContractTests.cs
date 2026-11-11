@@ -105,7 +105,8 @@ public sealed class CartDeliveryContractTests(EcommerceApiFixture fixture) : ICl
 
         ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
         ApiAssertions.AssertSuccessEnvelope(envelope);
-        ApiAssertions.RequiredGuid(envelope.Body, "NetUid");
+        Assert.Equal(productNetUid, ApiAssertions.RequiredGuid(envelope.Body.GetProperty("Product"), "NetUid"));
+        Assert.Equal(1d, envelope.Body.GetProperty("Qty").GetDouble());
     }
 
     [Fact]

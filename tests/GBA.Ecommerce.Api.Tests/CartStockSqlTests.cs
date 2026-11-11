@@ -177,7 +177,8 @@ public sealed class CartStockSqlTests(CheckoutSqlFixture fixture) {
 
             Assert.Equal(2d, products.GetSellableQuantities(new List<long> { scenario.ProductId }, shopper.ClientNetUid)[scenario.ProductId]);
             Product detail = await products.GetByNetId(scenario.ProductNetUid, shopper.ClientNetUid, false);
-            Assert.Equal(2d, detail.AvailableQtyUk + detail.AvailableQtyUkVAT);
+            Assert.Equal(2d, detail.AvailableQtyUk);
+            Assert.Equal(2d, detail.AvailableQtyUkVAT);
 
             await Assert.ThrowsAsync<LocalizedException>(() =>
                 NewCartService().Add(NewLine(scenario.ProductNetUid, 3), shopper.ClientNetUid, false));

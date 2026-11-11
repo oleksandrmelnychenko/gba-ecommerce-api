@@ -128,7 +128,7 @@ public sealed class OrderContractTests(EcommerceApiFixture fixture) : IClassFixt
 
         ApiEnvelope envelope = await ApiAssertions.ReadEnvelopeAsync(response);
         Assert.Equal(400, envelope.StatusCode);
-        Assert.Equal("ShoppingCart entity can not be empty", envelope.Message);
+        Assert.Equal("ShoppingCart entity is invalid", envelope.Message);
     }
 
     [Fact]
