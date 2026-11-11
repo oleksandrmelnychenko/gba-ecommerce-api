@@ -16,7 +16,7 @@ public class ConcordIdentityContext : IdentityDbContext<UserIdentity> {
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
         if (!optionsBuilder.IsConfigured) {
-            optionsBuilder.UseSqlServer(ConfigurationManager.LocalIdentityConnectionString);
+            optionsBuilder.UseSqlServer(ConfigurationManager.LocalIdentityConnectionString, sqlOptions => sqlOptions.UseCompatibilityLevel(150));
         }
     }
 

@@ -17,7 +17,7 @@ public class ConcordDataAnalyticContext : DbContext {
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
         if (!optionsBuilder.IsConfigured) {
-            optionsBuilder.UseSqlServer(ConfigurationManager.LocalDataAnalyticConnectionString);
+            optionsBuilder.UseSqlServer(ConfigurationManager.LocalDataAnalyticConnectionString, sqlOptions => sqlOptions.UseCompatibilityLevel(150));
         }
     }
 

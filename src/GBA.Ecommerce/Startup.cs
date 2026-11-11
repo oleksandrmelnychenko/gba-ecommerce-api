@@ -714,6 +714,7 @@ public class Startup {
         services.AddDbContextPool<ConcordContext>(options => {
 #if DEBUG
             options.UseSqlServer(Configuration.GetConnectionString(ConnectionStringNames.Local), sqlOptions => {
+                sqlOptions.UseCompatibilityLevel(150);
                 sqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: null);
                 sqlOptions.CommandTimeout(30);
                 sqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
@@ -722,6 +723,7 @@ public class Startup {
             });
 #else
             options.UseSqlServer(Configuration.GetConnectionString(ConnectionStringNames.Remote), sqlOptions => {
+                sqlOptions.UseCompatibilityLevel(150);
                 sqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: null);
                 sqlOptions.CommandTimeout(30);
                 // Performance optimizations
@@ -736,6 +738,7 @@ public class Startup {
         services.AddDbContextPool<ConcordIdentityContext>(options => {
 #if DEBUG
             options.UseSqlServer(Configuration.GetConnectionString(ConnectionStringNames.LocalIdentity), sqlOptions => {
+                sqlOptions.UseCompatibilityLevel(150);
                 sqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: null);
                 sqlOptions.CommandTimeout(30);
                 sqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
@@ -745,6 +748,7 @@ public class Startup {
             options.EnableDetailedErrors();
 #else
             options.UseSqlServer(Configuration.GetConnectionString(ConnectionStringNames.RemoteIdentity), sqlOptions => {
+                sqlOptions.UseCompatibilityLevel(150);
                 sqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorNumbersToAdd: null);
                 sqlOptions.CommandTimeout(30);
                 sqlOptions.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);

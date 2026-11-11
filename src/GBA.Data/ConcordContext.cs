@@ -728,7 +728,7 @@ public class ConcordContext : DbContext {
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) {
         if (!optionsBuilder.IsConfigured) {
-            optionsBuilder.UseSqlServer(ConfigurationManager.LocalDatabaseConnectionString);
+            optionsBuilder.UseSqlServer(ConfigurationManager.LocalDatabaseConnectionString, sqlOptions => sqlOptions.UseCompatibilityLevel(150));
         }
     }
 
