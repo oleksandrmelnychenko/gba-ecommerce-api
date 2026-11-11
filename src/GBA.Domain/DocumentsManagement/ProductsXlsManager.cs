@@ -372,7 +372,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                                     .ProductLocations
                                     .First();
 
-                            netWeight = Math.Round(location.ProductPlacement.PackingListPackageOrderItem.NetWeight * item.Qty, 3);
+                            netWeight = LegacyNumeric.Round(location.ProductPlacement.PackingListPackageOrderItem.NetWeight * item.Qty, 3);
 
                             countryCode =
                                 location.ProductPlacement?.PackingListPackageOrderItem?.Supplier?.Country != null
@@ -386,7 +386,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
 
                         decimal currentTotalPrice =
                             decimal.Round(
-                                currentUnitPrice * Convert.ToDecimal(item.Qty),
+                                currentUnitPrice * LegacyNumeric.ToDecimal(item.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -399,7 +399,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                             );
 
                         currentStepNetWeight =
-                            Math.Round(currentStepNetWeight + netWeight, 3);
+                            LegacyNumeric.Round(currentStepNetWeight + netWeight, 3);
 
                         using (ExcelRange range = worksheet.Cells[row, 2, row, 2]) {
                             range.Merge = true;
@@ -547,7 +547,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                                             .SadPalletItems
                                             .Where(i => i.SadItemId.Equals(item.Id)))
                                     .Aggregate(grossWeight, (current, palletItem) =>
-                                        Math.Round(current + palletItem.TotalGrossWeight, 3, MidpointRounding.AwayFromZero))
+                                        LegacyNumeric.Round(current + palletItem.TotalGrossWeight, 3, MidpointRounding.AwayFromZero))
                                 : item.TotalGrossWeight;
 
                         countryCode =
@@ -561,7 +561,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
 
                         decimal currentTotalPrice =
                             decimal.Round(
-                                currentUnitPrice * Convert.ToDecimal(item.Qty),
+                                currentUnitPrice * LegacyNumeric.ToDecimal(item.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -574,10 +574,10 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                             );
 
                         currentStepNetWeight =
-                            Math.Round(currentStepNetWeight + netWeight, 3, MidpointRounding.AwayFromZero);
+                            LegacyNumeric.Round(currentStepNetWeight + netWeight, 3, MidpointRounding.AwayFromZero);
 
                         currentStepGrossWeight =
-                            Math.Round(currentStepGrossWeight + grossWeight, 3, MidpointRounding.AwayFromZero);
+                            LegacyNumeric.Round(currentStepGrossWeight + grossWeight, 3, MidpointRounding.AwayFromZero);
 
                         using (ExcelRange range = worksheet.Cells[row, 2, row, 2]) {
                             range.Merge = true;
@@ -706,8 +706,8 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                 totalPrice =
                     decimal.Round(totalPrice + currentStepTotalPrice, 2, MidpointRounding.AwayFromZero);
 
-                totalNetWeight = Math.Round(totalNetWeight + currentStepNetWeight, 3, MidpointRounding.AwayFromZero);
-                totalGrossWeight = Math.Round(totalGrossWeight + currentStepGrossWeight, 3, MidpointRounding.AwayFromZero);
+                totalNetWeight = LegacyNumeric.Round(totalNetWeight + currentStepNetWeight, 3, MidpointRounding.AwayFromZero);
+                totalGrossWeight = LegacyNumeric.Round(totalGrossWeight + currentStepGrossWeight, 3, MidpointRounding.AwayFromZero);
 
                 using (ExcelRange range = worksheet.Cells[row, 5, row, 5]) {
                     range.Merge = true;
@@ -1110,8 +1110,8 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                                 .ProductLocations
                                 .First();
 
-                        netWeight = Math.Round(location.ProductPlacement.PackingListPackageOrderItem.NetWeight * item.Qty, 3);
-                        grossWeight = Math.Round(location.ProductPlacement.PackingListPackageOrderItem.GrossWeight * item.Qty, 3);
+                        netWeight = LegacyNumeric.Round(location.ProductPlacement.PackingListPackageOrderItem.NetWeight * item.Qty, 3);
+                        grossWeight = LegacyNumeric.Round(location.ProductPlacement.PackingListPackageOrderItem.GrossWeight * item.Qty, 3);
 
                         countryCode = location.ProductPlacement?.PackingListPackageOrderItem?.Supplier?.Country?.Code ?? "";
 
@@ -1122,7 +1122,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
 
                     decimal currentTotalPrice =
                         decimal.Round(
-                            currentUnitPrice * Convert.ToDecimal(item.Qty),
+                            currentUnitPrice * LegacyNumeric.ToDecimal(item.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -1135,10 +1135,10 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                         );
 
                     totalNetWeight =
-                        Math.Round(totalNetWeight + netWeight, 3, MidpointRounding.AwayFromZero);
+                        LegacyNumeric.Round(totalNetWeight + netWeight, 3, MidpointRounding.AwayFromZero);
 
                     totalGrossWeight =
-                        Math.Round(totalGrossWeight + grossWeight, 3, MidpointRounding.AwayFromZero);
+                        LegacyNumeric.Round(totalGrossWeight + grossWeight, 3, MidpointRounding.AwayFromZero);
 
                     using (ExcelRange range = worksheet.Cells[row, 1, row, 1]) {
                         range.Merge = true;
@@ -1294,7 +1294,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                                         .SadPalletItems
                                         .Where(i => i.SadItemId.Equals(item.Id)))
                                 .Aggregate(grossWeight, (current, palletItem) =>
-                                    Math.Round(current + palletItem.TotalGrossWeight, 3, MidpointRounding.AwayFromZero))
+                                    LegacyNumeric.Round(current + palletItem.TotalGrossWeight, 3, MidpointRounding.AwayFromZero))
                             : item.TotalGrossWeight;
 
                     string countryCode = item.SupplyOrderUkraineCartItem?.Supplier?.Country?.Code ?? "";
@@ -1305,7 +1305,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
 
                     decimal currentTotalPrice =
                         decimal.Round(
-                            currentUnitPrice * Convert.ToDecimal(item.Qty),
+                            currentUnitPrice * LegacyNumeric.ToDecimal(item.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -1318,10 +1318,10 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                         );
 
                     totalNetWeight =
-                        Math.Round(totalNetWeight + netWeight, 3, MidpointRounding.AwayFromZero);
+                        LegacyNumeric.Round(totalNetWeight + netWeight, 3, MidpointRounding.AwayFromZero);
 
                     totalGrossWeight =
-                        Math.Round(totalGrossWeight + grossWeight, 3, MidpointRounding.AwayFromZero);
+                        LegacyNumeric.Round(totalGrossWeight + grossWeight, 3, MidpointRounding.AwayFromZero);
 
                     using (ExcelRange range = worksheet.Cells[row, 1, row, 1]) {
                         range.Merge = true;
@@ -1829,12 +1829,12 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                                     .ProductLocations
                                     .First();
 
-                            netWeight = Math.Round(location.ProductPlacement.PackingListPackageOrderItem.NetWeight * item.Qty, 2);
+                            netWeight = LegacyNumeric.Round(location.ProductPlacement.PackingListPackageOrderItem.NetWeight * item.Qty, 2);
                         }
 
                         decimal currentTotalPrice =
                             decimal.Round(
-                                currentUnitPrice * Convert.ToDecimal(item.Qty),
+                                currentUnitPrice * LegacyNumeric.ToDecimal(item.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -1847,7 +1847,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                             );
 
                         currentStepNetWeight =
-                            Math.Round(currentStepNetWeight + netWeight, 2);
+                            LegacyNumeric.Round(currentStepNetWeight + netWeight, 2);
 
                         using (ExcelRange range = worksheet.Cells[row, 2, row, 2]) {
                             range.Merge = true;
@@ -1946,7 +1946,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
 
                         decimal currentTotalPrice =
                             decimal.Round(
-                                currentUnitPrice * Convert.ToDecimal(item.Qty),
+                                currentUnitPrice * LegacyNumeric.ToDecimal(item.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -1959,7 +1959,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                             );
 
                         currentStepNetWeight =
-                            Math.Round(currentStepNetWeight + netWeight, 3, MidpointRounding.AwayFromZero);
+                            LegacyNumeric.Round(currentStepNetWeight + netWeight, 3, MidpointRounding.AwayFromZero);
 
                         using (ExcelRange range = worksheet.Cells[row, 2, row, 2]) {
                             range.Merge = true;
@@ -2051,7 +2051,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                 totalPrice =
                     decimal.Round(totalPrice + currentStepTotalPrice, 2, MidpointRounding.AwayFromZero);
 
-                totalNetWeight = Math.Round(totalNetWeight + currentStepNetWeight, 3, MidpointRounding.AwayFromZero);
+                totalNetWeight = LegacyNumeric.Round(totalNetWeight + currentStepNetWeight, 3, MidpointRounding.AwayFromZero);
 
                 using (ExcelRange range = worksheet.Cells[row, 5, row, 5]) {
                     range.Merge = true;
@@ -2487,12 +2487,12 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                                     .ProductLocations
                                     .First();
 
-                            netWeight = Math.Round(location.ProductPlacement.PackingListPackageOrderItem.NetWeight * item.Qty, 2);
+                            netWeight = LegacyNumeric.Round(location.ProductPlacement.PackingListPackageOrderItem.NetWeight * item.Qty, 2);
                         }
 
                         decimal currentTotalPrice =
                             decimal.Round(
-                                currentUnitPrice * Convert.ToDecimal(item.Qty),
+                                currentUnitPrice * LegacyNumeric.ToDecimal(item.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -2505,7 +2505,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                             );
 
                         currentStepNetWeight =
-                            Math.Round(currentStepNetWeight + netWeight, 2);
+                            LegacyNumeric.Round(currentStepNetWeight + netWeight, 2);
 
                         using (ExcelRange range = worksheet.Cells[row, 2, row, 2]) {
                             range.Merge = true;
@@ -2604,7 +2604,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
 
                         decimal currentTotalPrice =
                             decimal.Round(
-                                currentUnitPrice * Convert.ToDecimal(item.Qty),
+                                currentUnitPrice * LegacyNumeric.ToDecimal(item.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -2617,7 +2617,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                             );
 
                         currentStepNetWeight =
-                            Math.Round(currentStepNetWeight + netWeight, 3, MidpointRounding.AwayFromZero);
+                            LegacyNumeric.Round(currentStepNetWeight + netWeight, 3, MidpointRounding.AwayFromZero);
 
                         using (ExcelRange range = worksheet.Cells[row, 2, row, 2]) {
                             range.Merge = true;
@@ -2709,7 +2709,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                 totalPrice =
                     decimal.Round(totalPrice + currentStepTotalPrice, 2, MidpointRounding.AwayFromZero);
 
-                totalNetWeight = Math.Round(totalNetWeight + currentStepNetWeight, 3, MidpointRounding.AwayFromZero);
+                totalNetWeight = LegacyNumeric.Round(totalNetWeight + currentStepNetWeight, 3, MidpointRounding.AwayFromZero);
 
                 using (ExcelRange range = worksheet.Cells[row, 5, row, 5]) {
                     range.Merge = true;
@@ -4216,7 +4216,7 @@ public sealed class ProductsXlsManager : BaseXlsManager, IProductsXlsManager {
                             unitPrice = productIncomeItem.ActReconciliationItem.UnitPrice;
                             totalPrice =
                                 decimal.Round(
-                                    productIncomeItem.ActReconciliationItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty),
+                                    productIncomeItem.ActReconciliationItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty),
                                     2,
                                     MidpointRounding.AwayFromZero
                                 );

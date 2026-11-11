@@ -215,20 +215,20 @@ public sealed class SupplyOrderUkraineRepository : ISupplyOrderUkraineRepository
                 (item, product) => {
                     item.Product = product;
 
-                    item.NetPrice = decimal.Round(item.UnitPrice * Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                    item.NetPrice = decimal.Round(item.UnitPrice * LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
 
-                    item.TotalNetWeight = Math.Round(item.NetWeight * item.Qty, 3, MidpointRounding.AwayFromZero);
+                    item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * item.Qty, 3, MidpointRounding.AwayFromZero);
 
-                    item.NetWeight = Math.Round(item.NetWeight, 3, MidpointRounding.AwayFromZero);
+                    item.NetWeight = LegacyNumeric.Round(item.NetWeight, 3, MidpointRounding.AwayFromZero);
 
                     toReturn.TotalNetPrice =
                         decimal.Round(toReturn.TotalNetPrice + item.NetPrice, 2, MidpointRounding.AwayFromZero);
 
                     toReturn.TotalNetWeight =
-                        Math.Round(toReturn.TotalNetWeight + item.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                        LegacyNumeric.Round(toReturn.TotalNetWeight + item.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
                     toReturn.TotalQty =
-                        Math.Round(toReturn.TotalQty + item.Qty, 2, MidpointRounding.AwayFromZero);
+                        LegacyNumeric.Round(toReturn.TotalQty + item.Qty, 2, MidpointRounding.AwayFromZero);
 
                     return item;
                 },
@@ -719,29 +719,29 @@ public sealed class SupplyOrderUkraineRepository : ISupplyOrderUkraineRepository
 
                     if (!productIds.Any(p => p.Equals(product.Id))) productIds.Add(product.Id);
 
-                    item.NetPrice = item.UnitPrice * Convert.ToDecimal(item.Qty);
+                    item.NetPrice = item.UnitPrice * LegacyNumeric.ToDecimal(item.Qty);
 
-                    item.NetPriceLocal = item.UnitPriceLocal * Convert.ToDecimal(item.Qty);
+                    item.NetPriceLocal = item.UnitPriceLocal * LegacyNumeric.ToDecimal(item.Qty);
 
-                    item.GrossPrice = item.GrossUnitPrice * Convert.ToDecimal(item.Qty);
+                    item.GrossPrice = item.GrossUnitPrice * LegacyNumeric.ToDecimal(item.Qty);
 
-                    item.GrossPriceLocal = item.GrossUnitPriceLocal * Convert.ToDecimal(item.Qty);
+                    item.GrossPriceLocal = item.GrossUnitPriceLocal * LegacyNumeric.ToDecimal(item.Qty);
 
-                    item.AccountingGrossPrice = item.AccountingGrossUnitPrice * Convert.ToDecimal(item.Qty);
+                    item.AccountingGrossPrice = item.AccountingGrossUnitPrice * LegacyNumeric.ToDecimal(item.Qty);
 
-                    item.AccountingGrossPriceLocal = item.AccountingGrossUnitPriceLocal * Convert.ToDecimal(item.Qty);
+                    item.AccountingGrossPriceLocal = item.AccountingGrossUnitPriceLocal * LegacyNumeric.ToDecimal(item.Qty);
 
-                    item.NetWeight = Math.Round(item.NetWeight, 5);
+                    item.NetWeight = LegacyNumeric.Round(item.NetWeight, 5);
 
-                    item.GrossWeight = Math.Round(item.GrossWeight, 5);
+                    item.GrossWeight = LegacyNumeric.Round(item.GrossWeight, 5);
 
-                    item.TotalNetWeight = Math.Round(item.NetWeight * item.Qty, 5, MidpointRounding.AwayFromZero);
+                    item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * item.Qty, 5, MidpointRounding.AwayFromZero);
 
-                    item.TotalGrossWeight = Math.Round(item.GrossWeight * item.Qty, 5, MidpointRounding.AwayFromZero);
+                    item.TotalGrossWeight = LegacyNumeric.Round(item.GrossWeight * item.Qty, 5, MidpointRounding.AwayFromZero);
 
-                    item.DeliveryAmount = item.UnitDeliveryAmount * Convert.ToDecimal(item.Qty); // deprecated
+                    item.DeliveryAmount = item.UnitDeliveryAmount * LegacyNumeric.ToDecimal(item.Qty); // deprecated
 
-                    item.DeliveryAmountLocal = item.UnitDeliveryAmountLocal * Convert.ToDecimal(item.Qty); // deprecated
+                    item.DeliveryAmountLocal = item.UnitDeliveryAmountLocal * LegacyNumeric.ToDecimal(item.Qty); // deprecated
 
                     toReturn.TotalVatAmount += item.VatAmountLocal;
 
@@ -769,7 +769,7 @@ public sealed class SupplyOrderUkraineRepository : ISupplyOrderUkraineRepository
                     toReturn.TotalNetPriceLocalWithVat += item.GrossPriceLocal;
 
                     toReturn.TotalQty =
-                        Math.Round(toReturn.TotalQty + item.Qty, 3, MidpointRounding.AwayFromZero);
+                        LegacyNumeric.Round(toReturn.TotalQty + item.Qty, 3, MidpointRounding.AwayFromZero);
                 } else {
                     if (placement == null) return item;
 
@@ -1165,20 +1165,20 @@ public sealed class SupplyOrderUkraineRepository : ISupplyOrderUkraineRepository
 
                 item.QtyDifferent = item.Qty - item.PlacedQty;
 
-                item.NetPrice = decimal.Round(item.UnitPrice * Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                item.NetPrice = decimal.Round(item.UnitPrice * LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
 
-                item.TotalNetWeight = Math.Round(item.NetWeight * item.Qty, 3, MidpointRounding.AwayFromZero);
+                item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * item.Qty, 3, MidpointRounding.AwayFromZero);
 
-                item.NetWeight = Math.Round(item.NetWeight, 3, MidpointRounding.AwayFromZero);
+                item.NetWeight = LegacyNumeric.Round(item.NetWeight, 3, MidpointRounding.AwayFromZero);
 
                 order.TotalNetPrice =
                     decimal.Round(order.TotalNetPrice + item.NetPrice, 2, MidpointRounding.AwayFromZero);
 
                 order.TotalNetWeight =
-                    Math.Round(order.TotalNetWeight + item.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                    LegacyNumeric.Round(order.TotalNetWeight + item.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
                 orderFromList.TotalQty =
-                    Math.Round(orderFromList.TotalQty + item.Qty, 2, MidpointRounding.AwayFromZero);
+                    LegacyNumeric.Round(orderFromList.TotalQty + item.Qty, 2, MidpointRounding.AwayFromZero);
 
                 orderFromList.SupplyOrderUkraineItems.Add(item);
             } else {
@@ -1187,20 +1187,20 @@ public sealed class SupplyOrderUkraineRepository : ISupplyOrderUkraineRepository
 
                     item.QtyDifferent = item.Qty - item.PlacedQty;
 
-                    item.NetPrice = decimal.Round(item.UnitPrice * Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                    item.NetPrice = decimal.Round(item.UnitPrice * LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
 
-                    item.TotalNetWeight = Math.Round(item.NetWeight * item.Qty, 3, MidpointRounding.AwayFromZero);
+                    item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * item.Qty, 3, MidpointRounding.AwayFromZero);
 
-                    item.NetWeight = Math.Round(item.NetWeight, 3, MidpointRounding.AwayFromZero);
+                    item.NetWeight = LegacyNumeric.Round(item.NetWeight, 3, MidpointRounding.AwayFromZero);
 
                     order.TotalNetPrice =
                         decimal.Round(order.TotalNetPrice + item.NetPrice, 2, MidpointRounding.AwayFromZero);
 
                     order.TotalNetWeight =
-                        Math.Round(order.TotalNetWeight + item.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                        LegacyNumeric.Round(order.TotalNetWeight + item.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
                     order.TotalQty =
-                        Math.Round(order.TotalQty + item.Qty, 2, MidpointRounding.AwayFromZero);
+                        LegacyNumeric.Round(order.TotalQty + item.Qty, 2, MidpointRounding.AwayFromZero);
 
                     order.SupplyOrderUkraineItems.Add(item);
                 }
@@ -1635,20 +1635,20 @@ public sealed class SupplyOrderUkraineRepository : ISupplyOrderUkraineRepository
 
                 item.QtyDifferent = item.Qty - item.PlacedQty;
 
-                item.NetPrice = decimal.Round(item.UnitPrice * Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                item.NetPrice = decimal.Round(item.UnitPrice * LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
 
-                item.TotalNetWeight = Math.Round(item.NetWeight * item.Qty, 3, MidpointRounding.AwayFromZero);
+                item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * item.Qty, 3, MidpointRounding.AwayFromZero);
 
-                item.NetWeight = Math.Round(item.NetWeight, 3, MidpointRounding.AwayFromZero);
+                item.NetWeight = LegacyNumeric.Round(item.NetWeight, 3, MidpointRounding.AwayFromZero);
 
                 order.TotalNetPrice =
                     decimal.Round(order.TotalNetPrice + item.NetPrice, 2, MidpointRounding.AwayFromZero);
 
                 order.TotalNetWeight =
-                    Math.Round(order.TotalNetWeight + item.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                    LegacyNumeric.Round(order.TotalNetWeight + item.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
                 orderFromList.TotalQty =
-                    Math.Round(orderFromList.TotalQty + item.Qty, 2, MidpointRounding.AwayFromZero);
+                    LegacyNumeric.Round(orderFromList.TotalQty + item.Qty, 2, MidpointRounding.AwayFromZero);
 
                 orderFromList.SupplyOrderUkraineItems.Add(item);
             } else {
@@ -1657,20 +1657,20 @@ public sealed class SupplyOrderUkraineRepository : ISupplyOrderUkraineRepository
 
                     item.QtyDifferent = item.Qty - item.PlacedQty;
 
-                    item.NetPrice = decimal.Round(item.UnitPrice * Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                    item.NetPrice = decimal.Round(item.UnitPrice * LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
 
-                    item.TotalNetWeight = Math.Round(item.NetWeight * item.Qty, 3, MidpointRounding.AwayFromZero);
+                    item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * item.Qty, 3, MidpointRounding.AwayFromZero);
 
-                    item.NetWeight = Math.Round(item.NetWeight, 3, MidpointRounding.AwayFromZero);
+                    item.NetWeight = LegacyNumeric.Round(item.NetWeight, 3, MidpointRounding.AwayFromZero);
 
                     order.TotalNetPrice =
                         decimal.Round(order.TotalNetPrice + item.NetPrice, 2, MidpointRounding.AwayFromZero);
 
                     order.TotalNetWeight =
-                        Math.Round(order.TotalNetWeight + item.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                        LegacyNumeric.Round(order.TotalNetWeight + item.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
                     order.TotalQty =
-                        Math.Round(order.TotalQty + item.Qty, 2, MidpointRounding.AwayFromZero);
+                        LegacyNumeric.Round(order.TotalQty + item.Qty, 2, MidpointRounding.AwayFromZero);
 
                     order.SupplyOrderUkraineItems.Add(item);
                 }

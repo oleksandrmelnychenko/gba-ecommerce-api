@@ -58,7 +58,7 @@ public sealed class ParseConfigurationXlsManager : IParseConfigurationXlsManager
                     if (configuration.TotalAmountColumnNumber > 0) {
                         if (!string.IsNullOrEmpty(worksheet.Cells[i, configuration.TotalAmountColumnNumber].Text)) {
                             if (decimal.TryParse(worksheet.Cells[i, configuration.TotalAmountColumnNumber].Value.ToString(), out decimal price))
-                                parsedProduct.UnitPrice = price / Convert.ToDecimal(parsedProduct.Qty);
+                                parsedProduct.UnitPrice = price / LegacyNumeric.ToDecimal(parsedProduct.Qty);
                             else
                                 throw new SupplyDocumentParseException(SupplyDocumentParseExceptionType.IncorrectDataType, i, configuration.TotalAmountColumnNumber,
                                     string.Empty);
@@ -222,7 +222,7 @@ public sealed class ParseConfigurationXlsManager : IParseConfigurationXlsManager
                 if (configuration.TotalAmountColumnNumber > 0) {
                     if (!string.IsNullOrEmpty(worksheet.Cells[i, configuration.TotalAmountColumnNumber].Text)) {
                         if (decimal.TryParse(worksheet.Cells[i, configuration.TotalAmountColumnNumber].Value.ToString(), out decimal price))
-                            parsedProduct.TotalNetPrice = price / Convert.ToDecimal(parsedProduct.Qty);
+                            parsedProduct.TotalNetPrice = price / LegacyNumeric.ToDecimal(parsedProduct.Qty);
                         else
                             throw new SupplyDocumentParseException(SupplyDocumentParseExceptionType.IncorrectDataType, i, configuration.TotalAmountColumnNumber,
                                 string.Empty);
@@ -294,7 +294,7 @@ public sealed class ParseConfigurationXlsManager : IParseConfigurationXlsManager
                 if (configuration.TotalAmountColumnNumber > 0) {
                     if (!string.IsNullOrEmpty(worksheet.Cells[i, configuration.TotalAmountColumnNumber].Text)) {
                         if (decimal.TryParse(worksheet.Cells[i, configuration.TotalAmountColumnNumber].Value.ToString(), out decimal price))
-                            parsedProduct.UnitPrice = price / Convert.ToDecimal(parsedProduct.Qty);
+                            parsedProduct.UnitPrice = price / LegacyNumeric.ToDecimal(parsedProduct.Qty);
                         //                                        decimal.Round(
                         //                                            price / Convert.ToDecimal(parsedProduct.Qty),
                         //                                            2,
@@ -695,7 +695,7 @@ public sealed class ParseConfigurationXlsManager : IParseConfigurationXlsManager
                         parsedProduct.UnitPrice =
                             configuration.PricePerItem
                                 ? price
-                                : price / Convert.ToDecimal(parsedProduct.Qty);
+                                : price / LegacyNumeric.ToDecimal(parsedProduct.Qty);
                     else
                         throw new SupplyDocumentParseException(SupplyDocumentParseExceptionType.IncorrectDataType, i, configuration.PriceColumnNumber, string.Empty);
                 } else {
@@ -850,7 +850,7 @@ public sealed class ParseConfigurationXlsManager : IParseConfigurationXlsManager
                 NetWeight = Convert.ToDouble(worksheet.Cells[i, column + 1].Value),
                 GrossWeight = Convert.ToDouble(worksheet.Cells[i, column + 2].Value),
                 Qty = Convert.ToDouble(worksheet.Cells[i, column + 3].Value),
-                UnitPrice = Convert.ToDecimal(worksheet.Cells[i, column + 4].Value)
+                UnitPrice = LegacyNumeric.ToDecimal(worksheet.Cells[i, column + 4].Value)
             };
 
             if (PackingListItemIsValid(item)) itemsToReturn.Add(item);

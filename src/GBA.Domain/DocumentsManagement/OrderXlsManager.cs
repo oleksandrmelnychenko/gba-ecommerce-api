@@ -275,7 +275,7 @@ public sealed class OrderXlsManager : BaseXlsManager, IOrderXlsManager {
 
                     decimal totalPriceItem =
                         decimal.Round(
-                            Convert.ToDecimal(movement.Qty) * movement.ConsignmentItem.Price,
+                            LegacyNumeric.ToDecimal(movement.Qty) * movement.ConsignmentItem.Price,
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -384,7 +384,7 @@ public sealed class OrderXlsManager : BaseXlsManager, IOrderXlsManager {
 
                 totalDepreciatedPriceItem =
                     decimal.Round(
-                        Convert.ToDecimal(depreciatedOrderItem.Qty) * price,
+                        LegacyNumeric.ToDecimal(depreciatedOrderItem.Qty) * price,
                         2,
                         MidpointRounding.AwayFromZero
                     );

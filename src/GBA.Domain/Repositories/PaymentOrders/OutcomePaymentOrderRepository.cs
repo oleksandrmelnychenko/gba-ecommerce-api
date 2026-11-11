@@ -2709,7 +2709,7 @@ public sealed class OutcomePaymentOrderRepository : IOutcomePaymentOrderReposito
 
             fromList.CompanyCarFuelings.Add(companyCarFueling);
 
-            fromList.AddedFuelAmount = Math.Round(fromList.AddedFuelAmount + companyCarFueling.FuelAmount, 2);
+            fromList.AddedFuelAmount = LegacyNumeric.Round(fromList.AddedFuelAmount + companyCarFueling.FuelAmount, 2);
 
             return companyCarFueling;
         };
@@ -2781,7 +2781,7 @@ public sealed class OutcomePaymentOrderRepository : IOutcomePaymentOrderReposito
 
             fromList.CompanyCarRoadLists.Add(roadList);
 
-            fromList.SpentFuelAmount = Math.Round(fromList.AddedFuelAmount + roadList.FuelAmount, 2);
+            fromList.SpentFuelAmount = LegacyNumeric.Round(fromList.AddedFuelAmount + roadList.FuelAmount, 2);
 
             return roadList;
         };
@@ -3852,7 +3852,7 @@ public sealed class OutcomePaymentOrderRepository : IOutcomePaymentOrderReposito
 
             fromList.CompanyCarFuelings.Add(companyCarFueling);
 
-            fromList.AddedFuelAmount = Math.Round(fromList.AddedFuelAmount + companyCarFueling.FuelAmount, 2);
+            fromList.AddedFuelAmount = LegacyNumeric.Round(fromList.AddedFuelAmount + companyCarFueling.FuelAmount, 2);
 
             fromList.Amount = Math.Round(fromList.Amount + companyCarFueling.TotalPriceWithVat, 2);
 
@@ -3926,7 +3926,7 @@ public sealed class OutcomePaymentOrderRepository : IOutcomePaymentOrderReposito
 
             fromList.CompanyCarRoadLists.Add(roadList);
 
-            fromList.SpentFuelAmount = Math.Round(fromList.AddedFuelAmount + roadList.FuelAmount, 2);
+            fromList.SpentFuelAmount = LegacyNumeric.Round(fromList.AddedFuelAmount + roadList.FuelAmount, 2);
 
             return roadList;
         };

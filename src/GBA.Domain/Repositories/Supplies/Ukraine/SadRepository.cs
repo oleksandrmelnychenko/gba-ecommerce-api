@@ -548,11 +548,11 @@ public sealed class SadRepository : ISadRepository {
                             ? item.ExchangeRateAmount
                             : 1m; //GetPlnExchangeRate(toReturn.FromDate.AddDays(-1));
 
-                    sadItem.TotalNetWeight = Math.Round(sadItem.NetWeight * sadItem.Qty, 3);
-                    sadItem.NetWeight = Math.Round(sadItem.NetWeight, 3);
+                    sadItem.TotalNetWeight = LegacyNumeric.Round(sadItem.NetWeight * sadItem.Qty, 3);
+                    sadItem.NetWeight = LegacyNumeric.Round(sadItem.NetWeight, 3);
 
                     sadItem.TotalAmount =
-                        decimal.Round(sadItem.UnitPrice * Convert.ToDecimal(sadItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadItem.Qty), 2, MidpointRounding.AwayFromZero);
                     sadItem.TotalAmountWithMargin =
                         decimal.Round(sadItem.TotalAmount + sadItem.TotalAmount * toReturn.MarginAmount / 100, 2, MidpointRounding.AwayFromZero);
                     sadItem.TotalAmountLocal =
@@ -560,7 +560,7 @@ public sealed class SadRepository : ISadRepository {
 
                     sadItem.TotalVatAmount =
                         decimal.Round(
-                            decimal.Round(sadItem.UnitPrice * exchangeRate * Convert.ToDecimal(sadItem.Qty), 4, MidpointRounding.AwayFromZero)
+                            decimal.Round(sadItem.UnitPrice * exchangeRate * LegacyNumeric.ToDecimal(sadItem.Qty), 4, MidpointRounding.AwayFromZero)
                             * toReturn.VatPercent / 100,
                             4,
                             MidpointRounding.AwayFromZero
@@ -575,7 +575,7 @@ public sealed class SadRepository : ISadRepository {
 
                     toReturn.TotalQty += sadItem.Qty;
 
-                    toReturn.TotalNetWeight = Math.Round(toReturn.TotalNetWeight + sadItem.TotalNetWeight, 3);
+                    toReturn.TotalNetWeight = LegacyNumeric.Round(toReturn.TotalNetWeight + sadItem.TotalNetWeight, 3);
 
                     toReturn.TotalAmount =
                         decimal.Round(toReturn.TotalAmount + sadItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
@@ -665,16 +665,16 @@ public sealed class SadRepository : ISadRepository {
                         sadPalletItem.SadItem = sadItem;
 
                         sadPalletItem.TotalNetWeight =
-                            Math.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
+                            LegacyNumeric.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
                         sadPalletItem.TotalGrossWeight = sadPalletItem.TotalNetWeight;
 
-                        sadItem.NetWeight = Math.Round(sadItem.NetWeight, 3);
+                        sadItem.NetWeight = LegacyNumeric.Round(sadItem.NetWeight, 3);
 
                         sadPalletItem.TotalAmount =
-                            decimal.Round(sadItem.UnitPrice * Convert.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
+                            decimal.Round(sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
                         sadPalletItem.TotalAmountLocal =
                             decimal.Round(
-                                sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * Convert.ToDecimal(sadPalletItem.Qty),
+                                sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * LegacyNumeric.ToDecimal(sadPalletItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -685,10 +685,10 @@ public sealed class SadRepository : ISadRepository {
                             decimal.Round(sadPallet.TotalAmountLocal + sadPalletItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
 
                         sadPallet.TotalNetWeight =
-                            Math.Round(sadPallet.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
+                            LegacyNumeric.Round(sadPallet.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
 
                         sadPallet.TotalGrossWeight =
-                            Math.Round(sadPallet.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
+                            LegacyNumeric.Round(sadPallet.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
 
                         sadPallet.SadPalletItems.Add(sadPalletItem);
                     }
@@ -712,15 +712,15 @@ public sealed class SadRepository : ISadRepository {
                     sadPalletItem.SadItem = sadItem;
 
                     sadPalletItem.TotalNetWeight =
-                        Math.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
+                        LegacyNumeric.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
                     sadPalletItem.TotalGrossWeight = sadPalletItem.TotalNetWeight;
 
-                    sadItem.NetWeight = Math.Round(sadItem.NetWeight, 3);
+                    sadItem.NetWeight = LegacyNumeric.Round(sadItem.NetWeight, 3);
 
                     sadPalletItem.TotalAmount =
-                        decimal.Round(sadItem.UnitPrice * Convert.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
                     sadPalletItem.TotalAmountLocal =
-                        decimal.Round(sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * Convert.ToDecimal(sadPalletItem.Qty), 2,
+                        decimal.Round(sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * LegacyNumeric.ToDecimal(sadPalletItem.Qty), 2,
                             MidpointRounding.AwayFromZero);
 
                     fromList.TotalAmount =
@@ -729,10 +729,10 @@ public sealed class SadRepository : ISadRepository {
                         decimal.Round(fromList.TotalAmountLocal + sadPalletItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
 
                     fromList.TotalNetWeight =
-                        Math.Round(fromList.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
+                        LegacyNumeric.Round(fromList.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
 
                     fromList.TotalGrossWeight =
-                        Math.Round(fromList.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
+                        LegacyNumeric.Round(fromList.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
 
                     fromList.SadPalletItems.Add(sadPalletItem);
                 }
@@ -779,10 +779,10 @@ public sealed class SadRepository : ISadRepository {
 
                     foreach (SadPalletItem item in pallet.SadPalletItems)
                         item.TotalGrossWeight =
-                            Math.Round(item.TotalGrossWeight + gross * item.Qty, 2);
+                            LegacyNumeric.Round(item.TotalGrossWeight + gross * item.Qty, 2);
                 }
 
-                toReturn.TotalGrossWeight = Math.Round(toReturn.SadPallets.Sum(p => p.TotalGrossWeight), 3);
+                toReturn.TotalGrossWeight = LegacyNumeric.Round(toReturn.SadPallets.Sum(p => p.TotalGrossWeight), 3);
             } else {
                 toReturn.TotalGrossWeight = toReturn.TotalNetWeight;
             }
@@ -825,13 +825,13 @@ public sealed class SadRepository : ISadRepository {
                     sadItem.SupplyOrderUkraineCartItem = item;
                     sadItem.Supplier = supplier;
 
-                    sadItem.TotalNetWeight = Math.Round(sadItem.NetWeight * sadItem.Qty, 3);
-                    sadItem.NetWeight = Math.Round(sadItem.NetWeight, 3);
+                    sadItem.TotalNetWeight = LegacyNumeric.Round(sadItem.NetWeight * sadItem.Qty, 3);
+                    sadItem.NetWeight = LegacyNumeric.Round(sadItem.NetWeight, 3);
 
                     decimal exchangeRate = GetPlnExchangeRate(toReturn.FromDate.AddDays(-1));
 
                     sadItem.TotalAmount =
-                        decimal.Round(sadItem.UnitPrice * Convert.ToDecimal(sadItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadItem.Qty), 2, MidpointRounding.AwayFromZero);
                     sadItem.TotalAmountWithMargin =
                         decimal.Round(sadItem.TotalAmount + sadItem.TotalAmount * toReturn.MarginAmount / 100, 2, MidpointRounding.AwayFromZero);
                     sadItem.TotalAmountLocal =
@@ -839,7 +839,7 @@ public sealed class SadRepository : ISadRepository {
 
                     sadItem.TotalVatAmount =
                         decimal.Round(
-                            decimal.Round(sadItem.UnitPrice * exchangeRate * Convert.ToDecimal(sadItem.Qty), 4, MidpointRounding.AwayFromZero)
+                            decimal.Round(sadItem.UnitPrice * exchangeRate * LegacyNumeric.ToDecimal(sadItem.Qty), 4, MidpointRounding.AwayFromZero)
                             * toReturn.VatPercent / 100,
                             4,
                             MidpointRounding.AwayFromZero
@@ -854,7 +854,7 @@ public sealed class SadRepository : ISadRepository {
 
                     toReturn.TotalQty += sadItem.Qty;
 
-                    toReturn.TotalNetWeight = Math.Round(toReturn.TotalNetWeight + sadItem.TotalNetWeight, 3);
+                    toReturn.TotalNetWeight = LegacyNumeric.Round(toReturn.TotalNetWeight + sadItem.TotalNetWeight, 3);
 
                     toReturn.TotalAmount =
                         decimal.Round(toReturn.TotalAmount + sadItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
@@ -955,16 +955,16 @@ public sealed class SadRepository : ISadRepository {
                         sadPalletItem.SadItem = sadItem;
 
                         sadPalletItem.TotalNetWeight =
-                            Math.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
+                            LegacyNumeric.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
                         sadPalletItem.TotalGrossWeight = sadPalletItem.TotalNetWeight;
 
-                        sadItem.NetWeight = Math.Round(sadItem.NetWeight, 3);
+                        sadItem.NetWeight = LegacyNumeric.Round(sadItem.NetWeight, 3);
 
                         sadPalletItem.TotalAmount =
-                            decimal.Round(sadItem.UnitPrice * Convert.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
+                            decimal.Round(sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
                         sadPalletItem.TotalAmountLocal =
                             decimal.Round(
-                                sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * Convert.ToDecimal(sadPalletItem.Qty),
+                                sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * LegacyNumeric.ToDecimal(sadPalletItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -975,10 +975,10 @@ public sealed class SadRepository : ISadRepository {
                             decimal.Round(sadPallet.TotalAmountLocal + sadPalletItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
 
                         sadPallet.TotalNetWeight =
-                            Math.Round(sadPallet.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
+                            LegacyNumeric.Round(sadPallet.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
 
                         sadPallet.TotalGrossWeight =
-                            Math.Round(sadPallet.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
+                            LegacyNumeric.Round(sadPallet.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
 
                         sadPallet.SadPalletItems.Add(sadPalletItem);
                     }
@@ -1002,15 +1002,15 @@ public sealed class SadRepository : ISadRepository {
                     sadPalletItem.SadItem = sadItem;
 
                     sadPalletItem.TotalNetWeight =
-                        Math.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
+                        LegacyNumeric.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
                     sadPalletItem.TotalGrossWeight = sadPalletItem.TotalNetWeight;
 
-                    sadItem.NetWeight = Math.Round(sadItem.NetWeight, 3);
+                    sadItem.NetWeight = LegacyNumeric.Round(sadItem.NetWeight, 3);
 
                     sadPalletItem.TotalAmount =
-                        decimal.Round(sadItem.UnitPrice * Convert.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
                     sadPalletItem.TotalAmountLocal =
-                        decimal.Round(sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * Convert.ToDecimal(sadPalletItem.Qty), 2,
+                        decimal.Round(sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * LegacyNumeric.ToDecimal(sadPalletItem.Qty), 2,
                             MidpointRounding.AwayFromZero);
 
                     fromList.TotalAmount =
@@ -1019,10 +1019,10 @@ public sealed class SadRepository : ISadRepository {
                         decimal.Round(fromList.TotalAmountLocal + sadPalletItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
 
                     fromList.TotalNetWeight =
-                        Math.Round(fromList.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
+                        LegacyNumeric.Round(fromList.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
 
                     fromList.TotalGrossWeight =
-                        Math.Round(fromList.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
+                        LegacyNumeric.Round(fromList.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
 
                     fromList.SadPalletItems.Add(sadPalletItem);
                 }
@@ -1069,10 +1069,10 @@ public sealed class SadRepository : ISadRepository {
 
                     foreach (SadPalletItem item in pallet.SadPalletItems)
                         item.TotalGrossWeight =
-                            Math.Round(item.TotalGrossWeight + gross * item.Qty, 2);
+                            LegacyNumeric.Round(item.TotalGrossWeight + gross * item.Qty, 2);
                 }
 
-                toReturn.TotalGrossWeight = Math.Round(toReturn.SadPallets.Sum(p => p.TotalGrossWeight), 3);
+                toReturn.TotalGrossWeight = LegacyNumeric.Round(toReturn.SadPallets.Sum(p => p.TotalGrossWeight), 3);
             } else {
                 toReturn.TotalGrossWeight = toReturn.TotalNetWeight;
             }
@@ -1080,7 +1080,7 @@ public sealed class SadRepository : ISadRepository {
 
         if (toReturn.TotalAmount > 0 && toReturn.TotalNetWeight > 0)
             toReturn.SadCoefficient =
-                Math.Round(toReturn.TotalNetWeight / Convert.ToDouble(toReturn.TotalAmount), 4, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(toReturn.TotalNetWeight / LegacyNumeric.ToDouble(toReturn.TotalAmount), 4, MidpointRounding.AwayFromZero);
 
         return toReturn;
     }
@@ -1679,11 +1679,11 @@ public sealed class SadRepository : ISadRepository {
                             ? item.ExchangeRateAmount
                             : 1m; //GetPlnExchangeRate(toReturn.FromDate.AddDays(-1));
 
-                    sadItem.TotalNetWeight = Math.Round(sadItem.NetWeight * sadItem.Qty, 3);
-                    sadItem.NetWeight = Math.Round(sadItem.NetWeight, 3);
+                    sadItem.TotalNetWeight = LegacyNumeric.Round(sadItem.NetWeight * sadItem.Qty, 3);
+                    sadItem.NetWeight = LegacyNumeric.Round(sadItem.NetWeight, 3);
 
                     sadItem.TotalAmount =
-                        decimal.Round(sadItem.UnitPrice * Convert.ToDecimal(sadItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadItem.Qty), 2, MidpointRounding.AwayFromZero);
                     sadItem.TotalAmountWithMargin =
                         decimal.Round(sadItem.TotalAmount + sadItem.TotalAmount * toReturn.MarginAmount / 100, 2, MidpointRounding.AwayFromZero);
                     sadItem.TotalAmountLocal =
@@ -1691,7 +1691,7 @@ public sealed class SadRepository : ISadRepository {
 
                     sadItem.TotalVatAmount =
                         decimal.Round(
-                            decimal.Round(sadItem.UnitPrice * exchangeRate * Convert.ToDecimal(sadItem.Qty), 4, MidpointRounding.AwayFromZero)
+                            decimal.Round(sadItem.UnitPrice * exchangeRate * LegacyNumeric.ToDecimal(sadItem.Qty), 4, MidpointRounding.AwayFromZero)
                             * toReturn.VatPercent / 100,
                             4,
                             MidpointRounding.AwayFromZero
@@ -1706,7 +1706,7 @@ public sealed class SadRepository : ISadRepository {
 
                     toReturn.TotalQty += sadItem.Qty;
 
-                    toReturn.TotalNetWeight = Math.Round(toReturn.TotalNetWeight + sadItem.TotalNetWeight, 3);
+                    toReturn.TotalNetWeight = LegacyNumeric.Round(toReturn.TotalNetWeight + sadItem.TotalNetWeight, 3);
 
                     toReturn.TotalAmount =
                         decimal.Round(toReturn.TotalAmount + sadItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
@@ -1793,16 +1793,16 @@ public sealed class SadRepository : ISadRepository {
                         sadPalletItem.SadItem = sadItem;
 
                         sadPalletItem.TotalNetWeight =
-                            Math.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
+                            LegacyNumeric.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
                         sadPalletItem.TotalGrossWeight = sadPalletItem.TotalNetWeight;
 
-                        sadItem.NetWeight = Math.Round(sadItem.NetWeight, 3);
+                        sadItem.NetWeight = LegacyNumeric.Round(sadItem.NetWeight, 3);
 
                         sadPalletItem.TotalAmount =
-                            decimal.Round(sadItem.UnitPrice * Convert.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
+                            decimal.Round(sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
                         sadPalletItem.TotalAmountLocal =
                             decimal.Round(
-                                sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * Convert.ToDecimal(sadPalletItem.Qty),
+                                sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * LegacyNumeric.ToDecimal(sadPalletItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -1813,10 +1813,10 @@ public sealed class SadRepository : ISadRepository {
                             decimal.Round(sadPallet.TotalAmountLocal + sadPalletItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
 
                         sadPallet.TotalNetWeight =
-                            Math.Round(sadPallet.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
+                            LegacyNumeric.Round(sadPallet.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
 
                         sadPallet.TotalGrossWeight =
-                            Math.Round(sadPallet.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
+                            LegacyNumeric.Round(sadPallet.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
 
                         sadPallet.SadPalletItems.Add(sadPalletItem);
                     }
@@ -1837,15 +1837,15 @@ public sealed class SadRepository : ISadRepository {
                     sadPalletItem.SadItem = sadItem;
 
                     sadPalletItem.TotalNetWeight =
-                        Math.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
+                        LegacyNumeric.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
                     sadPalletItem.TotalGrossWeight = sadPalletItem.TotalNetWeight;
 
-                    sadItem.NetWeight = Math.Round(sadItem.NetWeight, 3);
+                    sadItem.NetWeight = LegacyNumeric.Round(sadItem.NetWeight, 3);
 
                     sadPalletItem.TotalAmount =
-                        decimal.Round(sadItem.UnitPrice * Convert.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
                     sadPalletItem.TotalAmountLocal =
-                        decimal.Round(sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * Convert.ToDecimal(sadPalletItem.Qty), 2,
+                        decimal.Round(sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * LegacyNumeric.ToDecimal(sadPalletItem.Qty), 2,
                             MidpointRounding.AwayFromZero);
 
                     fromList.TotalAmount =
@@ -1854,10 +1854,10 @@ public sealed class SadRepository : ISadRepository {
                         decimal.Round(fromList.TotalAmountLocal + sadPalletItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
 
                     fromList.TotalNetWeight =
-                        Math.Round(fromList.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
+                        LegacyNumeric.Round(fromList.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
 
                     fromList.TotalGrossWeight =
-                        Math.Round(fromList.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
+                        LegacyNumeric.Round(fromList.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
 
                     fromList.SadPalletItems.Add(sadPalletItem);
                 }
@@ -1904,10 +1904,10 @@ public sealed class SadRepository : ISadRepository {
 
                     foreach (SadPalletItem item in pallet.SadPalletItems)
                         item.TotalGrossWeight =
-                            Math.Round(item.TotalGrossWeight + gross * item.Qty, 2);
+                            LegacyNumeric.Round(item.TotalGrossWeight + gross * item.Qty, 2);
                 }
 
-                toReturn.TotalGrossWeight = Math.Round(toReturn.SadPallets.Sum(p => p.TotalGrossWeight), 3);
+                toReturn.TotalGrossWeight = LegacyNumeric.Round(toReturn.SadPallets.Sum(p => p.TotalGrossWeight), 3);
             } else {
                 toReturn.TotalGrossWeight = toReturn.TotalNetWeight;
             }
@@ -1950,13 +1950,13 @@ public sealed class SadRepository : ISadRepository {
                     sadItem.SupplyOrderUkraineCartItem = item;
                     sadItem.Supplier = supplier;
 
-                    sadItem.TotalNetWeight = Math.Round(sadItem.NetWeight * sadItem.Qty, 3);
-                    sadItem.NetWeight = Math.Round(sadItem.NetWeight, 3);
+                    sadItem.TotalNetWeight = LegacyNumeric.Round(sadItem.NetWeight * sadItem.Qty, 3);
+                    sadItem.NetWeight = LegacyNumeric.Round(sadItem.NetWeight, 3);
 
                     decimal exchangeRate = GetPlnExchangeRate(toReturn.FromDate.AddDays(-1));
 
                     sadItem.TotalAmount =
-                        decimal.Round(sadItem.UnitPrice * Convert.ToDecimal(sadItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadItem.Qty), 2, MidpointRounding.AwayFromZero);
                     sadItem.TotalAmountWithMargin =
                         decimal.Round(sadItem.TotalAmount + sadItem.TotalAmount * toReturn.MarginAmount / 100, 2, MidpointRounding.AwayFromZero);
                     sadItem.TotalAmountLocal =
@@ -1964,7 +1964,7 @@ public sealed class SadRepository : ISadRepository {
 
                     sadItem.TotalVatAmount =
                         decimal.Round(
-                            decimal.Round(sadItem.UnitPrice * exchangeRate * Convert.ToDecimal(sadItem.Qty), 4, MidpointRounding.AwayFromZero)
+                            decimal.Round(sadItem.UnitPrice * exchangeRate * LegacyNumeric.ToDecimal(sadItem.Qty), 4, MidpointRounding.AwayFromZero)
                             * toReturn.VatPercent / 100,
                             4,
                             MidpointRounding.AwayFromZero
@@ -1979,7 +1979,7 @@ public sealed class SadRepository : ISadRepository {
 
                     toReturn.TotalQty += sadItem.Qty;
 
-                    toReturn.TotalNetWeight = Math.Round(toReturn.TotalNetWeight + sadItem.TotalNetWeight, 3);
+                    toReturn.TotalNetWeight = LegacyNumeric.Round(toReturn.TotalNetWeight + sadItem.TotalNetWeight, 3);
 
                     toReturn.TotalAmount =
                         decimal.Round(toReturn.TotalAmount + sadItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
@@ -2080,16 +2080,16 @@ public sealed class SadRepository : ISadRepository {
                         sadPalletItem.SadItem = sadItem;
 
                         sadPalletItem.TotalNetWeight =
-                            Math.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
+                            LegacyNumeric.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
                         sadPalletItem.TotalGrossWeight = sadPalletItem.TotalNetWeight;
 
-                        sadItem.NetWeight = Math.Round(sadItem.NetWeight, 2);
+                        sadItem.NetWeight = LegacyNumeric.Round(sadItem.NetWeight, 2);
 
                         sadPalletItem.TotalAmount =
-                            decimal.Round(sadItem.UnitPrice * Convert.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
+                            decimal.Round(sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
                         sadPalletItem.TotalAmountLocal =
                             decimal.Round(
-                                sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * Convert.ToDecimal(sadPalletItem.Qty),
+                                sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * LegacyNumeric.ToDecimal(sadPalletItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -2100,10 +2100,10 @@ public sealed class SadRepository : ISadRepository {
                             decimal.Round(sadPallet.TotalAmountLocal + sadPalletItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
 
                         sadPallet.TotalNetWeight =
-                            Math.Round(sadPallet.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
+                            LegacyNumeric.Round(sadPallet.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
 
                         sadPallet.TotalGrossWeight =
-                            Math.Round(sadPallet.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
+                            LegacyNumeric.Round(sadPallet.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
 
                         sadPallet.SadPalletItems.Add(sadPalletItem);
                     }
@@ -2127,15 +2127,15 @@ public sealed class SadRepository : ISadRepository {
                     sadPalletItem.SadItem = sadItem;
 
                     sadPalletItem.TotalNetWeight =
-                        Math.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
+                        LegacyNumeric.Round(sadItem.NetWeight * sadPalletItem.Qty, 3);
                     sadPalletItem.TotalGrossWeight = sadPalletItem.TotalNetWeight;
 
-                    sadItem.NetWeight = Math.Round(sadItem.NetWeight, 3);
+                    sadItem.NetWeight = LegacyNumeric.Round(sadItem.NetWeight, 3);
 
                     sadPalletItem.TotalAmount =
-                        decimal.Round(sadItem.UnitPrice * Convert.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadPalletItem.Qty), 2, MidpointRounding.AwayFromZero);
                     sadPalletItem.TotalAmountLocal =
-                        decimal.Round(sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * Convert.ToDecimal(sadPalletItem.Qty), 2,
+                        decimal.Round(sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * LegacyNumeric.ToDecimal(sadPalletItem.Qty), 2,
                             MidpointRounding.AwayFromZero);
 
                     fromList.TotalAmount =
@@ -2144,10 +2144,10 @@ public sealed class SadRepository : ISadRepository {
                         decimal.Round(fromList.TotalAmountLocal + sadPalletItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
 
                     fromList.TotalNetWeight =
-                        Math.Round(fromList.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
+                        LegacyNumeric.Round(fromList.TotalNetWeight + sadPalletItem.TotalNetWeight, 3);
 
                     fromList.TotalGrossWeight =
-                        Math.Round(fromList.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
+                        LegacyNumeric.Round(fromList.TotalGrossWeight + sadPalletItem.TotalNetWeight, 3);
 
                     fromList.SadPalletItems.Add(sadPalletItem);
                 }
@@ -2194,10 +2194,10 @@ public sealed class SadRepository : ISadRepository {
 
                     foreach (SadPalletItem item in pallet.SadPalletItems)
                         item.TotalGrossWeight =
-                            Math.Round(item.TotalGrossWeight + gross * item.Qty, 2);
+                            LegacyNumeric.Round(item.TotalGrossWeight + gross * item.Qty, 2);
                 }
 
-                toReturn.TotalGrossWeight = Math.Round(toReturn.SadPallets.Sum(p => p.TotalGrossWeight), 3);
+                toReturn.TotalGrossWeight = LegacyNumeric.Round(toReturn.SadPallets.Sum(p => p.TotalGrossWeight), 3);
             } else {
                 toReturn.TotalGrossWeight = toReturn.TotalNetWeight;
             }
@@ -2205,7 +2205,7 @@ public sealed class SadRepository : ISadRepository {
 
         if (toReturn.TotalAmount > 0 && toReturn.TotalNetWeight > 0)
             toReturn.SadCoefficient =
-                Math.Round(toReturn.TotalNetWeight / Convert.ToDouble(toReturn.TotalAmount), 4, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(toReturn.TotalNetWeight / LegacyNumeric.ToDouble(toReturn.TotalAmount), 4, MidpointRounding.AwayFromZero);
 
         return toReturn;
     }
@@ -3166,17 +3166,17 @@ public sealed class SadRepository : ISadRepository {
 
                 sadItem.SupplyOrderUkraineCartItem = item;
 
-                sadItem.NetWeight = Math.Round(packageOrderItem?.NetWeight ?? item.NetWeight, 3, MidpointRounding.AwayFromZero);
-                sadItem.GrossWeight = Math.Round(packageOrderItem?.GrossWeight ?? item.NetWeight, 3, MidpointRounding.AwayFromZero);
+                sadItem.NetWeight = LegacyNumeric.Round(packageOrderItem?.NetWeight ?? item.NetWeight, 3, MidpointRounding.AwayFromZero);
+                sadItem.GrossWeight = LegacyNumeric.Round(packageOrderItem?.GrossWeight ?? item.NetWeight, 3, MidpointRounding.AwayFromZero);
 
-                sadItem.TotalNetWeight = Math.Round(sadItem.NetWeight * sadItem.Qty, 3, MidpointRounding.AwayFromZero);
-                sadItem.TotalGrossWeight = Math.Round(sadItem.GrossWeight * sadItem.Qty, 3, MidpointRounding.AwayFromZero);
+                sadItem.TotalNetWeight = LegacyNumeric.Round(sadItem.NetWeight * sadItem.Qty, 3, MidpointRounding.AwayFromZero);
+                sadItem.TotalGrossWeight = LegacyNumeric.Round(sadItem.GrossWeight * sadItem.Qty, 3, MidpointRounding.AwayFromZero);
 
                 if (toReturn.MarginAmount != 0m)
                     item.UnitPrice += item.UnitPrice * toReturn.MarginAmount / 100;
 
-                toReturn.TotalNetWeight = Math.Round(toReturn.TotalNetWeight + sadItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
-                toReturn.TotalGrossWeight = Math.Round(toReturn.TotalGrossWeight + sadItem.TotalGrossWeight, 3, MidpointRounding.AwayFromZero);
+                toReturn.TotalNetWeight = LegacyNumeric.Round(toReturn.TotalNetWeight + sadItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                toReturn.TotalGrossWeight = LegacyNumeric.Round(toReturn.TotalGrossWeight + sadItem.TotalGrossWeight, 3, MidpointRounding.AwayFromZero);
 
                 toReturn.SadItems.Add(sadItem);
 
@@ -3312,11 +3312,11 @@ public sealed class SadRepository : ISadRepository {
 
                         sadItem.UnitPrice = item.UnitPrice;
 
-                        sadItem.NetWeight = Math.Round(packageOrderItem?.NetWeight ?? item.NetWeight, 3, MidpointRounding.AwayFromZero);
-                        sadItem.GrossWeight = Math.Round(packageOrderItem?.GrossWeight ?? item.NetWeight, 3, MidpointRounding.AwayFromZero);
+                        sadItem.NetWeight = LegacyNumeric.Round(packageOrderItem?.NetWeight ?? item.NetWeight, 3, MidpointRounding.AwayFromZero);
+                        sadItem.GrossWeight = LegacyNumeric.Round(packageOrderItem?.GrossWeight ?? item.NetWeight, 3, MidpointRounding.AwayFromZero);
 
-                        sadItem.TotalNetWeight = Math.Round(sadItem.NetWeight * sadItem.Qty, 3, MidpointRounding.AwayFromZero);
-                        sadItem.TotalGrossWeight = Math.Round(sadItem.GrossWeight * sadItem.Qty, 3, MidpointRounding.AwayFromZero);
+                        sadItem.TotalNetWeight = LegacyNumeric.Round(sadItem.NetWeight * sadItem.Qty, 3, MidpointRounding.AwayFromZero);
+                        sadItem.TotalGrossWeight = LegacyNumeric.Round(sadItem.GrossWeight * sadItem.Qty, 3, MidpointRounding.AwayFromZero);
 
                         sadPalletItem.SadItem = sadItem;
 
@@ -3325,13 +3325,13 @@ public sealed class SadRepository : ISadRepository {
 
                         sadPalletItem.TotalAmount =
                             decimal.Round(
-                                sadItem.UnitPrice * Convert.ToDecimal(sadPalletItem.Qty),
+                                sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadPalletItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
                         sadPalletItem.TotalAmountLocal =
                             decimal.Round(
-                                sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * Convert.ToDecimal(sadPalletItem.Qty),
+                                sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * LegacyNumeric.ToDecimal(sadPalletItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -3341,8 +3341,8 @@ public sealed class SadRepository : ISadRepository {
                         sadPallet.TotalAmountLocal =
                             decimal.Round(sadPallet.TotalAmountLocal + sadPalletItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
 
-                        sadPallet.TotalNetWeight = Math.Round(sadPallet.TotalNetWeight + sadItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
-                        sadPallet.TotalGrossWeight = Math.Round(sadPallet.TotalGrossWeight + sadItem.TotalGrossWeight, 3, MidpointRounding.AwayFromZero);
+                        sadPallet.TotalNetWeight = LegacyNumeric.Round(sadPallet.TotalNetWeight + sadItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                        sadPallet.TotalGrossWeight = LegacyNumeric.Round(sadPallet.TotalGrossWeight + sadItem.TotalGrossWeight, 3, MidpointRounding.AwayFromZero);
 
                         sadPallet.SadPalletItems.Add(sadPalletItem);
                     }
@@ -3362,11 +3362,11 @@ public sealed class SadRepository : ISadRepository {
 
                     sadItem.UnitPrice = item.UnitPrice;
 
-                    sadItem.NetWeight = Math.Round(packageOrderItem?.NetWeight ?? item.NetWeight, 3, MidpointRounding.AwayFromZero);
-                    sadItem.GrossWeight = Math.Round(packageOrderItem?.GrossWeight ?? item.NetWeight, 3, MidpointRounding.AwayFromZero);
+                    sadItem.NetWeight = LegacyNumeric.Round(packageOrderItem?.NetWeight ?? item.NetWeight, 3, MidpointRounding.AwayFromZero);
+                    sadItem.GrossWeight = LegacyNumeric.Round(packageOrderItem?.GrossWeight ?? item.NetWeight, 3, MidpointRounding.AwayFromZero);
 
-                    sadItem.TotalNetWeight = Math.Round(sadItem.NetWeight * sadItem.Qty, 3, MidpointRounding.AwayFromZero);
-                    sadItem.TotalGrossWeight = Math.Round(sadItem.GrossWeight * sadItem.Qty, 3, MidpointRounding.AwayFromZero);
+                    sadItem.TotalNetWeight = LegacyNumeric.Round(sadItem.NetWeight * sadItem.Qty, 3, MidpointRounding.AwayFromZero);
+                    sadItem.TotalGrossWeight = LegacyNumeric.Round(sadItem.GrossWeight * sadItem.Qty, 3, MidpointRounding.AwayFromZero);
 
                     sadPalletItem.SadItem = sadItem;
 
@@ -3375,13 +3375,13 @@ public sealed class SadRepository : ISadRepository {
 
                     sadPalletItem.TotalAmount =
                         decimal.Round(
-                            sadItem.UnitPrice * Convert.ToDecimal(sadPalletItem.Qty),
+                            sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadPalletItem.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
                     sadPalletItem.TotalAmountLocal =
                         decimal.Round(
-                            sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * Convert.ToDecimal(sadPalletItem.Qty),
+                            sadItem.UnitPrice * GetPlnExchangeRate(toReturn.FromDate.AddDays(-1)) * LegacyNumeric.ToDecimal(sadPalletItem.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -3391,8 +3391,8 @@ public sealed class SadRepository : ISadRepository {
                     fromList.TotalAmountLocal =
                         decimal.Round(fromList.TotalAmountLocal + sadPalletItem.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
 
-                    fromList.TotalNetWeight = Math.Round(fromList.TotalNetWeight + sadItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
-                    fromList.TotalGrossWeight = Math.Round(fromList.TotalGrossWeight + sadItem.TotalGrossWeight, 3, MidpointRounding.AwayFromZero);
+                    fromList.TotalNetWeight = LegacyNumeric.Round(fromList.TotalNetWeight + sadItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                    fromList.TotalGrossWeight = LegacyNumeric.Round(fromList.TotalGrossWeight + sadItem.TotalGrossWeight, 3, MidpointRounding.AwayFromZero);
 
                     fromList.SadPalletItems.Add(sadPalletItem);
                 }
@@ -3443,10 +3443,10 @@ public sealed class SadRepository : ISadRepository {
 
                 foreach (SadPalletItem item in pallet.SadPalletItems)
                     item.TotalGrossWeight =
-                        Math.Round(item.TotalGrossWeight + gross * item.Qty, 3, MidpointRounding.AwayFromZero);
+                        LegacyNumeric.Round(item.TotalGrossWeight + gross * item.Qty, 3, MidpointRounding.AwayFromZero);
             }
 
-            toReturn.TotalGrossWeight = Math.Round(toReturn.SadPallets.Sum(p => p.TotalGrossWeight), 3, MidpointRounding.AwayFromZero);
+            toReturn.TotalGrossWeight = LegacyNumeric.Round(toReturn.SadPallets.Sum(p => p.TotalGrossWeight), 3, MidpointRounding.AwayFromZero);
         }
 
         return toReturn;
@@ -4561,10 +4561,10 @@ public sealed class SadRepository : ISadRepository {
                         sadItem.UnitPrice = item.UnitPrice;
 
                         sadItem.TotalNetWeight =
-                            Math.Round(sadItem.NetWeight * sadItem.Qty, 3);
-                        sadItem.NetWeight = Math.Round(sadItem.NetWeight, 3);
+                            LegacyNumeric.Round(sadItem.NetWeight * sadItem.Qty, 3);
+                        sadItem.NetWeight = LegacyNumeric.Round(sadItem.NetWeight, 3);
                         sadItem.TotalAmount =
-                            decimal.Round(sadItem.UnitPrice * Convert.ToDecimal(sadItem.Qty), 2, MidpointRounding.AwayFromZero);
+                            decimal.Round(sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadItem.Qty), 2, MidpointRounding.AwayFromZero);
                         sadItem.TotalAmountWithMargin =
                             decimal.Round(sadItem.TotalAmount + sadItem.TotalAmount * fromList.MarginAmount / 100, 2, MidpointRounding.AwayFromZero);
                         sadItem.TotalAmountLocal =
@@ -4575,7 +4575,7 @@ public sealed class SadRepository : ISadRepository {
                             );
 
                         fromList.TotalQty += sadItem.Qty;
-                        fromList.TotalNetWeight = Math.Round(fromList.TotalNetWeight + sadItem.TotalNetWeight, 3);
+                        fromList.TotalNetWeight = LegacyNumeric.Round(fromList.TotalNetWeight + sadItem.TotalNetWeight, 3);
                         fromList.TotalAmount =
                             decimal.Round(fromList.TotalAmount + sadItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
                         fromList.TotalAmountLocal =
@@ -4595,17 +4595,17 @@ public sealed class SadRepository : ISadRepository {
                                 : GetPlnExchangeRate(fromList.FromDate.AddDays(-1));
 
                         sadItem.TotalNetWeight =
-                            Math.Round(sadItem.NetWeight * sadItem.Qty, 3);
-                        sadItem.NetWeight = Math.Round(sadItem.NetWeight, 3);
+                            LegacyNumeric.Round(sadItem.NetWeight * sadItem.Qty, 3);
+                        sadItem.NetWeight = LegacyNumeric.Round(sadItem.NetWeight, 3);
                         sadItem.TotalAmount =
-                            decimal.Round(sadItem.UnitPrice * Convert.ToDecimal(sadItem.Qty), 2, MidpointRounding.AwayFromZero);
+                            decimal.Round(sadItem.UnitPrice * LegacyNumeric.ToDecimal(sadItem.Qty), 2, MidpointRounding.AwayFromZero);
                         sadItem.TotalAmountWithMargin =
                             decimal.Round(sadItem.TotalAmount + sadItem.TotalAmount * fromList.MarginAmount / 100, 2, MidpointRounding.AwayFromZero);
                         sadItem.TotalAmountLocal =
                             decimal.Round((sadItem.TotalAmount + sadItem.TotalAmount * fromList.MarginAmount / 100) * exchangeRate, 2, MidpointRounding.AwayFromZero);
 
                         fromList.TotalQty += sadItem.Qty;
-                        fromList.TotalNetWeight = Math.Round(fromList.TotalNetWeight + sadItem.TotalNetWeight, 3);
+                        fromList.TotalNetWeight = LegacyNumeric.Round(fromList.TotalNetWeight + sadItem.TotalNetWeight, 3);
                         fromList.TotalAmount =
                             decimal.Round(fromList.TotalAmount + sadItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
                         fromList.TotalAmountLocal =

@@ -15,6 +15,7 @@ using GBA.Common.Helpers;
 using GBA.Common.Models;
 using GBA.Common.ResourceNames;
 using GBA.Common.Search;
+using GBA.Domain;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.Clients;
@@ -246,7 +247,7 @@ public sealed class OrderService : IOrderService {
         orderItem.IsMisplacedItem = false;
         orderItem.IsValidForCurrentSale = true;
         orderItem.Vat = withVat
-            ? Convert.ToDecimal(storage.Organization?.VatRate?.Value ?? 0)
+            ? LegacyNumeric.ToDecimal(storage.Organization?.VatRate?.Value ?? 0)
             : 0;
 
         return orderItem;
@@ -304,7 +305,7 @@ public sealed class OrderService : IOrderService {
         orderItem.MisplacedSaleId = null;
         orderItem.IsValidForCurrentSale = true;
         orderItem.Vat = clientAgreement.Agreement.WithVATAccounting
-            ? Convert.ToDecimal(clientAgreement.Agreement.Organization?.VatRate?.Value ?? 0)
+            ? LegacyNumeric.ToDecimal(clientAgreement.Agreement.Organization?.VatRate?.Value ?? 0)
             : 0;
 
         return orderItem;
@@ -1078,8 +1079,8 @@ public sealed class OrderService : IOrderService {
                         OrderedQty = orderItem.Qty - productAvailability.Amount,
                         PricePerItem = orderItem.PricePerItem,
                         ExchangeRateAmount = orderItem.ExchangeRateAmount,
-                        TotalAmount = orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty - productAvailability.Amount),
-                        TotalAmountLocal = orderItem.Product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty - productAvailability.Amount),
+                        TotalAmount = orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty - productAvailability.Amount),
+                        TotalAmountLocal = orderItem.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(orderItem.Qty - productAvailability.Amount),
                         Vat = orderItem.Vat
                     });
 
@@ -1688,7 +1689,7 @@ public sealed class OrderService : IOrderService {
         Sale sale,
         IExchangeRateRepository exchangeRateRepository,
         ICurrencyRepository currencyRepository) {
-        decimal vatRate = Convert.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate?.Value ?? 0) / 100;
+        decimal vatRate = LegacyNumeric.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate?.Value ?? 0) / 100;
 
         Currency uah = currencyRepository.GetUAHCurrencyIfExists();
 
@@ -1696,14 +1697,14 @@ public sealed class OrderService : IOrderService {
 
         if (sale.BaseLifeCycleStatus.SaleLifeCycleType.Equals(SaleLifeCycleType.New))
             foreach (OrderItem orderItem in sale.Order.OrderItems) {
-                orderItem.TotalAmount = decimal.Round(orderItem.Product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 14, MidpointRounding.AwayFromZero);
-                orderItem.TotalAmountLocal = orderItem.Product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty);
+                orderItem.TotalAmount = decimal.Round(orderItem.Product.CurrentPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 14, MidpointRounding.AwayFromZero);
+                orderItem.TotalAmountLocal = orderItem.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(orderItem.Qty);
 
                 orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 14, MidpointRounding.AwayFromZero);
                 orderItem.Product.CurrentLocalPrice = decimal.Round(orderItem.Product.CurrentLocalPrice, 14, MidpointRounding.AwayFromZero);
                 orderItem.Product.CurrentPriceEurToUah = orderItem.Product.CurrentPrice * currentExchangeRateEurToUah;
 
-                orderItem.TotalAmountEurToUah = orderItem.Product.CurrentPriceEurToUah * Convert.ToDecimal(orderItem.Qty);
+                orderItem.TotalAmountEurToUah = orderItem.Product.CurrentPriceEurToUah * LegacyNumeric.ToDecimal(orderItem.Qty);
 
                 orderItem.TotalAmount = decimal.Round(orderItem.TotalAmount, 14, MidpointRounding.AwayFromZero);
                 orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmountLocal, 14, MidpointRounding.AwayFromZero);
@@ -1720,10 +1721,10 @@ public sealed class OrderService : IOrderService {
         else
             foreach (OrderItem orderItem in sale.Order.OrderItems) {
                 orderItem.TotalAmount =
-                    decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 14, MidpointRounding.AwayFromZero);
+                    decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 14, MidpointRounding.AwayFromZero);
                 orderItem.TotalAmountLocal =
                     decimal.Round(
-                        decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 14, MidpointRounding.AwayFromZero)
+                        decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 14, MidpointRounding.AwayFromZero)
                         * orderItem.ExchangeRateAmount,
                         14,
                         MidpointRounding.AwayFromZero
@@ -1731,7 +1732,7 @@ public sealed class OrderService : IOrderService {
 
                 orderItem.Product.CurrentPriceEurToUah = orderItem.Product.CurrentPrice * currentExchangeRateEurToUah;
                 orderItem.TotalAmountEurToUah = decimal.Round(orderItem.TotalAmountEurToUah, 14, MidpointRounding.AwayFromZero);
-                orderItem.TotalAmountEurToUah = orderItem.Product.CurrentPriceEurToUah * Convert.ToDecimal(orderItem.Qty);
+                orderItem.TotalAmountEurToUah = orderItem.Product.CurrentPriceEurToUah * LegacyNumeric.ToDecimal(orderItem.Qty);
 
                 if (sale.IsVatSale)
                     orderItem.TotalVat =

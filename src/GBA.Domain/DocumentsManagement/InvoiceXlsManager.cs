@@ -1233,8 +1233,8 @@ public sealed class InvoiceXlsManager : BaseXlsManager, IInvoiceXlsManager {
             decimal totalPrice = 0m;
 
             foreach (SupplyInvoiceOrderItem item in invoice.SupplyInvoiceOrderItems) {
-                double netWeight = Math.Round(item.SupplyOrderItem.NetWeight * item.Qty, 3, MidpointRounding.AwayFromZero);
-                double grossWeight = Math.Round(item.SupplyOrderItem.GrossWeight * item.Qty, 3, MidpointRounding.AwayFromZero);
+                double netWeight = LegacyNumeric.Round(item.SupplyOrderItem.NetWeight * item.Qty, 3, MidpointRounding.AwayFromZero);
+                double grossWeight = LegacyNumeric.Round(item.SupplyOrderItem.GrossWeight * item.Qty, 3, MidpointRounding.AwayFromZero);
 
                 decimal currentUnitPrice = item.UnitPrice;
 
@@ -1246,7 +1246,7 @@ public sealed class InvoiceXlsManager : BaseXlsManager, IInvoiceXlsManager {
 
                 decimal currentTotalPrice =
                     decimal.Round(
-                        currentUnitPrice * Convert.ToDecimal(item.Qty),
+                        currentUnitPrice * LegacyNumeric.ToDecimal(item.Qty),
                         2,
                         MidpointRounding.AwayFromZero
                     );
@@ -1259,10 +1259,10 @@ public sealed class InvoiceXlsManager : BaseXlsManager, IInvoiceXlsManager {
                     );
 
                 totalNetWeight =
-                    Math.Round(totalNetWeight + netWeight, 3, MidpointRounding.AwayFromZero);
+                    LegacyNumeric.Round(totalNetWeight + netWeight, 3, MidpointRounding.AwayFromZero);
 
                 totalGrossWeight =
-                    Math.Round(totalGrossWeight + grossWeight, 3, MidpointRounding.AwayFromZero);
+                    LegacyNumeric.Round(totalGrossWeight + grossWeight, 3, MidpointRounding.AwayFromZero);
 
                 using (ExcelRange range = worksheet.Cells[row, 1, row, 1]) {
                     range.Merge = true;
@@ -1624,9 +1624,9 @@ public sealed class InvoiceXlsManager : BaseXlsManager, IInvoiceXlsManager {
                     worksheet.Cells[row, column++].Value = orderItem.SupplyInvoiceOrderItem.Product.MeasureUnit.NamePl;
                     worksheet.Cells[row, column++].Value = orderItem.Qty;
                     worksheet.Cells[row, column++].Value = orderItem.SupplyInvoiceOrderItem.UnitPrice;
-                    worksheet.Cells[row, column++].Value = Math.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.SupplyInvoiceOrderItem.UnitPrice, 2);
-                    worksheet.Cells[row, column++].Value = Math.Round(Math.Round(orderItem.NetWeight, 3) * orderItem.Qty, 3);
-                    worksheet.Cells[row, column].Value = Math.Round(Math.Round(orderItem.GrossWeight, 3) * orderItem.Qty, 3);
+                    worksheet.Cells[row, column++].Value = Math.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.SupplyInvoiceOrderItem.UnitPrice, 2);
+                    worksheet.Cells[row, column++].Value = LegacyNumeric.Round(LegacyNumeric.Round(orderItem.NetWeight, 3) * orderItem.Qty, 3);
+                    worksheet.Cells[row, column].Value = LegacyNumeric.Round(LegacyNumeric.Round(orderItem.GrossWeight, 3) * orderItem.Qty, 3);
 
                     worksheet.Cells[row, 10, row, 11].Merge = true;
                     worksheet.Cells[row, 10, row, 11].Value = item.ProductSpecificationCode;
@@ -1645,10 +1645,10 @@ public sealed class InvoiceXlsManager : BaseXlsManager, IInvoiceXlsManager {
 
                 worksheet.Cells[row, 2, row, 5].Merge = true;
 
-                worksheet.Cells[row, 6].Value = Math.Round(item.OrderItems.Sum(i => i.Qty), 2);
-                worksheet.Cells[row, 7].Value = Math.Round(item.OrderItems.Sum(i => Convert.ToDecimal(i.Qty) * i.SupplyInvoiceOrderItem.SupplyOrderItem.UnitPrice), 2);
-                worksheet.Cells[row, 8].Value = Math.Round(item.OrderItems.Sum(i => Math.Round(Math.Round(i.NetWeight, 3) * i.Qty, 3)), 3);
-                worksheet.Cells[row, 9].Value = Math.Round(item.OrderItems.Sum(i => Math.Round(Math.Round(i.GrossWeight, 3) * i.Qty, 3)), 3);
+                worksheet.Cells[row, 6].Value = LegacyNumeric.Round(item.OrderItems.Sum(i => i.Qty), 2);
+                worksheet.Cells[row, 7].Value = Math.Round(item.OrderItems.Sum(i => LegacyNumeric.ToDecimal(i.Qty) * i.SupplyInvoiceOrderItem.SupplyOrderItem.UnitPrice), 2);
+                worksheet.Cells[row, 8].Value = LegacyNumeric.Round(item.OrderItems.Sum(i => LegacyNumeric.Round(LegacyNumeric.Round(i.NetWeight, 3) * i.Qty, 3)), 3);
+                worksheet.Cells[row, 9].Value = LegacyNumeric.Round(item.OrderItems.Sum(i => LegacyNumeric.Round(LegacyNumeric.Round(i.GrossWeight, 3) * i.Qty, 3)), 3);
 
                 worksheet.Cells[row, 10, row, 11].Merge = true;
 
@@ -1665,12 +1665,12 @@ public sealed class InvoiceXlsManager : BaseXlsManager, IInvoiceXlsManager {
             worksheet.Cells[row, 2, row, 5].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
             worksheet.Cells[row, 2, row, 5].Style.VerticalAlignment = ExcelVerticalAlignment.Center;
 
-            decimal total = Math.Round(specifications.Sum(s => s.OrderItems.Sum(i => Convert.ToDecimal(i.Qty) * i.SupplyInvoiceOrderItem.SupplyOrderItem.UnitPrice)), 2);
+            decimal total = Math.Round(specifications.Sum(s => s.OrderItems.Sum(i => LegacyNumeric.ToDecimal(i.Qty) * i.SupplyInvoiceOrderItem.SupplyOrderItem.UnitPrice)), 2);
 
-            worksheet.Cells[row, 6].Value = Math.Round(specifications.Sum(s => s.OrderItems.Sum(i => i.Qty)), 2);
+            worksheet.Cells[row, 6].Value = LegacyNumeric.Round(specifications.Sum(s => s.OrderItems.Sum(i => i.Qty)), 2);
             worksheet.Cells[row, 7].Value = total;
-            worksheet.Cells[row, 8].Value = Math.Round(specifications.Sum(s => s.OrderItems.Sum(i => Math.Round(Math.Round(i.NetWeight, 3) * i.Qty, 3))), 3);
-            worksheet.Cells[row, 9].Value = Math.Round(specifications.Sum(s => s.OrderItems.Sum(i => Math.Round(Math.Round(i.GrossWeight, 3) * i.Qty, 3))), 3);
+            worksheet.Cells[row, 8].Value = LegacyNumeric.Round(specifications.Sum(s => s.OrderItems.Sum(i => LegacyNumeric.Round(LegacyNumeric.Round(i.NetWeight, 3) * i.Qty, 3))), 3);
+            worksheet.Cells[row, 9].Value = LegacyNumeric.Round(specifications.Sum(s => s.OrderItems.Sum(i => LegacyNumeric.Round(LegacyNumeric.Round(i.GrossWeight, 3) * i.Qty, 3))), 3);
 
             worksheet.Cells[row, 10].Value = "Ilość kodów:";
             worksheet.Cells[row, 10].Style.WrapText = true;
@@ -1929,9 +1929,9 @@ public sealed class InvoiceXlsManager : BaseXlsManager, IInvoiceXlsManager {
                     worksheet.Cells[row, column++].Value = orderItem.SupplyInvoiceOrderItem.Product.MeasureUnit.NameUk;
                     worksheet.Cells[row, column++].Value = orderItem.Qty;
                     worksheet.Cells[row, column++].Value = orderItem.SupplyInvoiceOrderItem.UnitPrice;
-                    worksheet.Cells[row, column++].Value = Math.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.SupplyInvoiceOrderItem.UnitPrice, 2);
-                    worksheet.Cells[row, column++].Value = Math.Round(Math.Round(orderItem.NetWeight, 3) * orderItem.Qty, 3);
-                    worksheet.Cells[row, column].Value = Math.Round(Math.Round(orderItem.GrossWeight, 3) * orderItem.Qty, 3);
+                    worksheet.Cells[row, column++].Value = Math.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.SupplyInvoiceOrderItem.UnitPrice, 2);
+                    worksheet.Cells[row, column++].Value = LegacyNumeric.Round(LegacyNumeric.Round(orderItem.NetWeight, 3) * orderItem.Qty, 3);
+                    worksheet.Cells[row, column].Value = LegacyNumeric.Round(LegacyNumeric.Round(orderItem.GrossWeight, 3) * orderItem.Qty, 3);
 
                     worksheet.Cells[row, 10, row, 11].Merge = true;
                     worksheet.Cells[row, 10, row, 11].Value = item.ProductSpecificationCode;
@@ -1953,10 +1953,10 @@ public sealed class InvoiceXlsManager : BaseXlsManager, IInvoiceXlsManager {
 
                 worksheet.Cells[row, 2, row, 5].Merge = true;
 
-                worksheet.Cells[row, 6].Value = Math.Round(item.OrderItems.Sum(i => i.Qty), 2);
-                worksheet.Cells[row, 7].Value = Math.Round(item.OrderItems.Sum(i => Convert.ToDecimal(i.Qty) * i.SupplyInvoiceOrderItem.SupplyOrderItem.UnitPrice), 2);
-                worksheet.Cells[row, 8].Value = Math.Round(item.OrderItems.Sum(i => Math.Round(Math.Round(i.NetWeight, 3) * i.Qty, 3)), 3);
-                worksheet.Cells[row, 9].Value = Math.Round(item.OrderItems.Sum(i => Math.Round(Math.Round(i.GrossWeight, 3) * i.Qty, 3)), 3);
+                worksheet.Cells[row, 6].Value = LegacyNumeric.Round(item.OrderItems.Sum(i => i.Qty), 2);
+                worksheet.Cells[row, 7].Value = Math.Round(item.OrderItems.Sum(i => LegacyNumeric.ToDecimal(i.Qty) * i.SupplyInvoiceOrderItem.SupplyOrderItem.UnitPrice), 2);
+                worksheet.Cells[row, 8].Value = LegacyNumeric.Round(item.OrderItems.Sum(i => LegacyNumeric.Round(LegacyNumeric.Round(i.NetWeight, 3) * i.Qty, 3)), 3);
+                worksheet.Cells[row, 9].Value = LegacyNumeric.Round(item.OrderItems.Sum(i => LegacyNumeric.Round(LegacyNumeric.Round(i.GrossWeight, 3) * i.Qty, 3)), 3);
 
                 worksheet.Cells[row, 10, row, 11].Merge = true;
                 worksheet.Cells[row, 12, row, 13].Merge = true;
@@ -1974,12 +1974,12 @@ public sealed class InvoiceXlsManager : BaseXlsManager, IInvoiceXlsManager {
             worksheet.Cells[row, 2, row, 5].Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
             worksheet.Cells[row, 2, row, 5].Style.VerticalAlignment = ExcelVerticalAlignment.Center;
 
-            total = Math.Round(specifications.Sum(s => s.OrderItems.Sum(i => Convert.ToDecimal(i.Qty) * i.SupplyInvoiceOrderItem.SupplyOrderItem.UnitPrice)), 2);
+            total = Math.Round(specifications.Sum(s => s.OrderItems.Sum(i => LegacyNumeric.ToDecimal(i.Qty) * i.SupplyInvoiceOrderItem.SupplyOrderItem.UnitPrice)), 2);
 
-            worksheet.Cells[row, 6].Value = Math.Round(specifications.Sum(s => s.OrderItems.Sum(i => i.Qty)), 2);
+            worksheet.Cells[row, 6].Value = LegacyNumeric.Round(specifications.Sum(s => s.OrderItems.Sum(i => i.Qty)), 2);
             worksheet.Cells[row, 7].Value = total;
-            worksheet.Cells[row, 8].Value = Math.Round(specifications.Sum(s => s.OrderItems.Sum(i => Math.Round(Math.Round(i.NetWeight, 3) * i.Qty, 3))), 3);
-            worksheet.Cells[row, 9].Value = Math.Round(specifications.Sum(s => s.OrderItems.Sum(i => Math.Round(Math.Round(i.GrossWeight, 3) * i.Qty, 3))), 3);
+            worksheet.Cells[row, 8].Value = LegacyNumeric.Round(specifications.Sum(s => s.OrderItems.Sum(i => LegacyNumeric.Round(LegacyNumeric.Round(i.NetWeight, 3) * i.Qty, 3))), 3);
+            worksheet.Cells[row, 9].Value = LegacyNumeric.Round(specifications.Sum(s => s.OrderItems.Sum(i => LegacyNumeric.Round(LegacyNumeric.Round(i.GrossWeight, 3) * i.Qty, 3))), 3);
 
             worksheet.Cells[row, 10].Value = "К-сть кодів:";
             worksheet.Cells[row, 10].Style.WrapText = true;

@@ -837,7 +837,7 @@ public sealed class ConsignmentXlsManager : BaseXlsManager, IConsignmentXlsManag
 
                     using (ExcelRange range = worksheet.Cells[row, 11, row, 11]) {
                         range.Value = decimal.Round(
-                            Convert.ToDecimal(clientMovementConsignmentInfoItem.ItemQty) * clientMovementConsignmentInfoItem.PricePerItem,
+                            LegacyNumeric.ToDecimal(clientMovementConsignmentInfoItem.ItemQty) * clientMovementConsignmentInfoItem.PricePerItem,
                             2,
                             MidpointRounding.AwayFromZero);
                         range.Style.Border.BorderAround(ExcelBorderStyle.Thin, Color.FromArgb(204, 192, 133));

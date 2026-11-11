@@ -3607,7 +3607,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                     packingListPackageOrderItem.TotalNetPrice =
                         decimal.Round(
-                            packingListPackageOrderItem.UnitPriceEur * Convert.ToDecimal(productIncomeItem.Qty) + totalVat,
+                            packingListPackageOrderItem.UnitPriceEur * LegacyNumeric.ToDecimal(productIncomeItem.Qty) + totalVat,
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -3651,7 +3651,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                             packingListPackageOrderItem.TotalNetPrice =
                                 decimal.Round(
-                                    packingListPackageOrderItem.UnitPriceEur * Convert.ToDecimal(productIncomeItem.Qty) + totalVat,
+                                    packingListPackageOrderItem.UnitPriceEur * LegacyNumeric.ToDecimal(productIncomeItem.Qty) + totalVat,
                                     2,
                                     MidpointRounding.AwayFromZero
                                 );
@@ -3752,7 +3752,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                     supplyOrderUkraineItem.NetPrice =
                         decimal.Round(
-                            supplyOrderUkraineItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty) + supplyOrderUkraineItem.VatAmount,
+                            supplyOrderUkraineItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty) + supplyOrderUkraineItem.VatAmount,
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -3778,7 +3778,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                         supplyOrderUkraineItem.NetPrice =
                             decimal.Round(
-                                supplyOrderUkraineItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty) + supplyOrderUkraineItem.VatAmount,
+                                supplyOrderUkraineItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty) + supplyOrderUkraineItem.VatAmount,
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -7315,7 +7315,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                     packingListPackageOrderItem.TotalNetPrice =
                         decimal.Round(
-                            packingListPackageOrderItem.UnitPriceEur * Convert.ToDecimal(productIncomeItem.Qty),
+                            packingListPackageOrderItem.UnitPriceEur * LegacyNumeric.ToDecimal(productIncomeItem.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -7347,7 +7347,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                         packingListPackageOrderItem.TotalNetPrice =
                             decimal.Round(
-                                packingListPackageOrderItem.UnitPriceEur * Convert.ToDecimal(productIncomeItem.Qty),
+                                packingListPackageOrderItem.UnitPriceEur * LegacyNumeric.ToDecimal(productIncomeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -7453,7 +7453,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                     supplyOrderUkraineItem.NetPrice =
                         decimal.Round(
-                            supplyOrderUkraineItem.UnitPriceLocal * Convert.ToDecimal(productIncomeItem.Qty),
+                            supplyOrderUkraineItem.UnitPriceLocal * LegacyNumeric.ToDecimal(productIncomeItem.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -7477,7 +7477,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                         supplyOrderUkraineItem.NetPrice =
                             decimal.Round(
-                                supplyOrderUkraineItem.UnitPriceLocal * Convert.ToDecimal(productIncomeItem.Qty),
+                                supplyOrderUkraineItem.UnitPriceLocal * LegacyNumeric.ToDecimal(productIncomeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -8657,7 +8657,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                             order.OrderItems.Add(orderItem);
 
-                            sale.TotalAmount = Math.Round(sale.TotalAmount + orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2);
+                            sale.TotalAmount = Math.Round(sale.TotalAmount + orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2);
                         }
 
                         if (reSaleItem != null) {
@@ -8667,7 +8667,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                             reSale.ReSaleItems.Add(reSaleItem);
 
-                            reSale.TotalAmount = Math.Round(reSale.TotalAmount + reSaleItem.PricePerItem * Convert.ToDecimal(reSaleItem.Qty), 2);
+                            reSale.TotalAmount = Math.Round(reSale.TotalAmount + reSaleItem.PricePerItem * LegacyNumeric.ToDecimal(reSaleItem.Qty), 2);
                         }
 
                         if (saleClientAgreement != null) {
@@ -8713,7 +8713,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                             itemFromList.Comment = sale.Comment;
 
-                            fromList.Sale.TotalAmount = Math.Round(fromList.Sale.TotalAmount + orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2);
+                            fromList.Sale.TotalAmount = Math.Round(fromList.Sale.TotalAmount + orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2);
                         }
 
                         if (reSale == null) return incomePaymentOrder;
@@ -8730,7 +8730,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                         fromList.ReSale.ReSaleItems.Add(reSaleItem);
 
-                        fromList.ReSale.TotalAmount = Math.Round(fromList.ReSale.TotalAmount + reSaleItem.PricePerItem * Convert.ToDecimal(reSaleItem.Qty), 2);
+                        fromList.ReSale.TotalAmount = Math.Round(fromList.ReSale.TotalAmount + reSaleItem.PricePerItem * LegacyNumeric.ToDecimal(reSaleItem.Qty), 2);
                     }
                 } else {
                     if (!string.IsNullOrEmpty(incomePaymentOrder.Number))
@@ -8742,7 +8742,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                             order.OrderItems.Add(orderItem);
 
-                            sale.TotalAmount = Math.Round(sale.TotalAmount + orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2);
+                            sale.TotalAmount = Math.Round(sale.TotalAmount + orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2);
                         }
 
                         if (reSaleItem != null) {
@@ -8750,7 +8750,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
                             reSaleAvailability.ConsignmentItem = consignmentItem;
                             reSaleItem.ReSaleAvailability = reSaleAvailability;
 
-                            reSale.TotalAmount = Math.Round(reSale.TotalAmount + reSaleItem.PricePerItem * Convert.ToDecimal(reSaleItem.Qty), 2);
+                            reSale.TotalAmount = Math.Round(reSale.TotalAmount + reSaleItem.PricePerItem * LegacyNumeric.ToDecimal(reSaleItem.Qty), 2);
                         }
 
                         if (saleClientAgreement != null) {
@@ -9118,7 +9118,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
                 AccountingCashFlowHeadItem itemFromList =
                     accountingCashFlow.AccountingCashFlowHeadItems.First(i => i.Type.Equals(JoinServiceType.SaleReturn) && i.Id.Equals(saleReturn.Id));
 
-                decimal vatRatePercent = Convert.ToDecimal(vatRate?.Value ?? 0) / 100;
+                decimal vatRatePercent = LegacyNumeric.ToDecimal(vatRate?.Value ?? 0) / 100;
 
                 itemFromList.OrganizationName = organization?.Name ?? "";
 
@@ -9156,7 +9156,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
                         decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                     orderItem.TotalAmount =
-                        decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                     orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                     orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -9220,7 +9220,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
                             decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                         orderItem.TotalAmount =
-                            decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                            decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                         orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                         orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -10675,13 +10675,13 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                             order.OrderItems.Add(orderItem);
 
-                            sale.TotalAmount = Math.Round(sale.TotalAmount + orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2);
+                            sale.TotalAmount = Math.Round(sale.TotalAmount + orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2);
                         } else if (reSaleItem != null) {
                             consignmentItem.Product = product;
                             reSaleAvailability.ConsignmentItem = consignmentItem;
                             reSaleItem.ReSaleAvailability = reSaleAvailability;
                             reSale.ReSaleItems.Add(reSaleItem);
-                            reSale.TotalAmount = Math.Round(reSale.TotalAmount + reSaleItem.PricePerItem * Convert.ToDecimal(reSaleItem.Qty), 2);
+                            reSale.TotalAmount = Math.Round(reSale.TotalAmount + reSaleItem.PricePerItem * LegacyNumeric.ToDecimal(reSaleItem.Qty), 2);
                         }
 
                         if (saleClientAgreement != null) {
@@ -10722,7 +10722,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                             fromList.Sale.Order.OrderItems.Add(orderItem);
 
-                            fromList.Sale.TotalAmount = Math.Round(fromList.Sale.TotalAmount + orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2);
+                            fromList.Sale.TotalAmount = Math.Round(fromList.Sale.TotalAmount + orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2);
                         } else if (reSaleItem != null) {
                             IncomePaymentOrderSale fromList = itemFromList.IncomePaymentOrder.IncomePaymentOrderSales.First(s => s.Id.Equals(incomePaymentOrderSale.Id));
 
@@ -10732,7 +10732,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
                             reSaleAvailability.ConsignmentItem = consignmentItem;
                             reSaleItem.ReSaleAvailability = reSaleAvailability;
                             fromList.ReSale.ReSaleItems.Add(reSaleItem);
-                            fromList.ReSale.TotalAmount = Math.Round(reSale.TotalAmount + reSaleItem.PricePerItem * Convert.ToDecimal(reSaleItem.Qty), 2);
+                            fromList.ReSale.TotalAmount = Math.Round(reSale.TotalAmount + reSaleItem.PricePerItem * LegacyNumeric.ToDecimal(reSaleItem.Qty), 2);
                         }
                     }
                 } else {
@@ -10745,13 +10745,13 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
 
                             order.OrderItems.Add(orderItem);
 
-                            sale.TotalAmount = Math.Round(sale.TotalAmount + orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2);
+                            sale.TotalAmount = Math.Round(sale.TotalAmount + orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2);
                         } else if (reSaleItem != null) {
                             consignmentItem.Product = product;
                             reSaleAvailability.ConsignmentItem = consignmentItem;
                             reSaleItem.ReSaleAvailability = reSaleAvailability;
                             reSale.ReSaleItems.Add(reSaleItem);
-                            reSale.TotalAmount = Math.Round(reSale.TotalAmount + reSaleItem.PricePerItem * Convert.ToDecimal(reSaleItem.Qty), 2);
+                            reSale.TotalAmount = Math.Round(reSale.TotalAmount + reSaleItem.PricePerItem * LegacyNumeric.ToDecimal(reSaleItem.Qty), 2);
                         }
 
                         if (saleClientAgreement != null) {
@@ -11044,7 +11044,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
                 AccountingCashFlowHeadItem itemFromList =
                     accountingCashFlow.AccountingCashFlowHeadItems.First(i => i.Type.Equals(JoinServiceType.SaleReturn) && i.Id.Equals(saleReturn.Id));
 
-                decimal vatRatePercent = Convert.ToDecimal((vatRate?.Value ?? 0) / 100);
+                decimal vatRatePercent = LegacyNumeric.ToDecimal((vatRate?.Value ?? 0) / 100);
 
                 itemFromList.OrganizationName = organization?.Name ?? "";
 
@@ -11080,7 +11080,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
                         decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                     orderItem.TotalAmount =
-                        decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                     orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                     orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -11146,7 +11146,7 @@ public sealed class ClientCashFlowRepository : IClientCashFlowRepository {
                             decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                         orderItem.TotalAmount =
-                            decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                            decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                         orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                         orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);

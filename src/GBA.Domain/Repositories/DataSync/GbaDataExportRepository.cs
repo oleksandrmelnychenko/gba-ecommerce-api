@@ -100,10 +100,10 @@ public sealed class GbaDataExportRepository : IGbaDataExportRepository {
                     packingListPackageOrderItem.TotalGrossWeight = packingListPackageOrderItem.Qty * packingListPackageOrderItem.GrossWeight;
 
                     packingListPackageOrderItem.TotalNetPrice =
-                        (decimal)packingListPackageOrderItem.Qty * packingListPackageOrderItem.UnitPrice;
+                        LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.UnitPrice;
 
                     packingListPackageOrderItem.TotalNetPriceEur =
-                        (decimal)packingListPackageOrderItem.Qty * packingListPackageOrderItem.UnitPriceEur;
+                        LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.UnitPriceEur;
                 }
                 
 
@@ -116,13 +116,13 @@ public sealed class GbaDataExportRepository : IGbaDataExportRepository {
                 if (packingListPackageOrderItem != null) {
                     // ---- 10. Accounting price calculations ----
                     packingListPackageOrderItem.AccountingTotalGrossPriceEur =
-                        (decimal)packingListPackageOrderItem.Qty * packingListPackageOrderItem.AccountingGrossUnitPriceEur;
+                        LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.AccountingGrossUnitPriceEur;
 
                     packingListPackageOrderItem.AccountingGeneralTotalGrossPriceEur =
-                        (decimal)packingListPackageOrderItem.Qty * packingListPackageOrderItem.AccountingGeneralGrossUnitPriceEur;
+                        LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.AccountingGeneralGrossUnitPriceEur;
 
                     packingListPackageOrderItem.TotalGrossPriceEur =
-                        (decimal)packingListPackageOrderItem.Qty * packingListPackageOrderItem.GrossUnitPriceEur
+                        LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.GrossUnitPriceEur
                         + packingListPackageOrderItem.AccountingTotalGrossPriceEur
                         + packingListPackageOrderItem.AccountingGeneralTotalGrossPriceEur;
 
@@ -169,10 +169,10 @@ public sealed class GbaDataExportRepository : IGbaDataExportRepository {
                     packingListPackageOrderItem.TotalGrossWeight = packingListPackageOrderItem.Qty * packingListPackageOrderItem.GrossWeight;
 
                     packingListPackageOrderItem.TotalNetPrice =
-                        (decimal)packingListPackageOrderItem.Qty * packingListPackageOrderItem.UnitPrice;
+                        LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.UnitPrice;
 
                     packingListPackageOrderItem.TotalNetPriceEur =
-                        (decimal)packingListPackageOrderItem.Qty * packingListPackageOrderItem.UnitPriceEur;
+                        LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.UnitPriceEur;
                 }
 
                 if (productSpecification != null) {
@@ -187,13 +187,13 @@ public sealed class GbaDataExportRepository : IGbaDataExportRepository {
                 if (packingListPackageOrderItem != null) {
 
                     packingListPackageOrderItem.AccountingTotalGrossPriceEur =
-                        (decimal)packingListPackageOrderItem.Qty * packingListPackageOrderItem.AccountingGrossUnitPriceEur;
+                        LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.AccountingGrossUnitPriceEur;
 
                     packingListPackageOrderItem.AccountingGeneralTotalGrossPriceEur =
-                        (decimal)packingListPackageOrderItem.Qty * packingListPackageOrderItem.AccountingGeneralGrossUnitPriceEur;
+                        LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.AccountingGeneralGrossUnitPriceEur;
 
                     packingListPackageOrderItem.TotalGrossPriceEur =
-                        (decimal)packingListPackageOrderItem.Qty * packingListPackageOrderItem.GrossUnitPriceEur
+                        LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.GrossUnitPriceEur
                         + packingListPackageOrderItem.AccountingTotalGrossPriceEur
                         + packingListPackageOrderItem.AccountingGeneralTotalGrossPriceEur;
 
@@ -211,8 +211,8 @@ public sealed class GbaDataExportRepository : IGbaDataExportRepository {
                     existingPackingList.TotalGrossWeight += packingListPackageOrderItem.TotalGrossWeight;
                 }
 
-                existingPackingList.TotalNetWeight = Math.Round(existingPackingList.TotalNetWeight, 3);
-                existingPackingList.TotalGrossWeight = Math.Round(existingPackingList.TotalGrossWeight, 3);
+                existingPackingList.TotalNetWeight = LegacyNumeric.Round(existingPackingList.TotalNetWeight, 3);
+                existingPackingList.TotalGrossWeight = LegacyNumeric.Round(existingPackingList.TotalGrossWeight, 3);
             }
 
             return packingList;

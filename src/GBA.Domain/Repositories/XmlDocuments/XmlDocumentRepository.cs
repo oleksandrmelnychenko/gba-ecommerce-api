@@ -189,7 +189,7 @@ public sealed class XmlDocumentRepository : IXmlDocumentRepository {
 
                 orderItem.AssignedSpecification = productSpecification;
 
-                orderItem.TotalAmount = Convert.ToDecimal(orderItem.Qty) * orderItem.PricePerItem;
+                orderItem.TotalAmount = LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.PricePerItem;
 
                 orderItem.Qty -= orderItem.ReturnedQty;
 
@@ -433,8 +433,8 @@ public sealed class XmlDocumentRepository : IXmlDocumentRepository {
 
             supplyOrderUkraine.TotalQty += supplyOrderUkraineItem.Qty;
 
-            supplyOrderUkraine.TotalNetPrice += decimal.Round(Convert.ToDecimal(supplyOrderUkraineItem.Qty) * supplyOrderUkraineItem.NetPrice);
-            supplyOrderUkraine.TotalGrossPrice += decimal.Round(Convert.ToDecimal(supplyOrderUkraineItem.Qty) * supplyOrderUkraineItem.GrossPrice);
+            supplyOrderUkraine.TotalNetPrice += decimal.Round(LegacyNumeric.ToDecimal(supplyOrderUkraineItem.Qty) * supplyOrderUkraineItem.NetPrice);
+            supplyOrderUkraine.TotalGrossPrice += decimal.Round(LegacyNumeric.ToDecimal(supplyOrderUkraineItem.Qty) * supplyOrderUkraineItem.GrossPrice);
 
             product.MeasureUnit = measureUnit;
 

@@ -488,7 +488,7 @@ public sealed class ConsignmentNoteDocumentManager : BaseXlsManager, IConsignmen
             }
 
             double totalWeight =
-                Math.Round(
+                LegacyNumeric.Round(
                     sale.Order.OrderItems.Sum(x => x.Product.Weight * x.Qty),
                     3,
                     MidpointRounding.AwayFromZero
@@ -496,14 +496,14 @@ public sealed class ConsignmentNoteDocumentManager : BaseXlsManager, IConsignmen
 
             decimal totalPriceWithVat =
                 Math.Round(
-                    sale.Order.OrderItems.Sum(x => x.Product.CurrentLocalPrice * Convert.ToDecimal(x.Qty)),
+                    sale.Order.OrderItems.Sum(x => x.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(x.Qty)),
                     2,
                     MidpointRounding.AwayFromZero
                 );
 
             decimal vatRate =
                 sale.ClientAgreement.Agreement.Organization.VatRate != null
-                    ? Convert.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
+                    ? LegacyNumeric.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
                     : 0;
 
             decimal totalVat = Math.Round(
@@ -520,7 +520,7 @@ public sealed class ConsignmentNoteDocumentManager : BaseXlsManager, IConsignmen
                 range.Style.Font.Size = 9;
                 range.Merge = true;
                 range.Style.Font.Bold = true;
-                range.Value = Convert.ToDecimal(qtyT).ToText(false, true) +
+                range.Value = LegacyNumeric.ToDecimal(qtyT).ToText(false, true) +
                               " т. " + qtyKg + " кг";
                 range.Style.WrapText = true;
                 range.Style.Border.Bottom.Style = ExcelBorderStyle.Thin;
@@ -898,7 +898,7 @@ public sealed class ConsignmentNoteDocumentManager : BaseXlsManager, IConsignmen
                     range.Style.Font.Size = 9;
                     range.Merge = true;
                     range.Value = decimal.Round(
-                        item.Product.CurrentLocalPrice * Convert.ToDecimal(item.Qty),
+                        item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(item.Qty),
                         2,
                         MidpointRounding.AwayFromZero
                     );
@@ -931,7 +931,7 @@ public sealed class ConsignmentNoteDocumentManager : BaseXlsManager, IConsignmen
                     range.Style.VerticalAlignment = ExcelVerticalAlignment.Center;
                     range.Style.Font.Size = 9;
                     range.Merge = true;
-                    range.Value = Math.Round(item.Qty * item.Product.Weight / 1000, 3, MidpointRounding.AwayFromZero);
+                    range.Value = LegacyNumeric.Round(item.Qty * item.Product.Weight / 1000, 3, MidpointRounding.AwayFromZero);
                     range.Style.WrapText = true;
                     range.Style.Border.BorderAround(ExcelBorderStyle.Thin);
                 }
@@ -1013,7 +1013,7 @@ public sealed class ConsignmentNoteDocumentManager : BaseXlsManager, IConsignmen
                 range.Style.VerticalAlignment = ExcelVerticalAlignment.Center;
                 range.Style.Font.Size = 9;
                 range.Merge = true;
-                range.Value = Math.Round(qtyT, 3, MidpointRounding.AwayFromZero);
+                range.Value = LegacyNumeric.Round(qtyT, 3, MidpointRounding.AwayFromZero);
                 range.Style.WrapText = true;
                 range.Style.Border.BorderAround(ExcelBorderStyle.Thin);
             }
@@ -1577,7 +1577,7 @@ public sealed class ConsignmentNoteDocumentManager : BaseXlsManager, IConsignmen
                 range.Style.Border.BorderAround(ExcelBorderStyle.Thin);
             }
 
-            decimal grossWeight = decimal.Round((setting.CarNetWeight * 1000 + Convert.ToDecimal(sale.TotalWeight)) / 1000, 3, MidpointRounding.AwayFromZero);
+            decimal grossWeight = decimal.Round((setting.CarNetWeight * 1000 + LegacyNumeric.ToDecimal(sale.TotalWeight)) / 1000, 3, MidpointRounding.AwayFromZero);
 
             using (ExcelRange range = worksheet.Cells[row, 60, row, 66]) {
                 range.Style.HorizontalAlignment = ExcelHorizontalAlignment.Center;
@@ -2175,7 +2175,7 @@ public sealed class ConsignmentNoteDocumentManager : BaseXlsManager, IConsignmen
                 range.Merge = true;
             }
 
-            double totalWeight = Math.Round(
+            double totalWeight = LegacyNumeric.Round(
                 reSale.ReSaleItemModels.Sum(x => x.ConsignmentItem.Weight * x.QtyToReSale),
                 3,
                 MidpointRounding.AwayFromZero
@@ -2189,7 +2189,7 @@ public sealed class ConsignmentNoteDocumentManager : BaseXlsManager, IConsignmen
 
             decimal vatRate =
                 reSale.ReSale.Organization.VatRate != null
-                    ? Convert.ToDecimal(reSale.ReSale.Organization.VatRate.Value) / 100
+                    ? LegacyNumeric.ToDecimal(reSale.ReSale.Organization.VatRate.Value) / 100
                     : 0;
 
             decimal totalVat = Math.Round(
@@ -2206,7 +2206,7 @@ public sealed class ConsignmentNoteDocumentManager : BaseXlsManager, IConsignmen
                 range.Style.Font.Size = 9;
                 range.Merge = true;
                 range.Style.Font.Bold = true;
-                range.Value = Convert.ToDecimal(qtyT).ToText(false, true) +
+                range.Value = LegacyNumeric.ToDecimal(qtyT).ToText(false, true) +
                               " т. " + qtyKg + " кг";
                 range.Style.WrapText = true;
                 range.Style.Border.Bottom.Style = ExcelBorderStyle.Thin;
@@ -2753,7 +2753,7 @@ public sealed class ConsignmentNoteDocumentManager : BaseXlsManager, IConsignmen
                     range.Style.VerticalAlignment = ExcelVerticalAlignment.Center;
                     range.Style.Font.Size = 9;
                     range.Merge = true;
-                    range.Value = Math.Round(item.QtyToReSale * item.ConsignmentItem.Weight / 1000, 3, MidpointRounding.AwayFromZero);
+                    range.Value = LegacyNumeric.Round(item.QtyToReSale * item.ConsignmentItem.Weight / 1000, 3, MidpointRounding.AwayFromZero);
                     range.Style.WrapText = true;
                     range.Style.Border.BorderAround(ExcelBorderStyle.Thin);
                 }
@@ -2835,7 +2835,7 @@ public sealed class ConsignmentNoteDocumentManager : BaseXlsManager, IConsignmen
                 range.Style.VerticalAlignment = ExcelVerticalAlignment.Center;
                 range.Style.Font.Size = 9;
                 range.Merge = true;
-                range.Value = Math.Round(qtyT, 3, MidpointRounding.AwayFromZero);
+                range.Value = LegacyNumeric.Round(qtyT, 3, MidpointRounding.AwayFromZero);
                 range.Style.WrapText = true;
                 range.Style.Border.BorderAround(ExcelBorderStyle.Thin);
             }

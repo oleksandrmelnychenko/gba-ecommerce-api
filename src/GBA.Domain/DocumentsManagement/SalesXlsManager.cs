@@ -481,7 +481,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                     orderItem.TotalAmountLocal =
                         decimal.Round(
-                            decimal.Round(orderItem.PricePerItemWithoutVat * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero)
+                            decimal.Round(orderItem.PricePerItemWithoutVat * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero)
                             * orderItem.ExchangeRateAmount,
                             2,
                             MidpointRounding.AwayFromZero
@@ -616,7 +616,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                     orderItem.TotalAmountLocal =
                         decimal.Round(
-                            decimal.Round(orderItem.PricePerItemWithoutVat * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero)
+                            decimal.Round(orderItem.PricePerItemWithoutVat * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero)
                             * orderItem.ExchangeRateAmount,
                             2,
                             MidpointRounding.AwayFromZero
@@ -646,7 +646,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                     decimal withVatAmount =
                         decimal.Round(
-                            decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero)
+                            decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero)
                             * orderItem.ExchangeRateAmount,
                             2,
                             MidpointRounding.AwayFromZero
@@ -727,7 +727,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                 range.Value = "W tym VAT";
             }
 
-            decimal totalAmount = sale.Order.OrderItems.Sum(x => x.Product.CurrentLocalPrice * Convert.ToDecimal(x.Qty));
+            decimal totalAmount = sale.Order.OrderItems.Sum(x => x.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(x.Qty));
 
             using (ExcelRange range = worksheet.Cells[row, 9, row, 10]) {
                 range.Merge = true;
@@ -2264,7 +2264,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                 bool specialItem =
                     item.Product.IsForSale || item.Product.IsForZeroSale || item.Product.Top.ToUpper().Equals("X9") || item.Product.Top.ToUpper().Equals("Х9");
                 if (item.TotalAmountLocal == 0) continue;
-                decimal currentPrice = decimal.Round(item.TotalAmountLocal / Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal currentPrice = decimal.Round(item.TotalAmountLocal / LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
                 decimal currentTotalPrice = decimal.Round(item.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
 
                 if (specialItem) {
@@ -2381,7 +2381,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                             using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                 //ToDo: local price
-                                range.Value = decimal.Round(currentPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                 range.Style.Font.Size = 11;
                                 range.Style.Numberformat.Format = "0.00";
                                 range.Merge = true;
@@ -2514,7 +2514,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                                 using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                     //ToDo: local price
-                                    range.Value = decimal.Round(currentPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                    range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                     range.Style.Font.Size = 11;
                                     range.Style.Numberformat.Format = "0.00";
                                     range.Merge = true;
@@ -2637,7 +2637,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                             using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                 //ToDo: local price
-                                range.Value = decimal.Round(currentPrice * Convert.ToDecimal(totalQty), 2, MidpointRounding.AwayFromZero);
+                                range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(totalQty), 2, MidpointRounding.AwayFromZero);
                                 range.Style.Font.Size = 11;
                                 range.Style.Numberformat.Format = "0.00";
                                 range.Merge = true;
@@ -2870,7 +2870,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                     //ToDo: local price
                                     range.Value =
                                         decimal.Round(
-                                            item.Product.CurrentLocalPrice * Convert.ToDecimal(location.Qty),
+                                            item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(location.Qty),
                                             2,
                                             MidpointRounding.AwayFromZero
                                         );
@@ -2976,7 +2976,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                                 using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                     //ToDo: local price
-                                    range.Value = decimal.Round(currentPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                    range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                     range.Style.Font.Size = 11;
                                     range.Style.Numberformat.Format = "0.00";
                                     range.Merge = true;
@@ -3083,7 +3083,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                                 using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                     //ToDo: local price
-                                    range.Value = decimal.Round(currentPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                    range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                     range.Style.Font.Size = 11;
                                     range.Style.Numberformat.Format = "0.00";
                                     range.Merge = true;
@@ -3179,7 +3179,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                             using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                 //ToDo: local price
-                                range.Value = decimal.Round(currentPrice * Convert.ToDecimal(totalQty), 2, MidpointRounding.AwayFromZero);
+                                range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(totalQty), 2, MidpointRounding.AwayFromZero);
                                 range.Style.Font.Size = 11;
                                 range.Style.Numberformat.Format = "0.00";
                                 range.Merge = true;
@@ -3285,7 +3285,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                                 using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                     //ToDo: local price
-                                    range.Value = decimal.Round(currentPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                    range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                     range.Style.Font.Size = 11;
                                     range.Style.Numberformat.Format = "0.00";
                                     range.Merge = true;
@@ -3382,7 +3382,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                             using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                 //ToDo: local price
-                                range.Value = decimal.Round(currentPrice * Convert.ToDecimal(totalQty), 2, MidpointRounding.AwayFromZero);
+                                range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(totalQty), 2, MidpointRounding.AwayFromZero);
                                 ;
                                 range.Style.Font.Size = 11;
                                 range.Style.Numberformat.Format = "0.00";
@@ -4079,7 +4079,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                 decimal currentPrice = default;
                 decimal currentTotalPrice = default;
                 if (item.Qty != 0) {
-                    currentPrice = decimal.Round(item.TotalAmountLocal / Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                    currentPrice = decimal.Round(item.TotalAmountLocal / LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
                     currentTotalPrice = decimal.Round(item.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
                 }
 
@@ -4541,7 +4541,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                     //ToDo: local price
                                     range.Value =
                                         decimal.Round(
-                                            item.Product.CurrentLocalPrice * Convert.ToDecimal(item.Qty),
+                                            item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(item.Qty),
                                             2,
                                             MidpointRounding.AwayFromZero
                                         );
@@ -5531,7 +5531,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                 decimal currentPrice = 0;
                 decimal currentTotalPrice = 0;
                 if (item.Qty != 0) {
-                    currentPrice = decimal.Round(item.TotalAmountLocal / Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                    currentPrice = decimal.Round(item.TotalAmountLocal / LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
                     currentTotalPrice = decimal.Round(item.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
                 }
 
@@ -5649,7 +5649,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                             using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                 //ToDo: local price
-                                range.Value = decimal.Round(currentPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                 range.Style.Font.Size = 11;
                                 range.Style.Numberformat.Format = "0.00";
                                 range.Merge = true;
@@ -5782,7 +5782,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                                 using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                     //ToDo: local price
-                                    range.Value = decimal.Round(currentPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                    range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                     ;
                                     range.Style.Font.Size = 11;
                                     range.Style.Numberformat.Format = "0.00";
@@ -5906,7 +5906,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                             using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                 //ToDo: local price
-                                range.Value = decimal.Round(currentPrice * Convert.ToDecimal(totalQty), 2, MidpointRounding.AwayFromZero);
+                                range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(totalQty), 2, MidpointRounding.AwayFromZero);
                                 ;
                                 range.Style.Font.Size = 11;
                                 range.Style.Numberformat.Format = "0.00";
@@ -6140,7 +6140,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                     //ToDo: local price
                                     range.Value =
                                         decimal.Round(
-                                            item.Product.CurrentLocalPrice * Convert.ToDecimal(location.Qty),
+                                            item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(location.Qty),
                                             2,
                                             MidpointRounding.AwayFromZero
                                         );
@@ -6246,7 +6246,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                                 using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                     //ToDo: local price
-                                    range.Value = decimal.Round(currentPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                    range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                     range.Style.Font.Size = 11;
                                     range.Style.Numberformat.Format = "0.00";
                                     range.Merge = true;
@@ -6378,7 +6378,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                                 using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                     //ToDo: local price
-                                    range.Value = decimal.Round(currentPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                    range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                     ;
                                     range.Style.Font.Size = 11;
                                     range.Style.Numberformat.Format = "0.00";
@@ -6477,7 +6477,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                             using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                 //ToDo: local price
-                                range.Value = decimal.Round(currentPrice * Convert.ToDecimal(totalQty), 2, MidpointRounding.AwayFromZero);
+                                range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(totalQty), 2, MidpointRounding.AwayFromZero);
                                 range.Style.Font.Size = 11;
                                 range.Style.Numberformat.Format = "0.00";
                                 range.Merge = true;
@@ -7244,7 +7244,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                 decimal currentPrice = default;
                 decimal currentTotalPrice = default;
                 if (item.Qty != 0) {
-                    currentPrice = decimal.Round(item.TotalAmountLocal / Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                    currentPrice = decimal.Round(item.TotalAmountLocal / LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
                     currentTotalPrice = decimal.Round(item.TotalAmountLocal, 2, MidpointRounding.AwayFromZero);
                 }
 
@@ -7363,7 +7363,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                             using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                 //ToDo: local price
-                                range.Value = decimal.Round(currentPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                 range.Style.Font.Size = 11;
                                 range.Style.Numberformat.Format = "0.00";
                                 range.Merge = true;
@@ -7496,7 +7496,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                                 using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                     //ToDo: local price
-                                    range.Value = decimal.Round(currentPrice / Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                    range.Value = decimal.Round(currentPrice / LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                     range.Style.Font.Size = 11;
                                     range.Style.Numberformat.Format = "0.00";
                                     range.Merge = true;
@@ -7619,7 +7619,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                             using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                 //ToDo: local price
-                                range.Value = decimal.Round(currentPrice / Convert.ToDecimal(totalQty), 2, MidpointRounding.AwayFromZero);
+                                range.Value = decimal.Round(currentPrice / LegacyNumeric.ToDecimal(totalQty), 2, MidpointRounding.AwayFromZero);
                                 range.Style.Font.Size = 11;
                                 range.Style.Numberformat.Format = "0.00";
                                 range.Merge = true;
@@ -7852,7 +7852,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                 //ToDo: local price
                                 range.Value =
                                     decimal.Round(
-                                        item.Product.CurrentLocalPrice * Convert.ToDecimal(location.Qty),
+                                        item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(location.Qty),
                                         2,
                                         MidpointRounding.AwayFromZero
                                     );
@@ -8069,7 +8069,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                     //ToDo: local price
                                     range.Value =
                                         decimal.Round(
-                                            item.Product.CurrentLocalPrice * Convert.ToDecimal(location.Qty),
+                                            item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(location.Qty),
                                             2,
                                             MidpointRounding.AwayFromZero
                                         );
@@ -8168,7 +8168,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                             using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                 //ToDo: local price
-                                range.Value = decimal.Round(currentPrice / Convert.ToDecimal(totalQty), 2, MidpointRounding.AwayFromZero);
+                                range.Value = decimal.Round(currentPrice / LegacyNumeric.ToDecimal(totalQty), 2, MidpointRounding.AwayFromZero);
                                 range.Style.Font.Size = 11;
                                 range.Style.Numberformat.Format = "0.00";
                                 range.Merge = true;
@@ -8263,7 +8263,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                         using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                             //ToDo: local price
-                            range.Value = decimal.Round(currentPrice / Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                            range.Value = decimal.Round(currentPrice / LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
                             ;
                             range.Style.Font.Size = 11;
                             range.Style.Numberformat.Format = "0.00";
@@ -9115,7 +9115,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                             using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                 //ToDo: local price
-                                range.Value = decimal.Round(item.Product.CurrentLocalPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                range.Value = decimal.Round(item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                 range.Style.Font.Size = 11;
                                 range.Style.Numberformat.Format = "0.00";
                                 range.Merge = true;
@@ -9249,7 +9249,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                                 using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                     //ToDo: local price
-                                    range.Value = decimal.Round(item.Product.CurrentLocalPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                    range.Value = decimal.Round(item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                     range.Style.Font.Size = 11;
                                     range.Style.Numberformat.Format = "0.00";
                                     range.Merge = true;
@@ -9374,7 +9374,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                                 range.Value =
                                     decimal.Round(
-                                        item.Product.CurrentLocalPrice * Convert.ToDecimal(item.Qty - item.ProductLocations.Sum(l => l.Qty)),
+                                        item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(item.Qty - item.ProductLocations.Sum(l => l.Qty)),
                                         2,
                                         MidpointRounding.AwayFromZero
                                     );
@@ -9500,7 +9500,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                             //ToDo: local price
                             range.Value =
                                 decimal.Round(
-                                    item.Product.CurrentLocalPrice * Convert.ToDecimal(item.Qty),
+                                    item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(item.Qty),
                                     2,
                                     MidpointRounding.AwayFromZero
                                 );
@@ -9603,7 +9603,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                     using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                         //ToDo: local price
-                        range.Value = item.Product.CurrentLocalPrice * Convert.ToDecimal(item.Qty);
+                        range.Value = item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(item.Qty);
                         range.Style.Font.Size = 11;
                         range.Style.Numberformat.Format = "0.00";
                         range.Merge = true;
@@ -9648,7 +9648,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                 range.Style.VerticalAlignment = ExcelVerticalAlignment.Top;
             }
 
-            decimal totalAmount = Math.Round(sale.Order.OrderItems.Sum(x => x.Product.CurrentLocalPrice * Convert.ToDecimal(x.Qty)), 2);
+            decimal totalAmount = Math.Round(sale.Order.OrderItems.Sum(x => x.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(x.Qty)), 2);
 
             using (ExcelRange range = worksheet.Cells[row, column + 67, row, column + 76]) {
                 range.Value = decimal.Round(totalAmount, 2, MidpointRounding.AwayFromZero);
@@ -9674,7 +9674,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
             using (ExcelRange range = worksheet.Cells[row, column + 68, row, column + 76]) {
                 decimal vatRate =
                     sale.ClientAgreement.Agreement.Organization.VatRate != null
-                        ? Convert.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
+                        ? LegacyNumeric.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
                         : 0;
 
                 range.Value = decimal.Round(totalAmount * (vatRate / (1 + vatRate)), 2, MidpointRounding.AwayFromZero);
@@ -10590,7 +10590,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                 using (ExcelRange range = worksheet.Cells[row, 47, row, 51]) {
                     range.Merge = true;
-                    range.Value = decimal.Round(item.Product.CurrentLocalPrice * Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                    range.Value = decimal.Round(item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
                     range.Style.WrapText = true;
                     range.Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
                     range.Style.VerticalAlignment = ExcelVerticalAlignment.Top;
@@ -10621,7 +10621,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                 range.Style.Font.Bold = true;
             }
 
-            decimal totalAmount = sale.Order.OrderItems.Sum(x => x.Product.CurrentLocalPrice * Convert.ToDecimal(x.Qty));
+            decimal totalAmount = sale.Order.OrderItems.Sum(x => x.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(x.Qty));
 
             using (ExcelRange range = worksheet.Cells[row, 47, row, 51]) {
                 range.Merge = true;
@@ -10649,7 +10649,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
             decimal vatRate =
                 sale.ClientAgreement.Agreement.Organization.VatRate != null
-                    ? Convert.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
+                    ? LegacyNumeric.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
                     : 0;
             decimal totalVat = decimal.Round(totalAmount * (vatRate / (vatRate + 1)), 2, MidpointRounding.AwayFromZero);
 
@@ -10995,7 +10995,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
         string fileName = Path.Combine(path, $"ShipmentList_{DateTime.Now.ToString("MM.yyyy")}_{Guid.NewGuid().ToString()}.xlsx");
 
         //Math.Round(Convert.ToDecimal(pricing.ExtraCharge.Value) * price / 100 + price, 14)
-        decimal totalAmount = Math.Round(sale.Order.OrderItems.Sum(x => x.Product.CurrentLocalPrice * (1 - x.OneTimeDiscount / 100) * Convert.ToDecimal(x.Qty)), 2);
+        decimal totalAmount = Math.Round(sale.Order.OrderItems.Sum(x => x.Product.CurrentLocalPrice * (1 - x.OneTimeDiscount / 100) * LegacyNumeric.ToDecimal(x.Qty)), 2);
 
         DateTime current = DateTime.Now;
 
@@ -11536,7 +11536,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                 //ToDo: local price
                                 range.Value =
                                     decimal.Round(
-                                        item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * Convert.ToDecimal(location.Qty),
+                                        item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * LegacyNumeric.ToDecimal(location.Qty),
                                         2,
                                         MidpointRounding.AwayFromZero
                                     );
@@ -11679,7 +11679,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                     //ToDo: local price
                                     range.Value =
                                         decimal.Round(
-                                            item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * Convert.ToDecimal(item.Qty),
+                                            item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * LegacyNumeric.ToDecimal(item.Qty),
                                             2,
                                             MidpointRounding.AwayFromZero
                                         );
@@ -11812,7 +11812,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                 //ToDo: local price
                                 range.Value =
                                     decimal.Round(
-                                        item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * Convert.ToDecimal(item.Qty),
+                                        item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * LegacyNumeric.ToDecimal(item.Qty),
                                         2,
                                         MidpointRounding.AwayFromZero
                                     );
@@ -11943,7 +11943,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                             //ToDo: local price
                             range.Value =
                                 decimal.Round(
-                                    item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * Convert.ToDecimal(item.Qty),
+                                    item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * LegacyNumeric.ToDecimal(item.Qty),
                                     2,
                                     MidpointRounding.AwayFromZero
                                 );
@@ -12067,7 +12067,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                 //ToDo: local price
                                 range.Value =
                                     decimal.Round(
-                                        item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * Convert.ToDecimal(location.Qty),
+                                        item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * LegacyNumeric.ToDecimal(location.Qty),
                                         2,
                                         MidpointRounding.AwayFromZero
                                     );
@@ -12183,7 +12183,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                     //ToDo: local price
                                     range.Value =
                                         decimal.Round(
-                                            item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * Convert.ToDecimal(location.Qty),
+                                            item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * LegacyNumeric.ToDecimal(location.Qty),
                                             2,
                                             MidpointRounding.AwayFromZero
                                         );
@@ -12288,7 +12288,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                 //ToDo: local price
                                 range.Value =
                                     decimal.Round(
-                                        item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * Convert.ToDecimal(item.Qty),
+                                        item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * LegacyNumeric.ToDecimal(item.Qty),
                                         2,
                                         MidpointRounding.AwayFromZero
                                     );
@@ -12392,7 +12392,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                             //ToDo: local price
                             range.Value =
                                 decimal.Round(
-                                    item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * Convert.ToDecimal(item.Qty),
+                                    item.Product.CurrentLocalPrice * (1 - item.OneTimeDiscount / 100) * LegacyNumeric.ToDecimal(item.Qty),
                                     2,
                                     MidpointRounding.AwayFromZero
                                 );
@@ -12473,7 +12473,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
             using (ExcelRange range = worksheet.Cells[row, column + 68, row, column + 75]) {
                 decimal vatRate =
                     sale.ClientAgreement.Agreement.Organization.VatRate != null
-                        ? Convert.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
+                        ? LegacyNumeric.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
                         : 0;
 
                 range.Value = decimal.Round(totalAmount * (vatRate / (1 + vatRate)), 2, MidpointRounding.AwayFromZero);
@@ -13391,7 +13391,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                 using (ExcelRange range = worksheetPayment.Cells[rowPayment, 47, rowPayment, 51]) {
                     range.Merge = true;
-                    range.Value = decimal.Round(item.Product.CurrentLocalPrice * Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                    range.Value = decimal.Round(item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
                     range.Style.WrapText = true;
                     range.Style.HorizontalAlignment = ExcelHorizontalAlignment.Right;
                     range.Style.VerticalAlignment = ExcelVerticalAlignment.Top;
@@ -13422,7 +13422,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                 range.Style.Font.Bold = true;
             }
 
-            decimal totalAmountPayment = sale.Order.OrderItems.Sum(x => x.Product.CurrentLocalPrice * Convert.ToDecimal(x.Qty));
+            decimal totalAmountPayment = sale.Order.OrderItems.Sum(x => x.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(x.Qty));
 
             using (ExcelRange range = worksheetPayment.Cells[rowPayment, 47, rowPayment, 51]) {
                 range.Merge = true;
@@ -13450,7 +13450,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
             decimal vatRatePayment =
                 sale.ClientAgreement.Agreement.Organization.VatRate != null
-                    ? Convert.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
+                    ? LegacyNumeric.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
                     : 0;
             decimal totalVat = decimal.Round(totalAmountPayment * (vatRatePayment / (vatRatePayment + 1)), 2, MidpointRounding.AwayFromZero);
 
@@ -14187,7 +14187,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                             using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                 //ToDo: local price
-                                range.Value = decimal.Round(item.Product.CurrentLocalPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                range.Value = decimal.Round(item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                 range.Style.Font.Size = 11;
                                 range.Style.Numberformat.Format = "0.00";
                                 range.Merge = true;
@@ -14310,7 +14310,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                                 using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                                     //ToDo: local price
-                                    range.Value = decimal.Round(item.Product.CurrentLocalPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                    range.Value = decimal.Round(item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                     range.Style.Font.Size = 11;
                                     range.Style.Numberformat.Format = "0.00";
                                     range.Merge = true;
@@ -14433,7 +14433,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                 range.Value =
                                     decimal.Round(
                                         item.Product.CurrentLocalPrice *
-                                        Convert.ToDecimal(item.Qty - (item.ProductLocations.Sum(l => l.Qty) + item.ProductLocationsHistory.Sum(g => g.Qty))),
+                                        LegacyNumeric.ToDecimal(item.Qty - (item.ProductLocations.Sum(l => l.Qty) + item.ProductLocationsHistory.Sum(g => g.Qty))),
                                         2,
                                         MidpointRounding.AwayFromZero
                                     );
@@ -14557,7 +14557,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                             //ToDo: local price
                             range.Value =
                                 decimal.Round(
-                                    item.Product.CurrentLocalPrice * Convert.ToDecimal(item.Qty),
+                                    item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(item.Qty),
                                     2,
                                     MidpointRounding.AwayFromZero
                                 );
@@ -14659,7 +14659,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                     using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                         //ToDo: local price
-                        range.Value = item.Product.CurrentLocalPrice * Convert.ToDecimal(item.Qty);
+                        range.Value = item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(item.Qty);
                         range.Style.Font.Size = 11;
                         range.Style.Numberformat.Format = "0.00";
                         range.Merge = true;
@@ -14704,7 +14704,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                 range.Style.VerticalAlignment = ExcelVerticalAlignment.Top;
             }
 
-            decimal totalAmount = sale.Order.OrderItems.Sum(o => o.Product.CurrentLocalPrice * Convert.ToDecimal(o.Qty));
+            decimal totalAmount = sale.Order.OrderItems.Sum(o => o.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(o.Qty));
 
             using (ExcelRange range = worksheet.Cells[row, column + 68, row, column + 75]) {
                 range.Value = decimal.Round(totalAmount, 2, MidpointRounding.AwayFromZero);
@@ -14730,7 +14730,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
             using (ExcelRange range = worksheet.Cells[row, column + 68, row, column + 75]) {
                 decimal vatRate =
                     sale.ClientAgreement.Agreement.Organization.VatRate != null
-                        ? Convert.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
+                        ? LegacyNumeric.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
                         : 0;
 
                 range.Value = decimal.Round(totalAmount * (vatRate / (1 + vatRate)), 2, MidpointRounding.AwayFromZero);
@@ -15538,7 +15538,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                             using (ExcelRange range = worksheetSecond.Cells[row, column + 69, row, column + 76]) {
                                 //ToDo: local price
-                                range.Value = decimal.Round(item.Product.CurrentLocalPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                range.Value = decimal.Round(item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                 range.Style.Font.Size = 11;
                                 range.Style.Numberformat.Format = "0.00";
                                 range.Merge = true;
@@ -15661,7 +15661,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                                 using (ExcelRange range = worksheetSecond.Cells[row, column + 69, row, column + 76]) {
                                     //ToDo: local price
-                                    range.Value = decimal.Round(item.Product.CurrentLocalPrice * Convert.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
+                                    range.Value = decimal.Round(item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(location.Qty), 2, MidpointRounding.AwayFromZero);
                                     range.Style.Font.Size = 11;
                                     range.Style.Numberformat.Format = "0.00";
                                     range.Merge = true;
@@ -15784,7 +15784,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                 range.Value =
                                     decimal.Round(
                                         item.Product.CurrentLocalPrice *
-                                        Convert.ToDecimal(item.Qty - (item.ProductLocations.Sum(l => l.Qty) + item.ProductLocationsHistory.Sum(g => g.Qty))),
+                                        LegacyNumeric.ToDecimal(item.Qty - (item.ProductLocations.Sum(l => l.Qty) + item.ProductLocationsHistory.Sum(g => g.Qty))),
                                         2,
                                         MidpointRounding.AwayFromZero
                                     );
@@ -15908,7 +15908,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                             //ToDo: local price
                             range.Value =
                                 decimal.Round(
-                                    item.Product.CurrentLocalPrice * Convert.ToDecimal(item.Qty),
+                                    item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(item.Qty),
                                     2,
                                     MidpointRounding.AwayFromZero
                                 );
@@ -16010,7 +16010,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
 
                     using (ExcelRange range = worksheetSecond.Cells[row, column + 69, row, column + 76]) {
                         //ToDo: local price
-                        range.Value = item.Product.CurrentLocalPrice * Convert.ToDecimal(item.Qty);
+                        range.Value = item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(item.Qty);
                         range.Style.Font.Size = 11;
                         range.Style.Numberformat.Format = "0.00";
                         range.Merge = true;
@@ -16055,7 +16055,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                 range.Style.VerticalAlignment = ExcelVerticalAlignment.Top;
             }
 
-            totalAmount = sale.Order.OrderItems.Sum(o => o.Product.CurrentLocalPrice * Convert.ToDecimal(o.Qty));
+            totalAmount = sale.Order.OrderItems.Sum(o => o.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(o.Qty));
 
             using (ExcelRange range = worksheetSecond.Cells[row, column + 68, row, column + 75]) {
                 range.Value = decimal.Round(totalAmount, 2, MidpointRounding.AwayFromZero);
@@ -16081,7 +16081,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
             using (ExcelRange range = worksheetSecond.Cells[row, column + 68, row, column + 75]) {
                 decimal vatRate =
                     sale.ClientAgreement.Agreement.Organization.VatRate != null
-                        ? Convert.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
+                        ? LegacyNumeric.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
                         : 0;
 
                 range.Value = decimal.Round(totalAmount * (vatRate / (1 + vatRate)), 2, MidpointRounding.AwayFromZero);
@@ -16421,7 +16421,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                 range.Style.VerticalAlignment = ExcelVerticalAlignment.Bottom;
             }
 
-            decimal totalAmountShipmentList = Math.Round(sale.Order.OrderItems.Sum(x => x.Product.CurrentLocalPrice * Convert.ToDecimal(x.Qty)), 2);
+            decimal totalAmountShipmentList = Math.Round(sale.Order.OrderItems.Sum(x => x.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(x.Qty)), 2);
 
             ExcelWorksheet worksheetShipmentList = package.Workbook.Worksheets.Add("Лист на пакування");
 
@@ -16936,7 +16936,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                 //ToDo: local price
                                 range.Value =
                                     decimal.Round(
-                                        item.Product.CurrentLocalPrice * Convert.ToDecimal(location.Qty),
+                                        item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(location.Qty),
                                         2,
                                         MidpointRounding.AwayFromZero
                                     );
@@ -17079,7 +17079,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                     //ToDo: local price
                                     range.Value =
                                         decimal.Round(
-                                            item.Product.CurrentLocalPrice * Convert.ToDecimal(location.Qty),
+                                            item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(location.Qty),
                                             2,
                                             MidpointRounding.AwayFromZero
                                         );
@@ -17212,7 +17212,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                 //ToDo: local price
                                 range.Value =
                                     decimal.Round(
-                                        item.Product.CurrentLocalPrice * Convert.ToDecimal(totalQty),
+                                        item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(totalQty),
                                         2,
                                         MidpointRounding.AwayFromZero
                                     );
@@ -17341,7 +17341,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                             //ToDo: local price
                             range.Value =
                                 decimal.Round(
-                                    item.Product.CurrentLocalPrice * Convert.ToDecimal(item.Qty),
+                                    item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(item.Qty),
                                     2,
                                     MidpointRounding.AwayFromZero
                                 );
@@ -17464,7 +17464,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                 //ToDo: local price
                                 range.Value =
                                     decimal.Round(
-                                        item.Product.CurrentLocalPrice * Convert.ToDecimal(location.Qty),
+                                        item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(location.Qty),
                                         2,
                                         MidpointRounding.AwayFromZero
                                     );
@@ -17580,7 +17580,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                     //ToDo: local price
                                     range.Value =
                                         decimal.Round(
-                                            item.Product.CurrentLocalPrice * Convert.ToDecimal(location.Qty),
+                                            item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(location.Qty),
                                             2,
                                             MidpointRounding.AwayFromZero
                                         );
@@ -17687,7 +17687,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                                 range.Value =
                                     decimal.Round(
                                         item.Product.CurrentLocalPrice *
-                                        Convert.ToDecimal(item.Qty - (item.ProductLocations.Sum(l => l.Qty) + item.ProductLocationsHistory.Sum(g => g.Qty))),
+                                        LegacyNumeric.ToDecimal(item.Qty - (item.ProductLocations.Sum(l => l.Qty) + item.ProductLocationsHistory.Sum(g => g.Qty))),
                                         2,
                                         MidpointRounding.AwayFromZero
                                     );
@@ -17790,7 +17790,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
                             //ToDo: local price
                             range.Value =
                                 decimal.Round(
-                                    item.Product.CurrentLocalPrice * Convert.ToDecimal(item.Qty),
+                                    item.Product.CurrentLocalPrice * LegacyNumeric.ToDecimal(item.Qty),
                                     2,
                                     MidpointRounding.AwayFromZero
                                 );
@@ -17871,7 +17871,7 @@ NIP {sale.ClientAgreement.Client.TIN}";
             using (ExcelRange range = worksheetShipmentList.Cells[rowShipmentList, columnShipmentList + 68, rowShipmentList, columnShipmentList + 75]) {
                 decimal vatRate =
                     sale.ClientAgreement.Agreement.Organization.VatRate != null
-                        ? Convert.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
+                        ? LegacyNumeric.ToDecimal(sale.ClientAgreement.Agreement.Organization.VatRate.Value) / 100
                         : 0;
 
                 range.Value = decimal.Round(totalAmountShipmentList * (vatRate / (1 + vatRate)), 2, MidpointRounding.AwayFromZero);

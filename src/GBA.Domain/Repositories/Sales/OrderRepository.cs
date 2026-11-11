@@ -269,8 +269,8 @@ public sealed class OrderRepository : IOrderRepository {
                     product.CurrentLocalPrice = currentLocalPrice;
 
                     orderItem.Product = product;
-                    orderItem.TotalAmount = Math.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2);
-                    orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 2);
+                    orderItem.TotalAmount = Math.Round(product.CurrentPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 2);
+                    orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 2);
 
                     existingOrder.TotalAmount = Math.Round(order.TotalAmount + orderItem.TotalAmount, 2);
                     existingOrder.TotalAmountLocal = Math.Round(order.TotalAmountLocal + orderItem.TotalAmountLocal, 2);
@@ -292,8 +292,8 @@ public sealed class OrderRepository : IOrderRepository {
                         product.CurrentLocalPrice = currentLocalPrice;
 
                         orderItem.Product = product;
-                        orderItem.TotalAmount = Math.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 2);
-                        orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 2);
+                        orderItem.TotalAmount = Math.Round(product.CurrentPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 2);
+                        orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 2);
 
                         order.TotalAmount = Math.Round(order.TotalAmount + orderItem.TotalAmount, 2);
                         order.TotalAmountLocal = Math.Round(order.TotalAmountLocal + orderItem.TotalAmountLocal, 2);

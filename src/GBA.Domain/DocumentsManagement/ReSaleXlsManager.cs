@@ -658,7 +658,7 @@ public sealed class ReSaleXlsManager : BaseXlsManager, IReSaleXlsManager {
 
             decimal vatRate =
                 reSale.ReSale.Organization.VatRate != null
-                    ? Convert.ToDecimal(reSale.ReSale.Organization.VatRate.Value) / 100
+                    ? LegacyNumeric.ToDecimal(reSale.ReSale.Organization.VatRate.Value) / 100
                     : 0;
             decimal totalVat = decimal.Round(totalAmount * (vatRate / (vatRate + 1)), 2, MidpointRounding.AwayFromZero);
 
@@ -1615,7 +1615,7 @@ public sealed class ReSaleXlsManager : BaseXlsManager, IReSaleXlsManager {
 
             decimal vatRate =
                 reSale.Organization.VatRate != null
-                    ? Convert.ToDecimal(reSale.Organization.VatRate.Value) / 100
+                    ? LegacyNumeric.ToDecimal(reSale.Organization.VatRate.Value) / 100
                     : 0;
             decimal totalVat = decimal.Round(totalAmount * (vatRate / (vatRate + 1)), 2, MidpointRounding.AwayFromZero);
 
@@ -2397,7 +2397,7 @@ public sealed class ReSaleXlsManager : BaseXlsManager, IReSaleXlsManager {
                         //ToDo: local price
                         range.Value =
                             decimal.Round(
-                                item.SalePrice * Convert.ToDecimal(item.QtyToReSale),
+                                item.SalePrice * LegacyNumeric.ToDecimal(item.QtyToReSale),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -2499,7 +2499,7 @@ public sealed class ReSaleXlsManager : BaseXlsManager, IReSaleXlsManager {
 
                     using (ExcelRange range = worksheet.Cells[row, column + 69, row, column + 76]) {
                         //ToDo: local price
-                        range.Value = item.SalePrice * Convert.ToDecimal(item.QtyToReSale);
+                        range.Value = item.SalePrice * LegacyNumeric.ToDecimal(item.QtyToReSale);
                         range.Style.Font.Size = 11;
                         range.Style.Numberformat.Format = "0.00";
                         range.Merge = true;
@@ -2570,7 +2570,7 @@ public sealed class ReSaleXlsManager : BaseXlsManager, IReSaleXlsManager {
             using (ExcelRange range = worksheet.Cells[row, column + 68, row, column + 75]) {
                 decimal vatRate =
                     reSale.ReSale.Organization.VatRate != null
-                        ? Convert.ToDecimal(reSale.ReSale.Organization.VatRate.Value) / 100
+                        ? LegacyNumeric.ToDecimal(reSale.ReSale.Organization.VatRate.Value) / 100
                         : 0;
 
                 range.Value = decimal.Round(totalAmount * (vatRate / (1 + vatRate)), 2, MidpointRounding.AwayFromZero);

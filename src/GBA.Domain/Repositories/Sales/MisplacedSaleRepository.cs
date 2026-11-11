@@ -59,8 +59,8 @@ public sealed class MisplacedSaleRepository : IMisplacedSaleRepository {
                         product.CurrentLocalPrice = currentLocalPrice;
 
                         orderItem.Product = product;
-                        orderItem.TotalAmount = Math.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 14);
-                        orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 14);
+                        orderItem.TotalAmount = Math.Round(product.CurrentPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 14);
+                        orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 14);
 
                         misplacedSale.OrderItems.Add(orderItem);
                     }
@@ -76,8 +76,8 @@ public sealed class MisplacedSaleRepository : IMisplacedSaleRepository {
                 product.CurrentPrice = currentPrice;
                 product.CurrentLocalPrice = currentLocalPrice;
                 orderItem.Product = product;
-                orderItem.TotalAmount = Math.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 14);
-                orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 14);
+                orderItem.TotalAmount = Math.Round(product.CurrentPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 14);
+                orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 14);
                 misplacedSaleToReturn.OrderItems.Add(orderItem);
             }
 
@@ -253,8 +253,8 @@ public sealed class MisplacedSaleRepository : IMisplacedSaleRepository {
                         product.CurrentLocalPrice = currentLocalPrice;
 
                         orderItem.Product = product;
-                        orderItem.TotalAmount = Math.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 14);
-                        orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 14);
+                        orderItem.TotalAmount = Math.Round(product.CurrentPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 14);
+                        orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 14);
 
                         misplacedSale.OrderItems.Add(orderItem);
                     }
@@ -272,8 +272,8 @@ public sealed class MisplacedSaleRepository : IMisplacedSaleRepository {
                 product.CurrentPrice = currentPrice;
                 product.CurrentLocalPrice = currentLocalPrice;
 
-                orderItem.TotalAmount = Math.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 14);
-                orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 14);
+                orderItem.TotalAmount = Math.Round(product.CurrentPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 14);
+                orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 14);
 
                 orderItem.Product = product;
                 misplacedSale.OrderItems.Add(orderItem);
@@ -359,8 +359,8 @@ public sealed class MisplacedSaleRepository : IMisplacedSaleRepository {
 
                         orderItem.Product = product;
 
-                        orderItem.TotalAmount = Math.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 14);
-                        orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 14);
+                        orderItem.TotalAmount = Math.Round(product.CurrentPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 14);
+                        orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 14);
 
                         misplacedSale.OrderItems.Add(orderItem);
                     }
@@ -383,8 +383,8 @@ public sealed class MisplacedSaleRepository : IMisplacedSaleRepository {
                 product.CurrentLocalPrice = currentLocalPrice;
 
                 orderItem.Product = product;
-                orderItem.TotalAmount = Math.Round(product.CurrentPrice * Convert.ToDecimal(orderItem.Qty), 14);
-                orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty), 14);
+                orderItem.TotalAmount = Math.Round(product.CurrentPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 14);
+                orderItem.TotalAmountLocal = Math.Round(product.CurrentLocalPrice * LegacyNumeric.ToDecimal(orderItem.Qty), 14);
 
                 misplacedSale.OrderItems.Add(orderItem);
             }

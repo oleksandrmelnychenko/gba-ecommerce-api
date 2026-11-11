@@ -228,7 +228,7 @@ public sealed class ReSaleRepository : IReSaleRepository {
                 reSaleItem.PricePerItem, 2, MidpointRounding.AwayFromZero);
 
             reSaleItem.TotalPrice = decimal.Round(
-                Convert.ToDecimal(reSaleItem.Qty) * reSaleItem.PricePerItem, 2, MidpointRounding.AwayFromZero);
+                LegacyNumeric.ToDecimal(reSaleItem.Qty) * reSaleItem.PricePerItem, 2, MidpointRounding.AwayFromZero);
 
             toReturn.TotalPrice = decimal.Round(
                 toReturn.TotalPrice + reSaleItem.TotalPrice, 2, MidpointRounding.AwayFromZero);
@@ -420,7 +420,7 @@ public sealed class ReSaleRepository : IReSaleRepository {
                 reSaleItem.PricePerItem, 2, MidpointRounding.AwayFromZero);
 
             reSaleItem.TotalPrice = decimal.Round(
-                Convert.ToDecimal(reSaleItem.Qty) * reSaleItem.PricePerItem, 2, MidpointRounding.AwayFromZero);
+                LegacyNumeric.ToDecimal(reSaleItem.Qty) * reSaleItem.PricePerItem, 2, MidpointRounding.AwayFromZero);
 
             toReturn.ReSaleItems.Add(reSaleItem);
 

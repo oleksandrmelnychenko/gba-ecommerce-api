@@ -4470,7 +4470,7 @@ public sealed class ConsignmentInfoRepository : IConsignmentInfoRepository {
                     consignmentInfos.Add(clientMovementConsignmentInfo);
 
                     clientMovementConsignmentInfo.TotalEuroAmount += decimal.Round(
-                        Convert.ToDecimal(clientMovementConsignmentInfoItem.ItemQty) * clientMovementConsignmentInfoItem.PricePerItem,
+                        LegacyNumeric.ToDecimal(clientMovementConsignmentInfoItem.ItemQty) * clientMovementConsignmentInfoItem.PricePerItem,
                         2,
                         MidpointRounding.AwayFromZero);
                 }

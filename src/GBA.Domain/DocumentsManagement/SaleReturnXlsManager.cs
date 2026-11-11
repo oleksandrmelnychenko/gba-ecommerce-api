@@ -505,7 +505,7 @@ public sealed class SaleReturnXlsManager : BaseXlsManager, ISaleReturnXlsManager
 
                         decimal pricePerItem = consignmentItem.RootConsignmentItem?.Price ?? consignmentItem.Price;
 
-                        decimal totalAmount = decimal.Round(pricePerItem * Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal totalAmount = decimal.Round(pricePerItem * LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
 
                         using (ExcelRange range = worksheet.Cells[row, 15, row, 15]) {
                             range.Merge = true;
@@ -593,9 +593,9 @@ public sealed class SaleReturnXlsManager : BaseXlsManager, ISaleReturnXlsManager
                         range.Style.Border.BorderAround(ExcelBorderStyle.Hair);
                     }
 
-                    decimal pricePerItem = decimal.Round(item.Amount / Convert.ToDecimal(item.Qty), 4, MidpointRounding.AwayFromZero);
+                    decimal pricePerItem = decimal.Round(item.Amount / LegacyNumeric.ToDecimal(item.Qty), 4, MidpointRounding.AwayFromZero);
 
-                    decimal totalAmount = decimal.Round(pricePerItem * Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                    decimal totalAmount = decimal.Round(pricePerItem * LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
 
                     using (ExcelRange range = worksheet.Cells[row, 15, row, 15]) {
                         range.Merge = true;
@@ -1399,7 +1399,7 @@ public sealed class SaleReturnXlsManager : BaseXlsManager, ISaleReturnXlsManager
                         MidpointRounding.AwayFromZero
                     );
 
-                decimal currentNetPrice = decimal.Round(localPricePerItem * Convert.ToDecimal(item.Qty), 4, MidpointRounding.AwayFromZero);
+                decimal currentNetPrice = decimal.Round(localPricePerItem * LegacyNumeric.ToDecimal(item.Qty), 4, MidpointRounding.AwayFromZero);
 
                 decimal vatAmount = decimal.Round(currentNetPrice * vatRate / 100m, 4, MidpointRounding.AwayFromZero);
 
@@ -1532,7 +1532,7 @@ public sealed class SaleReturnXlsManager : BaseXlsManager, ISaleReturnXlsManager
                         MidpointRounding.AwayFromZero
                     );
 
-                currentNetPrice = decimal.Round(localPricePerItem * Convert.ToDecimal(currentQty), 4, MidpointRounding.AwayFromZero);
+                currentNetPrice = decimal.Round(localPricePerItem * LegacyNumeric.ToDecimal(currentQty), 4, MidpointRounding.AwayFromZero);
 
                 vatAmount = decimal.Round(currentNetPrice * vatRate / 100m, 4, MidpointRounding.AwayFromZero);
 
@@ -2682,7 +2682,7 @@ public sealed class SaleReturnXlsManager : BaseXlsManager, ISaleReturnXlsManager
             int indexer = 1;
 
             foreach (SaleReturnItem returnItem in saleReturn.SaleReturnItems) {
-                decimal currentPrice = decimal.Round(returnItem.Amount / Convert.ToDecimal(returnItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal currentPrice = decimal.Round(returnItem.Amount / LegacyNumeric.ToDecimal(returnItem.Qty), 2, MidpointRounding.AwayFromZero);
                 if (returnItem.SaleReturnItemProductPlacements.Any()) {
                     foreach (SaleReturnItemProductPlacement item in returnItem.SaleReturnItemProductPlacements) {
                         using (ExcelRange range = worksheet.Cells[row, column, row, column + 1]) {
@@ -2756,7 +2756,7 @@ public sealed class SaleReturnXlsManager : BaseXlsManager, ISaleReturnXlsManager
                         }
 
                         using (ExcelRange range = worksheet.Cells[row, column + 33, row, column + 36]) {
-                            range.Value = decimal.Round(currentPrice * Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                            range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
                             range.Merge = true;
                             range.Style.Font.Size = 11;
                             range.Style.Numberformat.Format = "0.00";
@@ -2843,7 +2843,7 @@ public sealed class SaleReturnXlsManager : BaseXlsManager, ISaleReturnXlsManager
                     }
 
                     using (ExcelRange range = worksheet.Cells[row, column + 33, row, column + 36]) {
-                        range.Value = range.Value = decimal.Round(currentPrice * Convert.ToDecimal(returnItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        range.Value = range.Value = decimal.Round(currentPrice * LegacyNumeric.ToDecimal(returnItem.Qty), 2, MidpointRounding.AwayFromZero);
                         range.Merge = true;
                         range.Style.Font.Size = 11;
                         range.Style.Numberformat.Format = "0.00";
@@ -3357,7 +3357,7 @@ public sealed class SaleReturnXlsManager : BaseXlsManager, ISaleReturnXlsManager
             decimal exchangeRate = 1m;
 
             foreach (SaleReturnItem returnItem in saleReturn.SaleReturnItems) {
-                decimal localAmount = decimal.Round(returnItem.Amount / Convert.ToDecimal(returnItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal localAmount = decimal.Round(returnItem.Amount / LegacyNumeric.ToDecimal(returnItem.Qty), 2, MidpointRounding.AwayFromZero);
                 if (returnItem.SaleReturnItemProductPlacements.Any()) {
                     foreach (SaleReturnItemProductPlacement item in returnItem.SaleReturnItemProductPlacements) {
                         exchangeRate = returnItem.ExchangeRateAmount;
@@ -3444,7 +3444,7 @@ public sealed class SaleReturnXlsManager : BaseXlsManager, ISaleReturnXlsManager
                         }
 
                         using (ExcelRange range = worksheet.Cells[row, column + 33, row, column + 36]) {
-                            range.Value = decimal.Round(localAmount * Convert.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
+                            range.Value = decimal.Round(localAmount * LegacyNumeric.ToDecimal(item.Qty), 2, MidpointRounding.AwayFromZero);
                             range.Merge = true;
                             range.Style.Font.Size = 11;
                             range.Style.Numberformat.Format = "0.00";
@@ -3534,7 +3534,7 @@ public sealed class SaleReturnXlsManager : BaseXlsManager, ISaleReturnXlsManager
                     }
 
                     using (ExcelRange range = worksheet.Cells[row, column + 29, row, column + 32]) {
-                        range.Value = decimal.Round(returnItem.Amount / Convert.ToDecimal(returnItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        range.Value = decimal.Round(returnItem.Amount / LegacyNumeric.ToDecimal(returnItem.Qty), 2, MidpointRounding.AwayFromZero);
                         range.Merge = true;
                         range.Style.Font.Size = 11;
                         range.Style.Numberformat.Format = "0.00";

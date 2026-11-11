@@ -4,6 +4,7 @@ using System.Data;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using GBA.Domain;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.Clients;
@@ -255,7 +256,7 @@ public sealed class ClientService : IClientService {
                 orderItems.First().TotalAmount = decimal.Round(
                     orderItems
                         .Where(o => !o.IsMisplacedItem)
-                        .Sum(o => o.Product.CurrentPrice * Convert.ToDecimal(o.Qty)),
+                        .Sum(o => o.Product.CurrentPrice * LegacyNumeric.ToDecimal(o.Qty)),
                     2,
                     MidpointRounding.AwayFromZero);
 

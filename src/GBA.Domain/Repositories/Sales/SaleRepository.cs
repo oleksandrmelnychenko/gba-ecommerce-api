@@ -562,7 +562,7 @@ public sealed class SaleRepository : ISaleRepository {
                 Storage storage = (Storage)objects[18];
                 VatRate vatRate = (VatRate)objects[19];
 
-                decimal vatRatePercent = Convert.ToDecimal(vatRate?.Value ?? 0) / 100;
+                decimal vatRatePercent = LegacyNumeric.ToDecimal(vatRate?.Value ?? 0) / 100;
 
                 if (toReturn.Any(e => e.SaleReturn != null && e.SaleReturn.Id.Equals(saleReturn.Id))) {
                     SaleReturn saleReturnFromList = toReturn.First(e => e.SaleReturn != null && e.SaleReturn.Id.Equals(saleReturn.Id)).SaleReturn;
@@ -600,7 +600,7 @@ public sealed class SaleRepository : ISaleRepository {
                         decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                     orderItem.TotalAmount =
-                        decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                     orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                     orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -675,7 +675,7 @@ public sealed class SaleRepository : ISaleRepository {
                             decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                         orderItem.TotalAmount =
-                            decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                            decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                         orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                         orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -7381,7 +7381,7 @@ public sealed class SaleRepository : ISaleRepository {
 
                 if (productProductGroup != null) product.ProductProductGroups.Add(productProductGroup);
 
-                orderItem.TotalAmount = productPricing.Price * Convert.ToDecimal(orderItem.Qty);
+                orderItem.TotalAmount = productPricing.Price * LegacyNumeric.ToDecimal(orderItem.Qty);
 
                 orderItem.User = orderItemUser;
 
@@ -8034,7 +8034,7 @@ public sealed class SaleRepository : ISaleRepository {
 
                 if (productProductGroup != null) product.ProductProductGroups.Add(productProductGroup);
 
-                orderItem.TotalAmount = product.CurrentPrice * Convert.ToDecimal(orderItem.Qty);
+                orderItem.TotalAmount = product.CurrentPrice * LegacyNumeric.ToDecimal(orderItem.Qty);
 
                 product.ProductPricings.Add(productPricing);
             }
@@ -8490,8 +8490,8 @@ public sealed class SaleRepository : ISaleRepository {
 
             product.MeasureUnit = measureUnit;
 
-            orderItem.TotalAmount = product.CurrentPrice * Convert.ToDecimal(orderItem.Qty);
-            orderItem.TotalAmountLocal = product.CurrentLocalPrice * Convert.ToDecimal(orderItem.Qty);
+            orderItem.TotalAmount = product.CurrentPrice * LegacyNumeric.ToDecimal(orderItem.Qty);
+            orderItem.TotalAmountLocal = product.CurrentLocalPrice * LegacyNumeric.ToDecimal(orderItem.Qty);
             orderItem.Product = product;
             orderItem.User = orderItemUser;
 
@@ -8563,7 +8563,7 @@ public sealed class SaleRepository : ISaleRepository {
             existOrderItem.AssignedSpecification = assignedSpecification;
 
             if (productGroupDiscount != null)
-                existOrderItem.Discount = Convert.ToDecimal(productGroupDiscount.DiscountRate);
+                existOrderItem.Discount = LegacyNumeric.ToDecimal(productGroupDiscount.DiscountRate);
 
             return orderItem;
         };
@@ -9198,7 +9198,7 @@ public sealed class SaleRepository : ISaleRepository {
                 product.ProductAvailabilities.Add(productAvailability);
             }
 
-            orderItem.TotalAmount = product.CurrentPrice * Convert.ToDecimal(orderItem.Qty);
+            orderItem.TotalAmount = product.CurrentPrice * LegacyNumeric.ToDecimal(orderItem.Qty);
 
             orderItem.Product = product;
             orderItem.User = orderItemUser;
@@ -9839,7 +9839,7 @@ public sealed class SaleRepository : ISaleRepository {
 
                 if (productProductGroup != null) product.ProductProductGroups.Add(productProductGroup);
 
-                orderItem.TotalAmount = productPricing.Price * Convert.ToDecimal(orderItem.Qty);
+                orderItem.TotalAmount = productPricing.Price * LegacyNumeric.ToDecimal(orderItem.Qty);
 
                 product.ProductPricings.Add(productPricing);
             }
@@ -10091,7 +10091,7 @@ public sealed class SaleRepository : ISaleRepository {
 
                 if (productProductGroup != null) product.ProductProductGroups.Add(productProductGroup);
 
-                orderItem.TotalAmount = productPricing.Price * Convert.ToDecimal(orderItem.Qty);
+                orderItem.TotalAmount = productPricing.Price * LegacyNumeric.ToDecimal(orderItem.Qty);
 
                 product.ProductPricings.Add(productPricing);
             }
@@ -10335,7 +10335,7 @@ public sealed class SaleRepository : ISaleRepository {
 
                 if (productProductGroup != null) product.ProductProductGroups.Add(productProductGroup);
 
-                orderItem.TotalAmount = productPricing.Price * Convert.ToDecimal(orderItem.Qty);
+                orderItem.TotalAmount = productPricing.Price * LegacyNumeric.ToDecimal(orderItem.Qty);
 
                 product.ProductPricings.Add(productPricing);
             }

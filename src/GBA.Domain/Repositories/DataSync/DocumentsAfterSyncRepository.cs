@@ -519,14 +519,14 @@ public sealed class DocumentsAfterSyncRepository : IDocumentsAfterSyncRepository
             if (documents.Any(i => i.TempId.Equals(productIncomeItem.ProductIncomeId))) {
                 GenericDocument document = documents.First(i => i.TempId.Equals(productIncomeItem.ProductIncomeId));
 
-                document.Amount += decimal.Round(productCapitalizationItem.UnitPrice * Convert.ToDecimal(productCapitalizationItem.Qty), 2, MidpointRounding.AwayFromZero);
+                document.Amount += decimal.Round(productCapitalizationItem.UnitPrice * LegacyNumeric.ToDecimal(productCapitalizationItem.Qty), 2, MidpointRounding.AwayFromZero);
             } else {
                 documents.Add(new GenericDocument {
                     TempId = productIncome.Id,
                     SynchronizationDate = productIncome.Created,
                     Number = productIncome.Number,
                     Type = "Прихідна накладна (Оприходування)",
-                    Amount = decimal.Round(productCapitalizationItem.UnitPrice * Convert.ToDecimal(productCapitalizationItem.Qty), 2, MidpointRounding.AwayFromZero),
+                    Amount = decimal.Round(productCapitalizationItem.UnitPrice * LegacyNumeric.ToDecimal(productCapitalizationItem.Qty), 2, MidpointRounding.AwayFromZero),
                     Currency = eur,
                     Organization = organization,
                     ContractorType = ContractorType.None
@@ -627,7 +627,7 @@ public sealed class DocumentsAfterSyncRepository : IDocumentsAfterSyncRepository
             if (documents.Any(i => i.TempId.Equals(productIncomeItem.ProductIncomeId))) {
                 GenericDocument document = documents.First(i => i.TempId.Equals(productIncomeItem.ProductIncomeId));
 
-                document.Amount += packingListPackageOrderItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty);
+                document.Amount += packingListPackageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty);
             } else {
                 clientAgreement.Agreement = agreement;
 
@@ -636,7 +636,7 @@ public sealed class DocumentsAfterSyncRepository : IDocumentsAfterSyncRepository
                     SynchronizationDate = productIncome.Created,
                     Number = productIncome.Number,
                     Type = "Прихідна накладна від виробника",
-                    Amount = packingListPackageOrderItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty),
+                    Amount = packingListPackageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty),
                     Currency = currency,
                     Client = client,
                     ClientAgreement = clientAgreement,
@@ -735,7 +735,7 @@ public sealed class DocumentsAfterSyncRepository : IDocumentsAfterSyncRepository
             if (documents.Any(i => i.TempId.Equals(productIncomeItem.ProductIncomeId))) {
                 GenericDocument document = documents.First(i => i.TempId.Equals(productIncomeItem.ProductIncomeId));
 
-                document.Amount += decimal.Round(actReconciliationItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                document.Amount += decimal.Round(actReconciliationItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
             } else {
                 clientAgreement.Agreement = agreement;
 
@@ -744,7 +744,7 @@ public sealed class DocumentsAfterSyncRepository : IDocumentsAfterSyncRepository
                     SynchronizationDate = productIncome.Created,
                     Number = productIncome.Number,
                     Type = "Прихідна накладна від виробника",
-                    Amount = decimal.Round(actReconciliationItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero),
+                    Amount = decimal.Round(actReconciliationItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero),
                     Currency = currency,
                     Client = supplyOrderSupplier,
                     ClientAgreement = clientAgreement,

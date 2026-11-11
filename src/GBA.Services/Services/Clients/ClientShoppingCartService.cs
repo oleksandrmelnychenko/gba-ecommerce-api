@@ -13,6 +13,7 @@ using GBA.Common.Exceptions.CustomExceptions;
 using GBA.Common.Helpers;
 using GBA.Common.ResourceNames.ECommerce;
 using GBA.Common.Search;
+using GBA.Domain;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.Clients;
@@ -131,7 +132,7 @@ public sealed class ClientShoppingCartService : IClientShoppingCartService {
         orderItem.MisplacedSaleId = null;
         orderItem.IsValidForCurrentSale = true;
         orderItem.Vat = clientAgreement.Agreement.WithVATAccounting
-            ? Convert.ToDecimal(clientAgreement.Agreement.Organization?.VatRate?.Value ?? 0)
+            ? LegacyNumeric.ToDecimal(clientAgreement.Agreement.Organization?.VatRate?.Value ?? 0)
             : 0;
 
         return orderItem;

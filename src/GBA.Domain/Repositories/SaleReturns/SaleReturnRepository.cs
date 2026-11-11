@@ -169,7 +169,7 @@ public sealed class SaleReturnRepository : ISaleReturnRepository {
                         decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                     orderItem.TotalAmount =
-                        decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                     orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                     orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -220,7 +220,7 @@ public sealed class SaleReturnRepository : ISaleReturnRepository {
                         decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                     orderItem.TotalAmount =
-                        decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                     orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                     orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -388,7 +388,7 @@ public sealed class SaleReturnRepository : ISaleReturnRepository {
                     decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                 orderItem.TotalAmount =
-                    decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                    decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                 orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                 orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -441,7 +441,7 @@ public sealed class SaleReturnRepository : ISaleReturnRepository {
                         decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                     orderItem.TotalAmount =
-                        decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                     orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                     orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -584,7 +584,7 @@ public sealed class SaleReturnRepository : ISaleReturnRepository {
             ConsignmentItem rootConsignmentItem = (ConsignmentItem)objects[23];
             VatRate organizationVatRate = (VatRate)objects[24];
 
-            decimal vatRate = Convert.ToDecimal(organizationVatRate?.Value ?? 0) / 100;
+            decimal vatRate = LegacyNumeric.ToDecimal(organizationVatRate?.Value ?? 0) / 100;
 
             if (toReturn == null) {
                 client.RegionCode = regionCode;
@@ -631,7 +631,7 @@ public sealed class SaleReturnRepository : ISaleReturnRepository {
                     decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 14, MidpointRounding.AwayFromZero);
 
                 orderItem.TotalAmount =
-                    decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 14, MidpointRounding.AwayFromZero);
+                    decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 14, MidpointRounding.AwayFromZero);
                 orderItem.TotalAmountLocal =
                     decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 14, MidpointRounding.AwayFromZero);
 
@@ -873,7 +873,7 @@ public sealed class SaleReturnRepository : ISaleReturnRepository {
                         decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                     orderItem.TotalAmount =
-                        decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                     orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                     orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -917,7 +917,7 @@ public sealed class SaleReturnRepository : ISaleReturnRepository {
                         decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                     orderItem.TotalAmount =
-                        decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                     orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                     orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -1056,7 +1056,7 @@ public sealed class SaleReturnRepository : ISaleReturnRepository {
             User canceledBy = (User)objects[21];
             VatRate organizationVatRate = (VatRate)objects[22];
 
-            decimal vatRate = Convert.ToDecimal(organizationVatRate?.Value ?? 0) / 100;
+            decimal vatRate = LegacyNumeric.ToDecimal(organizationVatRate?.Value ?? 0) / 100;
 
             if (toReturns.Any(r => r.Id.Equals(saleReturn.Id))) {
                 SaleReturn toReturn = toReturns.First(r => r.Id.Equals(saleReturn.Id));
@@ -1101,7 +1101,7 @@ public sealed class SaleReturnRepository : ISaleReturnRepository {
                     decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 14, MidpointRounding.AwayFromZero);
 
                 orderItem.TotalAmount =
-                    decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                    decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                 orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                 orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -1196,8 +1196,8 @@ public sealed class SaleReturnRepository : ISaleReturnRepository {
                         decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 14, MidpointRounding.AwayFromZero);
 
                     orderItem.TotalAmount =
-                        decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
-                    orderItem.TotalAmountLocal = decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty) * orderItem.ExchangeRateAmount, 2,
+                        decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                    orderItem.TotalAmountLocal = decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.ExchangeRateAmount, 2,
                         MidpointRounding.AwayFromZero);
 
                     orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -1411,7 +1411,7 @@ public sealed class SaleReturnRepository : ISaleReturnRepository {
             User canceledBy = (User)objects[19];
             VatRate organizationVatRate = (VatRate)objects[20];
 
-            decimal vatRate = Convert.ToDecimal(organizationVatRate?.Value ?? 0) / 100;
+            decimal vatRate = LegacyNumeric.ToDecimal(organizationVatRate?.Value ?? 0) / 100;
 
             if (toReturns.Any(r => r.Id.Equals(saleReturn.Id))) {
                 SaleReturn toReturn = toReturns.First(r => r.Id.Equals(saleReturn.Id));
@@ -1451,7 +1451,7 @@ public sealed class SaleReturnRepository : ISaleReturnRepository {
                     decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 14, MidpointRounding.AwayFromZero);
 
                 orderItem.TotalAmount =
-                    decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                    decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                 orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                 orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -1527,8 +1527,8 @@ public sealed class SaleReturnRepository : ISaleReturnRepository {
                         decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 14, MidpointRounding.AwayFromZero);
 
                     orderItem.TotalAmount =
-                        decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
-                    orderItem.TotalAmountLocal = decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty) * orderItem.ExchangeRateAmount, 2,
+                        decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                    orderItem.TotalAmountLocal = decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.ExchangeRateAmount, 2,
                         MidpointRounding.AwayFromZero);
 
                     orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);

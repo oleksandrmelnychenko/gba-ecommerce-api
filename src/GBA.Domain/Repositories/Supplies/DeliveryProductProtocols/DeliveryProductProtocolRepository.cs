@@ -152,21 +152,21 @@ public sealed class DeliveryProductProtocolRepository : IDeliveryProductProtocol
 
                 if (item != null)
                     if (!packingList.PackingListPackageOrderItems.Any(x => x.Id.Equals(item.Id))) {
-                        item.TotalNetPrice = Convert.ToDecimal(item.Qty) * item.UnitPrice;
-                        item.TotalGrossPrice = Convert.ToDecimal(item.Qty) * item.GrossUnitPriceEur;
-                        item.AccountingTotalGrossPrice = Convert.ToDecimal(item.Qty) * item.AccountingGrossUnitPriceEur;
+                        item.TotalNetPrice = LegacyNumeric.ToDecimal(item.Qty) * item.UnitPrice;
+                        item.TotalGrossPrice = LegacyNumeric.ToDecimal(item.Qty) * item.GrossUnitPriceEur;
+                        item.AccountingTotalGrossPrice = LegacyNumeric.ToDecimal(item.Qty) * item.AccountingGrossUnitPriceEur;
                         item.TotalNetWeight = item.Qty * item.NetWeight;
                         item.TotalGrossWeight = item.Qty * item.GrossWeight;
                         invoice.TotalQuantity = +item.Qty;
 
-                        invoice.TotalNetPrice += item.UnitPrice * Convert.ToDecimal(item.Qty);
+                        invoice.TotalNetPrice += item.UnitPrice * LegacyNumeric.ToDecimal(item.Qty);
 
                         packingList.TotalNetPrice = decimal.Round(packingList.TotalNetPrice + item.TotalNetPrice, 2, MidpointRounding.AwayFromZero);
                         packingList.TotalGrossPrice = decimal.Round(packingList.TotalGrossPrice + item.TotalGrossPrice, 2, MidpointRounding.AwayFromZero);
                         packingList.AccountingTotalGrossPrice =
                             decimal.Round(packingList.AccountingTotalGrossPrice + item.AccountingTotalGrossPrice, 2, MidpointRounding.AwayFromZero);
-                        packingList.TotalNetWeight += Math.Round(item.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
-                        packingList.TotalGrossWeight += Math.Round(item.TotalGrossWeight, 3, MidpointRounding.AwayFromZero);
+                        packingList.TotalNetWeight += LegacyNumeric.Round(item.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                        packingList.TotalGrossWeight += LegacyNumeric.Round(item.TotalGrossWeight, 3, MidpointRounding.AwayFromZero);
 
                         item.UnitPrice = decimal.Round(item.UnitPrice, 2, MidpointRounding.AwayFromZero);
                         item.UnitPriceEur = decimal.Round(item.UnitPriceEur, 2, MidpointRounding.AwayFromZero);

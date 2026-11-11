@@ -2863,7 +2863,7 @@ public sealed class TaxFreeAndSadXlsManager : BaseXlsManager, ITaxFreeAndSadXlsM
                 foreach (OrderItem item in sale.Order.OrderItems) {
                     decimal currentNetPrice =
                         decimal.Round(
-                            item.PricePerItem * Convert.ToDecimal(item.Qty),
+                            item.PricePerItem * LegacyNumeric.ToDecimal(item.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -3007,7 +3007,7 @@ public sealed class TaxFreeAndSadXlsManager : BaseXlsManager, ITaxFreeAndSadXlsM
                 foreach (SadItem item in sadPl.SadItems) {
                     decimal currentNetPrice =
                         decimal.Round(
-                            item.SupplyOrderUkraineCartItem.UnitPrice * Convert.ToDecimal(item.Qty),
+                            item.SupplyOrderUkraineCartItem.UnitPrice * LegacyNumeric.ToDecimal(item.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -4054,7 +4054,7 @@ public sealed class TaxFreeAndSadXlsManager : BaseXlsManager, ITaxFreeAndSadXlsM
                 foreach (OrderItem item in sale.Order.OrderItems) {
                     decimal currentNetPrice =
                         decimal.Round(
-                            item.PricePerItem * Convert.ToDecimal(item.Qty),
+                            item.PricePerItem * LegacyNumeric.ToDecimal(item.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -4198,7 +4198,7 @@ public sealed class TaxFreeAndSadXlsManager : BaseXlsManager, ITaxFreeAndSadXlsM
                 foreach (SadItem item in sadUk.SadItems) {
                     decimal currentNetPrice =
                         decimal.Round(
-                            item.SupplyOrderUkraineCartItem.UnitPrice * Convert.ToDecimal(item.Qty),
+                            item.SupplyOrderUkraineCartItem.UnitPrice * LegacyNumeric.ToDecimal(item.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -5255,7 +5255,7 @@ public sealed class TaxFreeAndSadXlsManager : BaseXlsManager, ITaxFreeAndSadXlsM
                 foreach (OrderItem item in sale.Order.OrderItems) {
                     decimal currentNetPrice =
                         decimal.Round(
-                            item.PricePerItem * Convert.ToDecimal(item.Qty),
+                            item.PricePerItem * LegacyNumeric.ToDecimal(item.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -5399,7 +5399,7 @@ public sealed class TaxFreeAndSadXlsManager : BaseXlsManager, ITaxFreeAndSadXlsM
                 foreach (SadItem item in sadPl.SadItems) {
                     decimal currentNetPrice =
                         decimal.Round(
-                            item.SupplyOrderUkraineCartItem.UnitPrice * Convert.ToDecimal(item.Qty),
+                            item.SupplyOrderUkraineCartItem.UnitPrice * LegacyNumeric.ToDecimal(item.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -6469,7 +6469,7 @@ public sealed class TaxFreeAndSadXlsManager : BaseXlsManager, ITaxFreeAndSadXlsM
                 foreach (OrderItem item in sale.Order.OrderItems) {
                     decimal currentNetPrice =
                         decimal.Round(
-                            item.PricePerItem * Convert.ToDecimal(item.Qty),
+                            item.PricePerItem * LegacyNumeric.ToDecimal(item.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
@@ -6613,7 +6613,7 @@ public sealed class TaxFreeAndSadXlsManager : BaseXlsManager, ITaxFreeAndSadXlsM
                 foreach (SadItem item in sadUk.SadItems) {
                     decimal currentNetPrice =
                         decimal.Round(
-                            item.SupplyOrderUkraineCartItem.UnitPrice * Convert.ToDecimal(item.Qty),
+                            item.SupplyOrderUkraineCartItem.UnitPrice * LegacyNumeric.ToDecimal(item.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );

@@ -577,11 +577,11 @@ public sealed class DepreciatedConsumableOrderRepository : IDepreciatedConsumabl
                 if (currency != null) {
                     depreciatedConsumableOrderItem.Currency = currency;
 
-                    depreciatedConsumableOrderItem.TotalPrice = Math.Round(consumablesOrderItem.PricePerItem * Convert.ToDecimal(depreciatedConsumableOrderItem.Qty), 2);
+                    depreciatedConsumableOrderItem.TotalPrice = Math.Round(consumablesOrderItem.PricePerItem * LegacyNumeric.ToDecimal(depreciatedConsumableOrderItem.Qty), 2);
                 } else {
                     depreciatedConsumableOrderItem.Currency = supplyOrganizationAgreementCurrency;
 
-                    depreciatedConsumableOrderItem.TotalPrice = Math.Round(consumablesOrderItem.PricePerItem * Convert.ToDecimal(depreciatedConsumableOrderItem.Qty), 2);
+                    depreciatedConsumableOrderItem.TotalPrice = Math.Round(consumablesOrderItem.PricePerItem * LegacyNumeric.ToDecimal(depreciatedConsumableOrderItem.Qty), 2);
                 }
 
                 DepreciatedConsumableOrder orderFromList = toReturn.First(o => o.Id.Equals(depreciatedConsumableOrderItem.DepreciatedConsumableOrderId));
@@ -593,22 +593,22 @@ public sealed class DepreciatedConsumableOrderRepository : IDepreciatedConsumabl
                         if (orderFromList.PriceTotals.Any(t => t.Currency.Id.Equals(currency.Id))) {
                             PriceTotal total = orderFromList.PriceTotals.First(t => t.Currency.Id.Equals(currency.Id));
 
-                            total.TotalPrice = Math.Round(total.TotalPrice + consumablesOrderItem.PricePerItem * Convert.ToDecimal(depreciatedConsumableOrderItem.Qty), 2);
+                            total.TotalPrice = Math.Round(total.TotalPrice + consumablesOrderItem.PricePerItem * LegacyNumeric.ToDecimal(depreciatedConsumableOrderItem.Qty), 2);
                         } else {
                             orderFromList.PriceTotals.Add(new PriceTotal {
                                 Currency = currency,
-                                TotalPrice = Math.Round(consumablesOrderItem.PricePerItem * Convert.ToDecimal(depreciatedConsumableOrderItem.Qty), 2)
+                                TotalPrice = Math.Round(consumablesOrderItem.PricePerItem * LegacyNumeric.ToDecimal(depreciatedConsumableOrderItem.Qty), 2)
                             });
                         }
                     } else {
                         if (orderFromList.PriceTotals.Any(t => t.Currency.Id.Equals(supplyOrganizationAgreementCurrency.Id))) {
                             PriceTotal total = orderFromList.PriceTotals.First(t => t.Currency.Id.Equals(supplyOrganizationAgreementCurrency.Id));
 
-                            total.TotalPrice = Math.Round(total.TotalPrice + consumablesOrderItem.PricePerItem * Convert.ToDecimal(depreciatedConsumableOrderItem.Qty), 2);
+                            total.TotalPrice = Math.Round(total.TotalPrice + consumablesOrderItem.PricePerItem * LegacyNumeric.ToDecimal(depreciatedConsumableOrderItem.Qty), 2);
                         } else {
                             orderFromList.PriceTotals.Add(new PriceTotal {
                                 Currency = supplyOrganizationAgreementCurrency,
-                                TotalPrice = Math.Round(consumablesOrderItem.PricePerItem * Convert.ToDecimal(depreciatedConsumableOrderItem.Qty), 2)
+                                TotalPrice = Math.Round(consumablesOrderItem.PricePerItem * LegacyNumeric.ToDecimal(depreciatedConsumableOrderItem.Qty), 2)
                             });
                         }
                     }

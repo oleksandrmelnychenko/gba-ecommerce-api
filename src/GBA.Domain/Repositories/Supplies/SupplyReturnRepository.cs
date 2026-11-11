@@ -549,8 +549,8 @@ public sealed class SupplyReturnRepository : ISupplyReturnRepository {
                 item.Product = product;
                 item.ConsignmentItem = consignmentItem;
 
-                item.TotalNetPrice = decimal.Round(Convert.ToDecimal(item.Qty) * consignmentItem.Price, 2, MidpointRounding.AwayFromZero);
-                item.TotalNetWeight = Math.Round(item.Qty * consignmentItem.Weight, 2, MidpointRounding.AwayFromZero);
+                item.TotalNetPrice = decimal.Round(LegacyNumeric.ToDecimal(item.Qty) * consignmentItem.Price, 2, MidpointRounding.AwayFromZero);
+                item.TotalNetWeight = LegacyNumeric.Round(item.Qty * consignmentItem.Weight, 2, MidpointRounding.AwayFromZero);
 
                 SupplyReturn supplyReturn = returns.First(r => r.Id.Equals(item.SupplyReturnId));
 
@@ -559,7 +559,7 @@ public sealed class SupplyReturnRepository : ISupplyReturnRepository {
                 supplyReturn.TotalNetPrice =
                     decimal.Round(supplyReturn.TotalNetPrice + item.TotalNetPrice, 2, MidpointRounding.AwayFromZero);
                 supplyReturn.TotalNetWeight =
-                    Math.Round(supplyReturn.TotalNetWeight + item.TotalNetWeight, 2, MidpointRounding.AwayFromZero);
+                    LegacyNumeric.Round(supplyReturn.TotalNetWeight + item.TotalNetWeight, 2, MidpointRounding.AwayFromZero);
 
                 return item;
             },
@@ -674,7 +674,7 @@ public sealed class SupplyReturnRepository : ISupplyReturnRepository {
             } else {
                 supplyReturnItem.ConsignmentItem = consignmentItem;
 
-                supplyReturnItem.TotalNetPrice = Convert.ToDecimal(supplyReturnItem.Qty) * consignmentItem.Price;
+                supplyReturnItem.TotalNetPrice = LegacyNumeric.ToDecimal(supplyReturnItem.Qty) * consignmentItem.Price;
 
                 toReturn.TotalNetPrice += supplyReturnItem.TotalNetPrice;
 

@@ -265,8 +265,8 @@ public sealed class PackingListRepository : IPackingListRepository {
             packingListPackageOrderItem.TotalGrossWeight = packingListPackageOrderItem.Qty * packingListPackageOrderItem.GrossWeight;
             packingListPackageOrderItem.UnitPrice = packingListPackageOrderItem.UnitPrice;
             packingListPackageOrderItem.UnitPriceEur = packingListPackageOrderItem.UnitPriceEur;
-            packingListPackageOrderItem.TotalNetPrice = Convert.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.UnitPrice;
-            packingListPackageOrderItem.TotalNetPriceEur = Convert.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.UnitPriceEur;
+            packingListPackageOrderItem.TotalNetPrice = LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.UnitPrice;
+            packingListPackageOrderItem.TotalNetPriceEur = LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.UnitPriceEur;
 
             toReturn.TotalQuantity += packingListPackageOrderItem.Qty;
 
@@ -280,12 +280,12 @@ public sealed class PackingListRepository : IPackingListRepository {
             }
 
             packingListPackageOrderItem.AccountingTotalGrossPriceEur =
-                Convert.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.AccountingGrossUnitPriceEur;
+                LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.AccountingGrossUnitPriceEur;
 
             packingListPackageOrderItem.AccountingGeneralTotalGrossPriceEur =
-                Convert.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.AccountingGeneralGrossUnitPriceEur;
+                LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.AccountingGeneralGrossUnitPriceEur;
 
-            packingListPackageOrderItem.TotalGrossPriceEur = Convert.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.GrossUnitPriceEur;
+            packingListPackageOrderItem.TotalGrossPriceEur = LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty) * packingListPackageOrderItem.GrossUnitPriceEur;
 
             packingListPackageOrderItem.TotalGrossPriceEur =
                 packingListPackageOrderItem.TotalGrossPriceEur +
@@ -340,9 +340,9 @@ public sealed class PackingListRepository : IPackingListRepository {
             toReturn.TotalNetWeight += packingListPackageOrderItem.TotalNetWeight;
             toReturn.TotalGrossWeight += packingListPackageOrderItem.TotalGrossWeight;
 
-            toReturn.TotalNetWeight = Math.Round(toReturn.TotalNetWeight, 3);
+            toReturn.TotalNetWeight = LegacyNumeric.Round(toReturn.TotalNetWeight, 3);
 
-            toReturn.TotalGrossWeight = Math.Round(toReturn.TotalGrossWeight, 3);
+            toReturn.TotalGrossWeight = LegacyNumeric.Round(toReturn.TotalGrossWeight, 3);
 
             return packingList;
         };
@@ -1284,12 +1284,12 @@ public sealed class PackingListRepository : IPackingListRepository {
                         packingListPackageOrderItem.GrossUnitPriceEur = decimal.Round(packingListPackageOrderItem.GrossUnitPriceEur, 2, MidpointRounding.AwayFromZero);
 
                         packingListPackageOrderItem.TotalNetWeight =
-                            Math.Round(packingListPackageOrderItem.NetWeight * packingListPackageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
+                            LegacyNumeric.Round(packingListPackageOrderItem.NetWeight * packingListPackageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
                         packingListPackageOrderItem.TotalGrossWeight =
-                            Math.Round(packingListPackageOrderItem.GrossWeight * packingListPackageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
+                            LegacyNumeric.Round(packingListPackageOrderItem.GrossWeight * packingListPackageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-                        packingListPackageOrderItem.NetWeight = Math.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
-                        packingListPackageOrderItem.GrossWeight = Math.Round(packingListPackageOrderItem.GrossWeight, 3, MidpointRounding.AwayFromZero);
+                        packingListPackageOrderItem.NetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+                        packingListPackageOrderItem.GrossWeight = LegacyNumeric.Round(packingListPackageOrderItem.GrossWeight, 3, MidpointRounding.AwayFromZero);
 
                         packingListPackageOrderItem.TotalPriceWithVatOne =
                             packingList.IsVatOneApplied
@@ -1312,14 +1312,14 @@ public sealed class PackingListRepository : IPackingListRepository {
                                 : decimal.Zero;
 
                         packingListPackageOrderItem.TotalNetPrice =
-                            decimal.Round(packingListPackageOrderItem.UnitPrice * Convert.ToDecimal(packingListPackageOrderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                            decimal.Round(packingListPackageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                         packingListPackageOrderItem.TotalGrossPrice =
                             decimal.Round(packingListPackageOrderItem.TotalGrossPrice + packingListPackageOrderItem.TotalNetPrice * 23m / 100m, 2,
                                 MidpointRounding.AwayFromZero);
 
-                        packingList.TotalNetWeight = Math.Round(packingList.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
-                        packingList.TotalGrossWeight = Math.Round(packingList.TotalGrossWeight + packingListPackageOrderItem.TotalGrossWeight, 3,
+                        packingList.TotalNetWeight = LegacyNumeric.Round(packingList.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                        packingList.TotalGrossWeight = LegacyNumeric.Round(packingList.TotalGrossWeight + packingListPackageOrderItem.TotalGrossWeight, 3,
                             MidpointRounding.AwayFromZero);
 
                         packingList.TotalNetPrice =
@@ -1351,7 +1351,7 @@ public sealed class PackingListRepository : IPackingListRepository {
                             packageOrderItem.TotalGrossWeight = packageOrderItem.GrossWeight;
 
                             packageOrderItem.TotalNetPrice =
-                                decimal.Round(packageOrderItem.UnitPrice * Convert.ToDecimal(packageOrderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                                decimal.Round(packageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(packageOrderItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                             packageOrderItem.TotalGrossPrice =
                                 decimal.Round(packageOrderItem.TotalGrossPrice + packageOrderItem.TotalNetPrice * 23m / 100m, 2, MidpointRounding.AwayFromZero);
@@ -1397,23 +1397,23 @@ public sealed class PackingListRepository : IPackingListRepository {
                             packingListPackageOrderItem.GrossUnitPriceEur = decimal.Round(packingListPackageOrderItem.GrossUnitPriceEur, 2, MidpointRounding.AwayFromZero);
 
                             packingListPackageOrderItem.TotalNetWeight =
-                                Math.Round(packingListPackageOrderItem.NetWeight * packingListPackageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
+                                LegacyNumeric.Round(packingListPackageOrderItem.NetWeight * packingListPackageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
                             packingListPackageOrderItem.TotalGrossWeight =
-                                Math.Round(packingListPackageOrderItem.GrossWeight * packingListPackageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
+                                LegacyNumeric.Round(packingListPackageOrderItem.GrossWeight * packingListPackageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-                            packingListPackageOrderItem.NetWeight = Math.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
-                            packingListPackageOrderItem.GrossWeight = Math.Round(packingListPackageOrderItem.GrossWeight, 3, MidpointRounding.AwayFromZero);
+                            packingListPackageOrderItem.NetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+                            packingListPackageOrderItem.GrossWeight = LegacyNumeric.Round(packingListPackageOrderItem.GrossWeight, 3, MidpointRounding.AwayFromZero);
 
                             packingListPackageOrderItem.TotalNetPrice =
-                                decimal.Round(packingListPackageOrderItem.UnitPrice * Convert.ToDecimal(packingListPackageOrderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                                decimal.Round(packingListPackageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(packingListPackageOrderItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                             packingListPackageOrderItem.TotalGrossPrice =
                                 decimal.Round(packingListPackageOrderItem.TotalGrossPrice + packingListPackageOrderItem.TotalNetPrice * 23m / 100m, 2,
                                     MidpointRounding.AwayFromZero);
 
-                            packingListToReturn.TotalNetWeight = Math.Round(packingListToReturn.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3,
+                            packingListToReturn.TotalNetWeight = LegacyNumeric.Round(packingListToReturn.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3,
                                 MidpointRounding.AwayFromZero);
-                            packingListToReturn.TotalGrossWeight = Math.Round(packingListToReturn.TotalGrossWeight + packingListPackageOrderItem.TotalGrossWeight, 3,
+                            packingListToReturn.TotalGrossWeight = LegacyNumeric.Round(packingListToReturn.TotalGrossWeight + packingListPackageOrderItem.TotalGrossWeight, 3,
                                 MidpointRounding.AwayFromZero);
 
                             packingListPackageOrderItem.TotalPriceWithVatOne =
@@ -1474,15 +1474,15 @@ public sealed class PackingListRepository : IPackingListRepository {
                                         packageOrderItem.SupplyInvoiceOrderItem = packageSupplyInvoiceOrderItem;
 
                                         packageOrderItem.TotalNetWeight =
-                                            Math.Round(packageOrderItem.NetWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
+                                            LegacyNumeric.Round(packageOrderItem.NetWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
                                         packageOrderItem.TotalGrossWeight =
-                                            Math.Round(packageOrderItem.GrossWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
+                                            LegacyNumeric.Round(packageOrderItem.GrossWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-                                        packageOrderItem.NetWeight = Math.Round(packageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
-                                        packageOrderItem.GrossWeight = Math.Round(packageOrderItem.GrossWeight, 3, MidpointRounding.AwayFromZero);
+                                        packageOrderItem.NetWeight = LegacyNumeric.Round(packageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+                                        packageOrderItem.GrossWeight = LegacyNumeric.Round(packageOrderItem.GrossWeight, 3, MidpointRounding.AwayFromZero);
 
                                         packageOrderItem.TotalNetPrice =
-                                            decimal.Round(packageOrderItem.UnitPrice * Convert.ToDecimal(packageOrderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                                            decimal.Round(packageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(packageOrderItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                                         packageOrderItem.TotalGrossPrice =
                                             decimal.Round(packageOrderItem.TotalGrossPrice + packageOrderItem.TotalNetPrice * 23m / 100m, 2, MidpointRounding.AwayFromZero);
@@ -1522,15 +1522,15 @@ public sealed class PackingListRepository : IPackingListRepository {
                                     packageOrderItem.SupplyInvoiceOrderItem = packageSupplyInvoiceOrderItem;
 
                                     packageOrderItem.TotalNetWeight =
-                                        Math.Round(packageOrderItem.NetWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
+                                        LegacyNumeric.Round(packageOrderItem.NetWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
                                     packageOrderItem.TotalGrossWeight =
-                                        Math.Round(packageOrderItem.GrossWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
+                                        LegacyNumeric.Round(packageOrderItem.GrossWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-                                    packageOrderItem.NetWeight = Math.Round(packageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
-                                    packageOrderItem.GrossWeight = Math.Round(packageOrderItem.GrossWeight, 3, MidpointRounding.AwayFromZero);
+                                    packageOrderItem.NetWeight = LegacyNumeric.Round(packageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+                                    packageOrderItem.GrossWeight = LegacyNumeric.Round(packageOrderItem.GrossWeight, 3, MidpointRounding.AwayFromZero);
 
                                     packageOrderItem.TotalNetPrice =
-                                        decimal.Round(packageOrderItem.UnitPrice * Convert.ToDecimal(packageOrderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                                        decimal.Round(packageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(packageOrderItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                                     packageOrderItem.TotalGrossPrice =
                                         decimal.Round(packageOrderItem.TotalGrossPrice + packageOrderItem.TotalNetPrice * 23m / 100m, 2, MidpointRounding.AwayFromZero);
@@ -1570,15 +1570,15 @@ public sealed class PackingListRepository : IPackingListRepository {
                                         packageOrderItem.SupplyInvoiceOrderItem = packageSupplyInvoiceOrderItem;
 
                                         packageOrderItem.TotalNetWeight =
-                                            Math.Round(packageOrderItem.NetWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
+                                            LegacyNumeric.Round(packageOrderItem.NetWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
                                         packageOrderItem.TotalGrossWeight =
-                                            Math.Round(packageOrderItem.GrossWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
+                                            LegacyNumeric.Round(packageOrderItem.GrossWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-                                        packageOrderItem.NetWeight = Math.Round(packageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
-                                        packageOrderItem.GrossWeight = Math.Round(packageOrderItem.GrossWeight, 3, MidpointRounding.AwayFromZero);
+                                        packageOrderItem.NetWeight = LegacyNumeric.Round(packageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+                                        packageOrderItem.GrossWeight = LegacyNumeric.Round(packageOrderItem.GrossWeight, 3, MidpointRounding.AwayFromZero);
 
                                         packageOrderItem.TotalNetPrice =
-                                            decimal.Round(packageOrderItem.UnitPrice * Convert.ToDecimal(packageOrderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                                            decimal.Round(packageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(packageOrderItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                                         packageOrderItem.TotalGrossPrice =
                                             decimal.Round(packageOrderItem.TotalGrossPrice + packageOrderItem.TotalNetPrice * 23m / 100m, 2, MidpointRounding.AwayFromZero);
@@ -1618,15 +1618,15 @@ public sealed class PackingListRepository : IPackingListRepository {
                                     packageOrderItem.SupplyInvoiceOrderItem = packageSupplyInvoiceOrderItem;
 
                                     packageOrderItem.TotalNetWeight =
-                                        Math.Round(packageOrderItem.NetWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
+                                        LegacyNumeric.Round(packageOrderItem.NetWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
                                     packageOrderItem.TotalGrossWeight =
-                                        Math.Round(packageOrderItem.GrossWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
+                                        LegacyNumeric.Round(packageOrderItem.GrossWeight * packageOrderItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-                                    packageOrderItem.NetWeight = Math.Round(packageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
-                                    packageOrderItem.GrossWeight = Math.Round(packageOrderItem.GrossWeight, 3, MidpointRounding.AwayFromZero);
+                                    packageOrderItem.NetWeight = LegacyNumeric.Round(packageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+                                    packageOrderItem.GrossWeight = LegacyNumeric.Round(packageOrderItem.GrossWeight, 3, MidpointRounding.AwayFromZero);
 
                                     packageOrderItem.TotalNetPrice =
-                                        decimal.Round(packageOrderItem.UnitPrice * Convert.ToDecimal(packageOrderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                                        decimal.Round(packageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(packageOrderItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                                     packageOrderItem.TotalGrossPrice =
                                         decimal.Round(packageOrderItem.TotalGrossPrice + packageOrderItem.TotalNetPrice * 23m / 100m, 2, MidpointRounding.AwayFromZero);

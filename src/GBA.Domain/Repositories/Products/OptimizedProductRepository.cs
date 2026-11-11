@@ -75,8 +75,8 @@ DROP TABLE #ProductIds;";
         return results.ToDictionary(
             r => (long)r.Id,
             r => new ProductPriceInfo {
-                Price = (decimal)(r.Price ?? 0m),
-                LocalPrice = (decimal)(r.LocalPrice ?? 0m),
+                Price = LegacyNumeric.ToDecimal((object)(r.Price ?? 0m)),
+                LocalPrice = LegacyNumeric.ToDecimal((object)(r.LocalPrice ?? 0m)),
                 CurrencyCode = r.CurrencyCode ?? "UAH"
             });
     }
@@ -130,8 +130,8 @@ DROP TABLE #ProductIds;";
         return results.ToDictionary(
             r => (long)r.Id,
             r => new ProductPriceInfo {
-                Price = (decimal)(r.Price ?? 0m),
-                LocalPrice = (decimal)(r.LocalPrice ?? 0m),
+                Price = LegacyNumeric.ToDecimal((object)(r.Price ?? 0m)),
+                LocalPrice = LegacyNumeric.ToDecimal((object)(r.LocalPrice ?? 0m)),
                 CurrencyCode = r.CurrencyCode ?? "UAH"
             });
     }
@@ -518,10 +518,10 @@ WHERE ca.NetUID = @ClientAgreementNetId",
                 MainOriginalNumber = r.MainOriginalNumber,
                 Image = r.Image,
                 MeasureUnitId = (long)r.MeasureUnitId,
-                CurrentPrice = (decimal)r.CurrentPrice,
-                CurrentLocalPrice = (decimal)r.CurrentLocalPrice,
-                CurrentWithVatPrice = (decimal)r.CurrentWithVatPrice,
-                CurrentLocalWithVatPrice = (decimal)r.CurrentLocalWithVatPrice,
+                CurrentPrice = LegacyNumeric.ToDecimal((object)r.CurrentPrice),
+                CurrentLocalPrice = LegacyNumeric.ToDecimal((object)r.CurrentLocalPrice),
+                CurrentWithVatPrice = LegacyNumeric.ToDecimal((object)r.CurrentWithVatPrice),
+                CurrentLocalWithVatPrice = LegacyNumeric.ToDecimal((object)r.CurrentLocalWithVatPrice),
                 CurrencyCode = r.CurrencyCode,
                 SearchRowNumber = (long)r.SearchRowNumber
             };
@@ -876,10 +876,10 @@ DROP TABLE #ProductIds;";
                 MainOriginalNumber = r.MainOriginalNumber,
                 Image = r.Image,
                 MeasureUnitId = (long)r.MeasureUnitId,
-                CurrentPrice = (decimal)r.CurrentPrice,
-                CurrentLocalPrice = (decimal)r.CurrentLocalPrice,
-                CurrentWithVatPrice = (decimal)r.CurrentWithVatPrice,
-                CurrentLocalWithVatPrice = (decimal)r.CurrentLocalWithVatPrice,
+                CurrentPrice = LegacyNumeric.ToDecimal((object)r.CurrentPrice),
+                CurrentLocalPrice = LegacyNumeric.ToDecimal((object)r.CurrentLocalPrice),
+                CurrentWithVatPrice = LegacyNumeric.ToDecimal((object)r.CurrentWithVatPrice),
+                CurrentLocalWithVatPrice = LegacyNumeric.ToDecimal((object)r.CurrentLocalWithVatPrice),
                 CurrencyCode = r.CurrencyCode,
                 SearchRowNumber = (long)r.SearchRowNumber
             };

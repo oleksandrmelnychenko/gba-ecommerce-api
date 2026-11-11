@@ -130,7 +130,7 @@ public sealed class ConsumablesStorageRepository : IConsumablesStorageRepository
                     consumablesOrderItem.ConsumableProduct = consumableProduct;
                     consumablesOrderItem.ConsumableProductOrganization = consumableProductOrganization;
                     consumablesOrderItem.PaymentCostMovementOperation = paymentCostMovementOperation;
-                    consumablesOrderItem.TotalPriceWithVAT = Math.Round(Convert.ToDecimal(consumablesOrderItem.Qty) * consumablesOrderItem.PricePerItem, 2);
+                    consumablesOrderItem.TotalPriceWithVAT = Math.Round(LegacyNumeric.ToDecimal(consumablesOrderItem.Qty) * consumablesOrderItem.PricePerItem, 2);
 
                     consumablesOrderItem.TotalPrice = Math.Round(consumablesOrderItem.TotalPriceWithVAT - consumablesOrderItem.VAT, 2);
 
@@ -165,7 +165,7 @@ public sealed class ConsumablesStorageRepository : IConsumablesStorageRepository
                             consumablesOrderItem.ConsumableProduct = consumableProduct;
                             consumablesOrderItem.ConsumableProductOrganization = consumableProductOrganization;
                             consumablesOrderItem.PaymentCostMovementOperation = paymentCostMovementOperation;
-                            consumablesOrderItem.TotalPriceWithVAT = Math.Round(Convert.ToDecimal(consumablesOrderItem.Qty) * consumablesOrderItem.PricePerItem, 2);
+                            consumablesOrderItem.TotalPriceWithVAT = Math.Round(LegacyNumeric.ToDecimal(consumablesOrderItem.Qty) * consumablesOrderItem.PricePerItem, 2);
 
                             consumablesOrderItem.TotalPrice = Math.Round(consumablesOrderItem.TotalPriceWithVAT - consumablesOrderItem.VAT, 2);
 
@@ -193,7 +193,7 @@ public sealed class ConsumablesStorageRepository : IConsumablesStorageRepository
                         consumablesOrderItem.ConsumableProduct = consumableProduct;
                         consumablesOrderItem.ConsumableProductOrganization = consumableProductOrganization;
                         consumablesOrderItem.PaymentCostMovementOperation = paymentCostMovementOperation;
-                        consumablesOrderItem.TotalPriceWithVAT = Math.Round(Convert.ToDecimal(consumablesOrderItem.Qty) * consumablesOrderItem.PricePerItem, 2);
+                        consumablesOrderItem.TotalPriceWithVAT = Math.Round(LegacyNumeric.ToDecimal(consumablesOrderItem.Qty) * consumablesOrderItem.PricePerItem, 2);
 
                         consumablesOrderItem.TotalPrice = Math.Round(consumablesOrderItem.TotalPriceWithVAT - consumablesOrderItem.VAT, 2);
 
@@ -502,44 +502,44 @@ public sealed class ConsumablesStorageRepository : IConsumablesStorageRepository
                             if (productFromList.PriceTotals.Any(t => t.Currency.Id.Equals(currency.Id))) {
                                 PriceTotal total = productFromList.PriceTotals.First(t => t.Currency.Id.Equals(currency.Id));
 
-                                total.TotalPrice = Math.Round(total.TotalPrice + Convert.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2);
+                                total.TotalPrice = Math.Round(total.TotalPrice + LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2);
                             } else {
                                 productFromList.PriceTotals.Add(new PriceTotal {
                                     Currency = currency,
-                                    TotalPrice = Math.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2)
+                                    TotalPrice = Math.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2)
                                 });
                             }
 
                             if (fromList.PriceTotals.Any(t => t.Currency.Id.Equals(currency.Id))) {
                                 PriceTotal total = fromList.PriceTotals.First(t => t.Currency.Id.Equals(currency.Id));
 
-                                total.TotalPrice = Math.Round(total.TotalPrice + Convert.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2);
+                                total.TotalPrice = Math.Round(total.TotalPrice + LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2);
                             } else {
                                 fromList.PriceTotals.Add(new PriceTotal {
                                     Currency = currency,
-                                    TotalPrice = Math.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2)
+                                    TotalPrice = Math.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2)
                                 });
                             }
                         } else if (organizationCurrency != null) {
                             if (productFromList.PriceTotals.Any(t => t.Currency.Id.Equals(organizationCurrency.Id))) {
                                 PriceTotal total = productFromList.PriceTotals.First(t => t.Currency.Id.Equals(organizationCurrency.Id));
 
-                                total.TotalPrice = Math.Round(total.TotalPrice + Convert.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2);
+                                total.TotalPrice = Math.Round(total.TotalPrice + LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2);
                             } else {
                                 productFromList.PriceTotals.Add(new PriceTotal {
                                     Currency = organizationCurrency,
-                                    TotalPrice = Math.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2)
+                                    TotalPrice = Math.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2)
                                 });
                             }
 
                             if (fromList.PriceTotals.Any(t => t.Currency.Id.Equals(organizationCurrency.Id))) {
                                 PriceTotal total = fromList.PriceTotals.First(t => t.Currency.Id.Equals(organizationCurrency.Id));
 
-                                total.TotalPrice = Math.Round(total.TotalPrice + Convert.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2);
+                                total.TotalPrice = Math.Round(total.TotalPrice + LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2);
                             } else {
                                 fromList.PriceTotals.Add(new PriceTotal {
                                     Currency = organizationCurrency,
-                                    TotalPrice = Math.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2)
+                                    TotalPrice = Math.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.PricePerItem, 2)
                                 });
                             }
                         }

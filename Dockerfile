@@ -3,7 +3,8 @@ FROM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 WORKDIR /src
 
 # restore (cached separately from source for faster rebuilds)
-COPY global.json ./
+COPY global.json Directory.Build.targets ./
+COPY src/GBA.Analyzers/GBA.Analyzers.csproj src/GBA.Analyzers/
 COPY src/GBA.Common/GBA.Common.csproj      src/GBA.Common/
 COPY src/GBA.Data/GBA.Data.csproj          src/GBA.Data/
 COPY src/GBA.Domain/GBA.Domain.csproj      src/GBA.Domain/

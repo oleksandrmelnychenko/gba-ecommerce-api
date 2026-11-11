@@ -1,0 +1,20 @@
+<Project>
+  <ItemGroup Condition="'$(MSBuildProjectExtension)' == '.csproj' And '$(MSBuildProjectName)' != 'GBA.Analyzers' And '$(LegacyNumericGuard)' != 'false'">
+    <ProjectReference Include="$(MSBuildThisFileDirectory)src/GBA.Analyzers/GBA.Analyzers.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      PrivateAssets="all" />
+  </ItemGroup>
+
+  <Target Name="IncludeLegacyDapperDecimalHandler"
+          DependsOnTargets="ResolveAssemblyReferences"
+          BeforeTargets="BeforeCompile"
+          Condition="'$(Language)' == 'C#'">
+    <ItemGroup>
+      <_LegacyDapperReference Include="@(ReferencePath)" Condition="'%(Filename)' == 'Dapper'" />
+      <Compile Include="$(MSBuildThisFileDirectory)src/SharedSource/LegacyDapperDecimalHandler.cs"
+               Link="SharedSource/LegacyDapperDecimalHandler.cs"
+               Condition="'@(_LegacyDapperReference)' != ''" />
+    </ItemGroup>
+  </Target>
+</Project>

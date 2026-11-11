@@ -32,7 +32,7 @@ public static class ChangeTracker {
                     property.SetValue(
                         oldEntity,
                         decimal.Round(
-                            Convert.ToDecimal(Convert.ToDecimal(property.GetValue(oldEntity)).ToString("G29")),
+                            Convert.ToDecimal(LegacyNumeric.ToDecimal(property.GetValue(oldEntity)).ToString("G29")),
                             4,
                             MidpointRounding.AwayFromZero
                         )
@@ -41,7 +41,7 @@ public static class ChangeTracker {
                     property.SetValue(
                         newEntity,
                         decimal.Round(
-                            Convert.ToDecimal(Convert.ToDecimal(property.GetValue(newEntity)).ToString("G29")),
+                            Convert.ToDecimal(LegacyNumeric.ToDecimal(property.GetValue(newEntity)).ToString("G29")),
                             4,
                             MidpointRounding.AwayFromZero
                         )

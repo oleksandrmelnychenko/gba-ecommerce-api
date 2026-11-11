@@ -186,26 +186,26 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                         item.UpdatedBy = updatedBy;
                         item.Responsible = responsible;
 
-                        taxFreeItem.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        taxFree.TotalNetWeight = Math.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        taxFree.TotalNetWeight = LegacyNumeric.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
-                        item.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        item.NetWeight = Math.Round(item.NetWeight, 2);
+                        item.NetWeight = LegacyNumeric.Round(item.NetWeight, 2);
 
                         decimal exchangeRate = GetPlnExchangeRate(taxFree.DateOfPrint?.AddDays(-1) ?? taxFree.Created.AddDays(-1));
 
                         item.TotalAmount =
                             decimal.Round(
-                                item.UnitPrice * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
                         item.TotalAmountLocal =
                             decimal.Round(
-                                item.UnitPrice * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -252,9 +252,9 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                     }
 
                     if (orderItem != null) {
-                        taxFreeItem.TotalNetWeight = Math.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
 
-                        taxFree.TotalNetWeight = Math.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        taxFree.TotalNetWeight = LegacyNumeric.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
                         decimal exchangeRate = orderItem.ExchangeRateAmount.Equals(decimal.Zero)
                             ? 1m //GetPlnExchangeRate(taxFree.DateOfPrint?.AddDays(-1) ?? taxFree.Created.AddDays(-1))
@@ -262,12 +262,12 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
 
                         orderItem.TotalAmountLocal =
                             decimal.Round(
-                                orderItem.PricePerItem * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                orderItem.PricePerItem * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
-                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                         taxFreeItem.UnitPriceWithVat =
                             decimal.Round(
@@ -345,26 +345,26 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                         item.UpdatedBy = updatedBy;
                         item.Responsible = responsible;
 
-                        taxFreeItem.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        toReturn.TotalNetWeight = Math.Round(toReturn.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        toReturn.TotalNetWeight = LegacyNumeric.Round(toReturn.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
-                        item.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        item.NetWeight = Math.Round(item.NetWeight, 2);
+                        item.NetWeight = LegacyNumeric.Round(item.NetWeight, 2);
 
                         decimal exchangeRate = GetPlnExchangeRate(toReturn.DateOfPrint?.AddDays(-1) ?? toReturn.Created.AddDays(-1));
 
                         item.TotalAmount =
                             decimal.Round(
-                                item.UnitPrice * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
                         item.TotalAmountLocal =
                             decimal.Round(
-                                item.UnitPrice * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -411,9 +411,9 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                     }
 
                     if (orderItem != null) {
-                        taxFreeItem.TotalNetWeight = Math.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
 
-                        toReturn.TotalNetWeight = Math.Round(toReturn.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        toReturn.TotalNetWeight = LegacyNumeric.Round(toReturn.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
                         decimal exchangeRate = orderItem.ExchangeRateAmount.Equals(decimal.Zero)
                             ? 1m //GetPlnExchangeRate(taxFree.DateOfPrint?.AddDays(-1) ?? taxFree.Created.AddDays(-1))
@@ -421,12 +421,12 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
 
                         orderItem.TotalAmountLocal =
                             decimal.Round(
-                                orderItem.PricePerItem * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                orderItem.PricePerItem * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
-                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                         taxFreeItem.UnitPriceWithVat =
                             decimal.Round(
@@ -610,26 +610,26 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                         item.UpdatedBy = updatedBy;
                         item.Responsible = responsible;
 
-                        taxFreeItem.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        taxFree.TotalNetWeight = Math.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        taxFree.TotalNetWeight = LegacyNumeric.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
-                        item.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        item.NetWeight = Math.Round(item.NetWeight, 2);
+                        item.NetWeight = LegacyNumeric.Round(item.NetWeight, 2);
 
                         decimal exchangeRate = GetPlnExchangeRate(taxFree.DateOfPrint?.AddDays(-1) ?? taxFree.Created.AddDays(-1));
 
                         item.TotalAmount =
                             decimal.Round(
-                                item.UnitPrice * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
                         item.TotalAmountLocal =
                             decimal.Round(
-                                item.UnitPrice * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -676,9 +676,9 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                     }
 
                     if (orderItem != null) {
-                        taxFreeItem.TotalNetWeight = Math.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
 
-                        taxFree.TotalNetWeight = Math.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        taxFree.TotalNetWeight = LegacyNumeric.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
                         decimal exchangeRate = orderItem.ExchangeRateAmount.Equals(decimal.Zero)
                             ? 1m //GetPlnExchangeRate(taxFree.DateOfPrint?.AddDays(-1) ?? taxFree.Created.AddDays(-1))
@@ -686,12 +686,12 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
 
                         orderItem.TotalAmountLocal =
                             decimal.Round(
-                                orderItem.PricePerItem * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                orderItem.PricePerItem * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
-                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                         taxFreeItem.UnitPriceWithVat =
                             decimal.Round(
@@ -769,26 +769,26 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                         item.UpdatedBy = updatedBy;
                         item.Responsible = responsible;
 
-                        taxFreeItem.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        toReturn.TotalNetWeight = Math.Round(toReturn.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        toReturn.TotalNetWeight = LegacyNumeric.Round(toReturn.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
-                        item.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        item.NetWeight = Math.Round(item.NetWeight, 2);
+                        item.NetWeight = LegacyNumeric.Round(item.NetWeight, 2);
 
                         decimal exchangeRate = GetPlnExchangeRate(toReturn.DateOfPrint?.AddDays(-1) ?? toReturn.Created.AddDays(-1));
 
                         item.TotalAmount =
                             decimal.Round(
-                                item.UnitPrice * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
                         item.TotalAmountLocal =
                             decimal.Round(
-                                item.UnitPrice * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -835,9 +835,9 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                     }
 
                     if (orderItem != null) {
-                        taxFreeItem.TotalNetWeight = Math.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
 
-                        toReturn.TotalNetWeight = Math.Round(toReturn.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        toReturn.TotalNetWeight = LegacyNumeric.Round(toReturn.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
                         decimal exchangeRate = orderItem.ExchangeRateAmount.Equals(decimal.Zero)
                             ? 1m //GetPlnExchangeRate(taxFree.DateOfPrint?.AddDays(-1) ?? taxFree.Created.AddDays(-1))
@@ -845,12 +845,12 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
 
                         orderItem.TotalAmountLocal =
                             decimal.Round(
-                                orderItem.PricePerItem * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                orderItem.PricePerItem * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
-                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                         taxFreeItem.UnitPriceWithVat =
                             decimal.Round(
@@ -1034,26 +1034,26 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                         item.UpdatedBy = updatedBy;
                         item.Responsible = responsible;
 
-                        taxFreeItem.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        taxFree.TotalNetWeight = Math.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        taxFree.TotalNetWeight = LegacyNumeric.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
-                        item.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        item.NetWeight = Math.Round(item.NetWeight, 2);
+                        item.NetWeight = LegacyNumeric.Round(item.NetWeight, 2);
 
                         decimal exchangeRate = GetPlnExchangeRate(taxFree.DateOfPrint?.AddDays(-1) ?? taxFree.Created.AddDays(-1));
 
                         item.TotalAmount =
                             decimal.Round(
-                                item.UnitPrice * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
                         item.TotalAmountLocal =
                             decimal.Round(
-                                item.UnitPrice * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -1100,9 +1100,9 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                     }
 
                     if (orderItem != null) {
-                        taxFreeItem.TotalNetWeight = Math.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
 
-                        taxFree.TotalNetWeight = Math.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        taxFree.TotalNetWeight = LegacyNumeric.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
                         decimal exchangeRate = orderItem.ExchangeRateAmount.Equals(decimal.Zero)
                             ? 1m //GetPlnExchangeRate(taxFree.DateOfPrint?.AddDays(-1) ?? taxFree.Created.AddDays(-1))
@@ -1110,12 +1110,12 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
 
                         orderItem.TotalAmountLocal =
                             decimal.Round(
-                                orderItem.PricePerItem * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                orderItem.PricePerItem * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
-                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                         taxFreeItem.UnitPriceWithVat =
                             decimal.Round(
@@ -1195,26 +1195,26 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                         item.UpdatedBy = updatedBy;
                         item.Responsible = responsible;
 
-                        taxFreeItem.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        fromList.TotalNetWeight = Math.Round(fromList.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        fromList.TotalNetWeight = LegacyNumeric.Round(fromList.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
-                        item.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        item.NetWeight = Math.Round(item.NetWeight, 2);
+                        item.NetWeight = LegacyNumeric.Round(item.NetWeight, 2);
 
                         decimal exchangeRate = GetPlnExchangeRate(fromList.DateOfPrint?.AddDays(-1) ?? fromList.Created.AddDays(-1));
 
                         item.TotalAmount =
                             decimal.Round(
-                                item.UnitPrice * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
                         item.TotalAmountLocal =
                             decimal.Round(
-                                item.UnitPrice * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -1261,9 +1261,9 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                     }
 
                     if (orderItem != null) {
-                        taxFreeItem.TotalNetWeight = Math.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
 
-                        fromList.TotalNetWeight = Math.Round(fromList.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        fromList.TotalNetWeight = LegacyNumeric.Round(fromList.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
                         decimal exchangeRate = orderItem.ExchangeRateAmount.Equals(decimal.Zero)
                             ? 1m //GetPlnExchangeRate(taxFree.DateOfPrint?.AddDays(-1) ?? taxFree.Created.AddDays(-1))
@@ -1271,12 +1271,12 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
 
                         orderItem.TotalAmountLocal =
                             decimal.Round(
-                                orderItem.PricePerItem * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                orderItem.PricePerItem * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
-                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                         taxFreeItem.UnitPriceWithVat =
                             decimal.Round(
@@ -1488,9 +1488,9 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
             if (taxFreeItem == null || toReturn.TaxFreeItems.Any(i => i.Id.Equals(taxFreeItem.Id)))
                 return taxFree;
 
-            taxFreeItem.TotalNetWeight = Math.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
+            taxFreeItem.TotalNetWeight = LegacyNumeric.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
 
-            toReturn.TotalNetWeight = Math.Round(toReturn.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+            toReturn.TotalNetWeight = LegacyNumeric.Round(toReturn.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
             decimal exchangeRate = orderItem.ExchangeRateAmount.Equals(decimal.Zero)
                 ? 1m
@@ -1498,13 +1498,13 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
 
             orderItem.TotalAmountLocal =
                 decimal.Round(
-                    orderItem.PricePerItem * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                    orderItem.PricePerItem * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                     4,
                     MidpointRounding.AwayFromZero
                 );
 
             orderItem.TotalAmount =
-                decimal.Round(orderItem.PricePerItemWithoutVat * Convert.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(orderItem.PricePerItemWithoutVat * LegacyNumeric.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
             taxFreeItem.UnitPriceWithVat = orderItem.PricePerItem;
 
@@ -1512,7 +1512,7 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
 
             taxFreeItem.TotalWithVat =
                 decimal.Round(
-                    orderItem.PricePerItem * Convert.ToDecimal(taxFreeItem.Qty),
+                    orderItem.PricePerItem * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                     2,
                     MidpointRounding.AwayFromZero
                 );
@@ -1534,7 +1534,7 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                 decimal.Round(orderItem.TotalAmountLocal - taxFreeItem.VatAmountPl, 4, MidpointRounding.AwayFromZero);
 
             taxFreeItem.UnitPricePL =
-                decimal.Round(taxFreeItem.TotalWithoutVatPl / Convert.ToDecimal(taxFreeItem.Qty), 4, MidpointRounding.AwayFromZero);
+                decimal.Round(taxFreeItem.TotalWithoutVatPl / LegacyNumeric.ToDecimal(taxFreeItem.Qty), 4, MidpointRounding.AwayFromZero);
 
             taxFreeItem.TotalWithVatPl += orderItem.TotalAmountLocal;
 
@@ -1659,13 +1659,13 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                     item.UpdatedBy = updatedBy;
                     item.Responsible = responsible;
 
-                    taxFreeItem.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 3);
+                    taxFreeItem.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 3);
 
-                    taxFree.TotalNetWeight = Math.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 3);
+                    taxFree.TotalNetWeight = LegacyNumeric.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 3);
 
-                    item.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 3);
+                    item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 3);
 
-                    item.NetWeight = Math.Round(item.NetWeight, 3);
+                    item.NetWeight = LegacyNumeric.Round(item.NetWeight, 3);
 
                     decimal exchangeRate = GetPlnExchangeRate(taxFree.DateOfPrint?.AddDays(-1) ?? taxFree.Created.AddDays(-1));
 
@@ -1678,20 +1678,20 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
 
                     item.TotalAmount =
                         decimal.Round(
-                            item.UnitPrice * Convert.ToDecimal(taxFreeItem.Qty),
+                            item.UnitPrice * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
 
                     item.TotalAmountLocal =
                         decimal.Round(
-                            decimal.Round(item.UnitPrice * exchangeRate, 2, MidpointRounding.AwayFromZero) * Convert.ToDecimal(taxFreeItem.Qty),
+                            decimal.Round(item.UnitPrice * exchangeRate, 2, MidpointRounding.AwayFromZero) * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
 
                     taxFreeItem.UnitPricePL = decimal.Round(item.UnitPrice * exchangeRate, 2, MidpointRounding.AwayFromZero);
-                    taxFreeItem.TotalWithoutVatPl = decimal.Round(taxFreeItem.UnitPricePL * Convert.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                    taxFreeItem.TotalWithoutVatPl = decimal.Round(taxFreeItem.UnitPricePL * LegacyNumeric.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                     taxFreeItem.UnitPriceWithVat =
                         decimal.Round(
@@ -1760,13 +1760,13 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                     item.UpdatedBy = updatedBy;
                     item.Responsible = responsible;
 
-                    taxFreeItem.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 3);
+                    taxFreeItem.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 3);
 
-                    toReturn.TotalNetWeight = Math.Round(toReturn.TotalNetWeight + taxFreeItem.TotalNetWeight, 3);
+                    toReturn.TotalNetWeight = LegacyNumeric.Round(toReturn.TotalNetWeight + taxFreeItem.TotalNetWeight, 3);
 
-                    item.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 3);
+                    item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 3);
 
-                    item.NetWeight = Math.Round(item.NetWeight, 3);
+                    item.NetWeight = LegacyNumeric.Round(item.NetWeight, 3);
 
                     item.UnitPrice =
                         decimal.Round(
@@ -1779,20 +1779,20 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
 
                     item.TotalAmount =
                         decimal.Round(
-                            item.UnitPrice * Convert.ToDecimal(taxFreeItem.Qty),
+                            item.UnitPrice * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
 
                     item.TotalAmountLocal =
                         decimal.Round(
-                            decimal.Round(item.UnitPrice * exchangeRate, 2, MidpointRounding.AwayFromZero) * Convert.ToDecimal(taxFreeItem.Qty),
+                            decimal.Round(item.UnitPrice * exchangeRate, 2, MidpointRounding.AwayFromZero) * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                             2,
                             MidpointRounding.AwayFromZero
                         );
 
                     taxFreeItem.UnitPricePL = decimal.Round(item.UnitPrice * exchangeRate, 2, MidpointRounding.AwayFromZero);
-                    taxFreeItem.TotalWithoutVatPl = decimal.Round(taxFreeItem.UnitPricePL * Convert.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                    taxFreeItem.TotalWithoutVatPl = decimal.Round(taxFreeItem.UnitPricePL * LegacyNumeric.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                     taxFreeItem.UnitPriceWithVat =
                         decimal.Round(
@@ -2064,26 +2064,26 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                         item.UpdatedBy = updatedBy;
                         item.Responsible = responsible;
 
-                        taxFreeItem.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        taxFree.TotalNetWeight = Math.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        taxFree.TotalNetWeight = LegacyNumeric.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
-                        item.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        item.NetWeight = Math.Round(item.NetWeight, 2);
+                        item.NetWeight = LegacyNumeric.Round(item.NetWeight, 2);
 
                         decimal exchangeRate = GetPlnExchangeRate(taxFree.DateOfPrint?.AddDays(-1) ?? taxFree.Created.AddDays(-1));
 
                         item.TotalAmount =
                             decimal.Round(
-                                item.UnitPrice * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
                         item.TotalAmountLocal =
                             decimal.Round(
-                                item.UnitPrice * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -2130,9 +2130,9 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                     }
 
                     if (orderItem != null) {
-                        taxFreeItem.TotalNetWeight = Math.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
 
-                        taxFree.TotalNetWeight = Math.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        taxFree.TotalNetWeight = LegacyNumeric.Round(taxFree.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
                         decimal exchangeRate = orderItem.ExchangeRateAmount.Equals(decimal.Zero)
                             ? GetPlnExchangeRate(taxFree.DateOfPrint?.AddDays(-1) ?? taxFree.Created.AddDays(-1))
@@ -2140,12 +2140,12 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
 
                         orderItem.TotalAmountLocal =
                             decimal.Round(
-                                orderItem.PricePerItem * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                orderItem.PricePerItem * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
-                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                         taxFreeItem.UnitPriceWithVat =
                             decimal.Round(
@@ -2233,26 +2233,26 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                         item.UpdatedBy = updatedBy;
                         item.Responsible = responsible;
 
-                        taxFreeItem.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        fromList.TotalNetWeight = Math.Round(fromList.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        fromList.TotalNetWeight = LegacyNumeric.Round(fromList.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
-                        item.TotalNetWeight = Math.Round(item.NetWeight * taxFreeItem.Qty, 2);
+                        item.TotalNetWeight = LegacyNumeric.Round(item.NetWeight * taxFreeItem.Qty, 2);
 
-                        item.NetWeight = Math.Round(item.NetWeight, 2);
+                        item.NetWeight = LegacyNumeric.Round(item.NetWeight, 2);
 
                         decimal exchangeRate = GetPlnExchangeRate(fromList.DateOfPrint?.AddDays(-1) ?? fromList.Created.AddDays(-1));
 
                         item.TotalAmount =
                             decimal.Round(
-                                item.UnitPrice * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
                         item.TotalAmountLocal =
                             decimal.Round(
-                                item.UnitPrice * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                item.UnitPrice * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
@@ -2299,9 +2299,9 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
                     }
 
                     if (orderItem != null) {
-                        taxFreeItem.TotalNetWeight = Math.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
+                        taxFreeItem.TotalNetWeight = LegacyNumeric.Round(taxFreePackListOrderItem.NetWeight * taxFreeItem.Qty, 2);
 
-                        fromList.TotalNetWeight = Math.Round(fromList.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
+                        fromList.TotalNetWeight = LegacyNumeric.Round(fromList.TotalNetWeight + taxFreeItem.TotalNetWeight, 2);
 
                         decimal exchangeRate = orderItem.ExchangeRateAmount.Equals(decimal.Zero)
                             ? GetPlnExchangeRate(fromList.DateOfPrint?.AddDays(-1) ?? fromList.Created.AddDays(-1))
@@ -2309,12 +2309,12 @@ public sealed class TaxFreeRepository : ITaxFreeRepository {
 
                         orderItem.TotalAmountLocal =
                             decimal.Round(
-                                orderItem.PricePerItem * exchangeRate * Convert.ToDecimal(taxFreeItem.Qty),
+                                orderItem.PricePerItem * exchangeRate * LegacyNumeric.ToDecimal(taxFreeItem.Qty),
                                 2,
                                 MidpointRounding.AwayFromZero
                             );
 
-                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        orderItem.TotalAmount = decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(taxFreeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                         taxFreeItem.UnitPriceWithVat =
                             decimal.Round(

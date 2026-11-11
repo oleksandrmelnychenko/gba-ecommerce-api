@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/GBA.Analyzers/GBA.Analyzers.csproj" />
     <Project Path="src/GBA.Common/GBA.Common.csproj" />
     <Project Path="src/GBA.Data/GBA.Data.csproj" />
     <Project Path="src/GBA.Domain/GBA.Domain.csproj" />

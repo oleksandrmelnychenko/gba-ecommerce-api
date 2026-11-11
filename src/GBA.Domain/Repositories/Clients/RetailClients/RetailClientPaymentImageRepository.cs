@@ -124,8 +124,8 @@ public sealed class RetailClientPaymentImageRepository : IRetailClientPaymentIma
                 if (orderItemIds.Contains((retailClientPaymentImage.Id, orderItem.Id))) return retailClientPaymentImage;
 
                 orderItem.Product = product;
-                orderItem.TotalAmount = decimal.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
-                orderItem.TotalAmountLocal = decimal.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
+                orderItem.TotalAmount = decimal.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
+                orderItem.TotalAmountLocal = decimal.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
 
                 retailClientPaymentImage.Sale.Order.TotalAmount += orderItem.TotalAmount;
                 retailClientPaymentImage.Sale.Order.TotalAmountLocal += orderItem.TotalAmountLocal;
@@ -134,8 +134,8 @@ public sealed class RetailClientPaymentImageRepository : IRetailClientPaymentIma
                 orderItemIds.Add((retailClientPaymentImage.Id, orderItem.Id));
             } else {
                 orderItem.Product = product;
-                orderItem.TotalAmount = decimal.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
-                orderItem.TotalAmountLocal = decimal.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
+                orderItem.TotalAmount = decimal.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
+                orderItem.TotalAmountLocal = decimal.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
 
                 order.OrderItems.Add(orderItem);
                 order.TotalAmount = orderItem.TotalAmount;
@@ -341,8 +341,8 @@ public sealed class RetailClientPaymentImageRepository : IRetailClientPaymentIma
                 if (orderItemIds.Contains((retailClientPaymentImage.Id, orderItem.Id))) return retailClientPaymentImage;
 
                 orderItem.Product = product;
-                orderItem.TotalAmount = decimal.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
-                orderItem.TotalAmountLocal = decimal.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
+                orderItem.TotalAmount = decimal.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
+                orderItem.TotalAmountLocal = decimal.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
 
                 retailClientPaymentImage.Sale.Order.TotalAmount += orderItem.TotalAmount;
                 retailClientPaymentImage.Sale.Order.TotalAmountLocal += orderItem.TotalAmountLocal;
@@ -351,8 +351,8 @@ public sealed class RetailClientPaymentImageRepository : IRetailClientPaymentIma
                 orderItemIds.Add((retailClientPaymentImage.Id, orderItem.Id));
             } else {
                 orderItem.Product = product;
-                orderItem.TotalAmount = decimal.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
-                orderItem.TotalAmountLocal = decimal.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
+                orderItem.TotalAmount = decimal.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
+                orderItem.TotalAmountLocal = decimal.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
 
                 order.OrderItems.Add(orderItem);
                 order.TotalAmount = orderItem.TotalAmount;
@@ -548,11 +548,11 @@ public sealed class RetailClientPaymentImageRepository : IRetailClientPaymentIma
 
                 if (toReturn.Sale.Order.OrderItems.Any(o => o.Id.Equals(orderItem.Id))) return retailClientPaymentImage;
 
-                decimal vatRateValue = Convert.ToDecimal(vatRate?.Value ?? 0) / 100;
+                decimal vatRateValue = LegacyNumeric.ToDecimal(vatRate?.Value ?? 0) / 100;
 
                 orderItem.Product = product;
-                orderItem.TotalAmount = decimal.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
-                orderItem.TotalAmountLocal = decimal.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
+                orderItem.TotalAmount = decimal.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
+                orderItem.TotalAmountLocal = decimal.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
 
                 if (toReturn.Sale.IsVatSale)
                     orderItem.TotalVat =
@@ -566,11 +566,11 @@ public sealed class RetailClientPaymentImageRepository : IRetailClientPaymentIma
 
                 toReturn.Sale.Order.OrderItems.Add(orderItem);
             } else {
-                decimal vatRateValue = Convert.ToDecimal(vatRate?.Value ?? 0) / 100;
+                decimal vatRateValue = LegacyNumeric.ToDecimal(vatRate?.Value ?? 0) / 100;
 
                 orderItem.Product = product;
-                orderItem.TotalAmount = decimal.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
-                orderItem.TotalAmountLocal = decimal.Round(Convert.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
+                orderItem.TotalAmount = decimal.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
+                orderItem.TotalAmountLocal = decimal.Round(LegacyNumeric.ToDecimal(orderItem.Qty) * orderItem.Product.CurrentLocalPrice, 2, MidpointRounding.AwayFromZero);
 
                 if (sale.IsVatSale)
                     orderItem.TotalVat =

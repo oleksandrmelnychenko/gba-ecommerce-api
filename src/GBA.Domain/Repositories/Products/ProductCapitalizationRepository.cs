@@ -147,7 +147,7 @@ public sealed class ProductCapitalizationRepository : IProductCapitalizationRepo
                 productCapitalizationItem.Product = product;
 
                 productCapitalizationItem.TotalAmount =
-                    decimal.Round(Convert.ToDecimal(productCapitalizationItem.Qty) * productCapitalizationItem.UnitPrice, 2, MidpointRounding.AwayFromZero);
+                    decimal.Round(LegacyNumeric.ToDecimal(productCapitalizationItem.Qty) * productCapitalizationItem.UnitPrice, 2, MidpointRounding.AwayFromZero);
 
                 toReturn.ProductCapitalizationItems.Add(productCapitalizationItem);
 
@@ -164,7 +164,7 @@ public sealed class ProductCapitalizationRepository : IProductCapitalizationRepo
                     productCapitalizationItem.Product = product;
 
                     productCapitalizationItem.TotalAmount =
-                        decimal.Round(Convert.ToDecimal(productCapitalizationItem.Qty) * productCapitalizationItem.UnitPrice, 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(LegacyNumeric.ToDecimal(productCapitalizationItem.Qty) * productCapitalizationItem.UnitPrice, 2, MidpointRounding.AwayFromZero);
 
                     productCapitalization.ProductCapitalizationItems.Add(productCapitalizationItem);
 
@@ -242,7 +242,7 @@ public sealed class ProductCapitalizationRepository : IProductCapitalizationRepo
                 productCapitalizationItem.Product = product;
 
                 productCapitalizationItem.TotalAmount =
-                    decimal.Round(Convert.ToDecimal(productCapitalizationItem.Qty) * productCapitalizationItem.UnitPrice, 2, MidpointRounding.AwayFromZero);
+                    decimal.Round(LegacyNumeric.ToDecimal(productCapitalizationItem.Qty) * productCapitalizationItem.UnitPrice, 2, MidpointRounding.AwayFromZero);
 
                 fromList.ProductCapitalizationItems.Add(productCapitalizationItem);
 
@@ -259,7 +259,7 @@ public sealed class ProductCapitalizationRepository : IProductCapitalizationRepo
                     productCapitalizationItem.Product = product;
 
                     productCapitalizationItem.TotalAmount =
-                        decimal.Round(Convert.ToDecimal(productCapitalizationItem.Qty) * productCapitalizationItem.UnitPrice, 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(LegacyNumeric.ToDecimal(productCapitalizationItem.Qty) * productCapitalizationItem.UnitPrice, 2, MidpointRounding.AwayFromZero);
 
                     productCapitalization.ProductCapitalizationItems.Add(productCapitalizationItem);
 
@@ -364,7 +364,7 @@ public sealed class ProductCapitalizationRepository : IProductCapitalizationRepo
                 productCapitalizationItem.Product = product;
 
                 productCapitalizationItem.TotalAmount =
-                    decimal.Round(Convert.ToDecimal(productCapitalizationItem.Qty) * productCapitalizationItem.UnitPrice, 2, MidpointRounding.AwayFromZero);
+                    decimal.Round(LegacyNumeric.ToDecimal(productCapitalizationItem.Qty) * productCapitalizationItem.UnitPrice, 2, MidpointRounding.AwayFromZero);
 
                 fromList.ProductCapitalizationItems.Add(productCapitalizationItem);
 
@@ -386,7 +386,7 @@ public sealed class ProductCapitalizationRepository : IProductCapitalizationRepo
                     productCapitalizationItem.Product = product;
 
                     productCapitalizationItem.TotalAmount =
-                        decimal.Round(Convert.ToDecimal(productCapitalizationItem.Qty) * productCapitalizationItem.UnitPrice, 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(LegacyNumeric.ToDecimal(productCapitalizationItem.Qty) * productCapitalizationItem.UnitPrice, 2, MidpointRounding.AwayFromZero);
 
                     productCapitalization.ProductCapitalizationItems.Add(productCapitalizationItem);
 

@@ -20,14 +20,14 @@ public static class EcommerceLinePricing {
     }
 
     public static decimal Line(decimal price, double qty) {
-        return Amount(Unit(price) * Convert.ToDecimal(qty));
+        return Amount(Unit(price) * LegacyNumeric.ToDecimal(qty));
     }
 
     public static decimal LineLocal(decimal price, decimal exchangeRate, double qty) {
-        return Amount(Unit(price) * exchangeRate * Convert.ToDecimal(qty));
+        return Amount(Unit(price) * exchangeRate * LegacyNumeric.ToDecimal(qty));
     }
 
     public static decimal UnroundedLine(decimal unitPrice, double qty) {
-        return unitPrice * Convert.ToDecimal(qty);
+        return unitPrice * LegacyNumeric.ToDecimal(qty);
     }
 }

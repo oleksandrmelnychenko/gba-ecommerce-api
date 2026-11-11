@@ -143,12 +143,12 @@ public static class XlsManagementExtensions {
         bool fitToPage,
         int? scale = null,
         eOrientation? orientation = null) {
-        worksheet.PrinterSettings.TopMargin = (double)topMargin;
-        worksheet.PrinterSettings.BottomMargin = (double)bottomMargin;
-        worksheet.PrinterSettings.RightMargin = (double)rightMargin;
-        worksheet.PrinterSettings.LeftMargin = (double)leftMargin;
-        worksheet.PrinterSettings.HeaderMargin = (double)headerMargin;
-        worksheet.PrinterSettings.FooterMargin = (double)footerMargin;
+        worksheet.PrinterSettings.TopMargin = LegacyNumeric.ToDouble(topMargin);
+        worksheet.PrinterSettings.BottomMargin = LegacyNumeric.ToDouble(bottomMargin);
+        worksheet.PrinterSettings.RightMargin = LegacyNumeric.ToDouble(rightMargin);
+        worksheet.PrinterSettings.LeftMargin = LegacyNumeric.ToDouble(leftMargin);
+        worksheet.PrinterSettings.HeaderMargin = LegacyNumeric.ToDouble(headerMargin);
+        worksheet.PrinterSettings.FooterMargin = LegacyNumeric.ToDouble(footerMargin);
         worksheet.PrinterSettings.FitToPage = fitToPage;
 
         if (scale.HasValue) worksheet.PrinterSettings.Scale = scale.Value;

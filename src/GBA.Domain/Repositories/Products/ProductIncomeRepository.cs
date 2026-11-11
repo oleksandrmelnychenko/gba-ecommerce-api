@@ -193,7 +193,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                     decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                 orderItem.TotalAmount =
-                    decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                    decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                 orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                 orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -379,9 +379,9 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             productCapitalizationItem.ProductCapitalization = productCapitalization;
 
             productCapitalizationItem.TotalAmount =
-                decimal.Round(productCapitalizationItem.UnitPrice * Convert.ToDecimal(productCapitalizationItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(productCapitalizationItem.UnitPrice * LegacyNumeric.ToDecimal(productCapitalizationItem.Qty), 2, MidpointRounding.AwayFromZero);
 
-            productCapitalizationItem.TotalNetWeight = Math.Round(productCapitalizationItem.Qty * productCapitalizationItem.Weight, 3, MidpointRounding.AwayFromZero);
+            productCapitalizationItem.TotalNetWeight = LegacyNumeric.Round(productCapitalizationItem.Qty * productCapitalizationItem.Weight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.ProductCapitalizationItem = productCapitalizationItem;
 
@@ -391,7 +391,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                 decimal.Round(toReturn.TotalNetPrice + productCapitalizationItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
 
             toReturn.TotalNetWeight =
-                Math.Round(
+                LegacyNumeric.Round(
                     toReturn.TotalNetWeight + productCapitalizationItem.TotalNetWeight,
                     3,
                     MidpointRounding.AwayFromZero
@@ -866,12 +866,12 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             packingListPackageOrderItem.PackingListPackage = package;
             packingListPackageOrderItem.SupplyInvoiceOrderItem = supplyInvoiceOrderItem;
 
-            packingListPackageOrderItem.TotalNetWeight = Math.Round(packingListPackageOrderItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.TotalNetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-            packingListPackageOrderItem.NetWeight = Math.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.NetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
 
             packingListPackageOrderItem.TotalNetPrice =
-                decimal.Round(packingListPackageOrderItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(packingListPackageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
             income.TotalNetPrice =
                 decimal.Round(income.TotalNetPrice + packingListPackageOrderItem.TotalNetPrice, 2, MidpointRounding.AwayFromZero);
@@ -879,7 +879,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             income.TotalQty += productIncomeItem.Qty;
 
             income.TotalNetWeight =
-                Math.Round(income.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(income.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.PackingListPackageOrderItem = packingListPackageOrderItem;
 
@@ -1053,12 +1053,12 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             packingListPackageOrderItem.PackingListPackage = package;
             packingListPackageOrderItem.SupplyInvoiceOrderItem = supplyInvoiceOrderItem;
 
-            packingListPackageOrderItem.TotalNetWeight = Math.Round(packingListPackageOrderItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.TotalNetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-            packingListPackageOrderItem.NetWeight = Math.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.NetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
 
             packingListPackageOrderItem.TotalNetPrice =
-                decimal.Round(packingListPackageOrderItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(packingListPackageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
             income.TotalNetPrice =
                 decimal.Round(income.TotalNetPrice + packingListPackageOrderItem.TotalNetPrice, 2, MidpointRounding.AwayFromZero);
@@ -1066,7 +1066,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             income.TotalQty += productIncomeItem.Qty;
 
             income.TotalNetWeight =
-                Math.Round(income.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(income.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.PackingListPackageOrderItem = packingListPackageOrderItem;
 
@@ -1232,7 +1232,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                 decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
             orderItem.TotalAmount =
-                decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
             orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
             orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -1368,12 +1368,12 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             packingListPackageOrderItem.PackingListPackage = package;
             packingListPackageOrderItem.SupplyInvoiceOrderItem = supplyInvoiceOrderItem;
 
-            packingListPackageOrderItem.TotalNetWeight = Math.Round(packingListPackageOrderItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.TotalNetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-            packingListPackageOrderItem.NetWeight = Math.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.NetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
 
             packingListPackageOrderItem.TotalNetPrice =
-                decimal.Round(packingListPackageOrderItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(packingListPackageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
             income.TotalNetPrice =
                 decimal.Round(income.TotalNetPrice + packingListPackageOrderItem.TotalNetPrice, 2, MidpointRounding.AwayFromZero);
@@ -1381,7 +1381,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             income.TotalQty += productIncomeItem.Qty;
 
             income.TotalNetWeight =
-                Math.Round(income.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(income.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.PackingListPackageOrderItem = packingListPackageOrderItem;
 
@@ -1454,12 +1454,12 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             supplyOrderUkraineItem.Product = product;
             supplyOrderUkraineItem.SupplyOrderUkraine = supplyOrderUkraine;
 
-            supplyOrderUkraineItem.TotalNetWeight = Math.Round(supplyOrderUkraineItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
+            supplyOrderUkraineItem.TotalNetWeight = LegacyNumeric.Round(supplyOrderUkraineItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-            supplyOrderUkraineItem.NetWeight = Math.Round(supplyOrderUkraineItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+            supplyOrderUkraineItem.NetWeight = LegacyNumeric.Round(supplyOrderUkraineItem.NetWeight, 3, MidpointRounding.AwayFromZero);
 
             supplyOrderUkraineItem.NetPrice =
-                decimal.Round(supplyOrderUkraineItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(supplyOrderUkraineItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
             income.TotalNetPrice =
                 decimal.Round(income.TotalNetPrice + supplyOrderUkraineItem.NetPrice, 2, MidpointRounding.AwayFromZero);
@@ -1467,7 +1467,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             income.TotalQty += productIncomeItem.Qty;
 
             income.TotalNetWeight =
-                Math.Round(income.TotalNetWeight + supplyOrderUkraineItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(income.TotalNetWeight + supplyOrderUkraineItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.SupplyOrderUkraineItem = supplyOrderUkraineItem;
 
@@ -1649,9 +1649,9 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             productCapitalizationItem.ProductCapitalization = productCapitalization;
 
             productCapitalizationItem.TotalAmount =
-                decimal.Round(productCapitalizationItem.UnitPrice * Convert.ToDecimal(productCapitalizationItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(productCapitalizationItem.UnitPrice * LegacyNumeric.ToDecimal(productCapitalizationItem.Qty), 2, MidpointRounding.AwayFromZero);
 
-            productCapitalizationItem.TotalNetWeight = Math.Round(productCapitalizationItem.Qty * productCapitalizationItem.Weight, 3, MidpointRounding.AwayFromZero);
+            productCapitalizationItem.TotalNetWeight = LegacyNumeric.Round(productCapitalizationItem.Qty * productCapitalizationItem.Weight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.ProductCapitalizationItem = productCapitalizationItem;
 
@@ -1661,7 +1661,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                 decimal.Round(income.TotalNetPrice + productCapitalizationItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
 
             income.TotalNetWeight =
-                Math.Round(
+                LegacyNumeric.Round(
                     income.TotalNetWeight + productCapitalizationItem.TotalNetWeight,
                     3,
                     MidpointRounding.AwayFromZero
@@ -1829,7 +1829,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                 decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
             orderItem.TotalAmount =
-                decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
             orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
             orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -1983,12 +1983,12 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             packingListPackageOrderItem.PackingListPackage = package;
             packingListPackageOrderItem.SupplyInvoiceOrderItem = supplyInvoiceOrderItem;
 
-            packingListPackageOrderItem.TotalNetWeight = Math.Round(packingListPackageOrderItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.TotalNetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-            packingListPackageOrderItem.NetWeight = Math.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.NetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
 
             packingListPackageOrderItem.TotalNetPrice =
-                decimal.Round(packingListPackageOrderItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(packingListPackageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
             income.TotalNetPrice =
                 decimal.Round(income.TotalNetPrice + packingListPackageOrderItem.TotalNetPrice, 2, MidpointRounding.AwayFromZero);
@@ -1996,7 +1996,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             income.TotalQty += productIncomeItem.Qty;
 
             income.TotalNetWeight =
-                Math.Round(income.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(income.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.PackingListPackageOrderItem = packingListPackageOrderItem;
 
@@ -2092,12 +2092,12 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             supplyOrderUkraineItem.Product = product;
             supplyOrderUkraineItem.SupplyOrderUkraine = supplyOrderUkraine;
 
-            supplyOrderUkraineItem.TotalNetWeight = Math.Round(supplyOrderUkraineItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
+            supplyOrderUkraineItem.TotalNetWeight = LegacyNumeric.Round(supplyOrderUkraineItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-            supplyOrderUkraineItem.NetWeight = Math.Round(supplyOrderUkraineItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+            supplyOrderUkraineItem.NetWeight = LegacyNumeric.Round(supplyOrderUkraineItem.NetWeight, 3, MidpointRounding.AwayFromZero);
 
             supplyOrderUkraineItem.NetPrice =
-                decimal.Round(supplyOrderUkraineItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(supplyOrderUkraineItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
             income.TotalNetPrice =
                 decimal.Round(income.TotalNetPrice + supplyOrderUkraineItem.NetPrice, 2, MidpointRounding.AwayFromZero);
@@ -2105,7 +2105,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             income.TotalQty += productIncomeItem.Qty;
 
             income.TotalNetWeight =
-                Math.Round(income.TotalNetWeight + supplyOrderUkraineItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(income.TotalNetWeight + supplyOrderUkraineItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.SupplyOrderUkraineItem = supplyOrderUkraineItem;
 
@@ -2316,9 +2316,9 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             productCapitalizationItem.ProductCapitalization = productCapitalization;
 
             productCapitalizationItem.TotalAmount =
-                decimal.Round(productCapitalizationItem.UnitPrice * Convert.ToDecimal(productCapitalizationItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(productCapitalizationItem.UnitPrice * LegacyNumeric.ToDecimal(productCapitalizationItem.Qty), 2, MidpointRounding.AwayFromZero);
 
-            productCapitalizationItem.TotalNetWeight = Math.Round(productCapitalizationItem.Qty * productCapitalizationItem.Weight, 3, MidpointRounding.AwayFromZero);
+            productCapitalizationItem.TotalNetWeight = LegacyNumeric.Round(productCapitalizationItem.Qty * productCapitalizationItem.Weight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.ProductCapitalizationItem = productCapitalizationItem;
 
@@ -2328,7 +2328,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                 decimal.Round(income.TotalNetPrice + productCapitalizationItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
 
             income.TotalNetWeight =
-                Math.Round(
+                LegacyNumeric.Round(
                     income.TotalNetWeight + productCapitalizationItem.TotalNetWeight,
                     3,
                     MidpointRounding.AwayFromZero
@@ -2447,12 +2447,12 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                 supplyOrderUkraineItem.Product = product;
                 supplyOrderUkraineItem.SupplyOrderUkraine = supplyOrderUkraine;
 
-                supplyOrderUkraineItem.TotalNetWeight = Math.Round(supplyOrderUkraineItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
+                supplyOrderUkraineItem.TotalNetWeight = LegacyNumeric.Round(supplyOrderUkraineItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-                supplyOrderUkraineItem.NetWeight = Math.Round(supplyOrderUkraineItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+                supplyOrderUkraineItem.NetWeight = LegacyNumeric.Round(supplyOrderUkraineItem.NetWeight, 3, MidpointRounding.AwayFromZero);
 
                 supplyOrderUkraineItem.NetPrice =
-                    decimal.Round(supplyOrderUkraineItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                    decimal.Round(supplyOrderUkraineItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
                 income.TotalNetPrice =
                     decimal.Round(income.TotalNetPrice + supplyOrderUkraineItem.NetPrice, 2, MidpointRounding.AwayFromZero);
@@ -2460,7 +2460,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                 income.TotalQty += productIncomeItem.Qty;
 
                 income.TotalNetWeight =
-                    Math.Round(income.TotalNetWeight + supplyOrderUkraineItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                    LegacyNumeric.Round(income.TotalNetWeight + supplyOrderUkraineItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
                 productIncomeItem.SupplyOrderUkraineItem = supplyOrderUkraineItem;
 
@@ -2616,7 +2616,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                     decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                 orderItem.TotalAmount =
-                    decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                    decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                 orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                 orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -2664,7 +2664,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                         decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
                     orderItem.TotalAmount =
-                        decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                        decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
                     orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
                     orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -2944,7 +2944,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             Storage storage = (Storage)objects[19];
             VatRate vatRate = (VatRate)objects[20];
 
-            decimal vatRatePercent = Convert.ToDecimal(vatRate?.Value ?? 0) / 100;
+            decimal vatRatePercent = LegacyNumeric.ToDecimal(vatRate?.Value ?? 0) / 100;
 
             ProductIncome income = incomes.First(i => i.Id.Equals(productIncomeItem.ProductIncomeId));
 
@@ -2981,7 +2981,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                 decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
             orderItem.TotalAmount =
-                decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
             orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
             orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -3146,12 +3146,12 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             packingListPackageOrderItem.PackingListPackage = package;
             packingListPackageOrderItem.SupplyInvoiceOrderItem = supplyInvoiceOrderItem;
 
-            packingListPackageOrderItem.TotalNetWeight = Math.Round(packingListPackageOrderItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.TotalNetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-            packingListPackageOrderItem.NetWeight = Math.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.NetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
 
             packingListPackageOrderItem.TotalNetPrice =
-                packingListPackageOrderItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty);
+                packingListPackageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty);
 
             income.TotalNetPrice += packingListPackageOrderItem.TotalNetPrice;
 
@@ -3160,7 +3160,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             income.TotalQty += productIncomeItem.Qty;
 
             income.TotalNetWeight =
-                Math.Round(income.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(income.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.PackingListPackageOrderItem = packingListPackageOrderItem;
 
@@ -3256,18 +3256,18 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             supplyOrderUkraineItem.Product = product;
             supplyOrderUkraineItem.SupplyOrderUkraine = supplyOrderUkraine;
 
-            supplyOrderUkraineItem.TotalNetWeight = Math.Round(supplyOrderUkraineItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
+            supplyOrderUkraineItem.TotalNetWeight = LegacyNumeric.Round(supplyOrderUkraineItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-            supplyOrderUkraineItem.NetWeight = Math.Round(supplyOrderUkraineItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+            supplyOrderUkraineItem.NetWeight = LegacyNumeric.Round(supplyOrderUkraineItem.NetWeight, 3, MidpointRounding.AwayFromZero);
 
             supplyOrderUkraineItem.NetPrice =
-                decimal.Round(supplyOrderUkraineItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(supplyOrderUkraineItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
             supplyOrderUkraineItem.NetPriceLocal =
-                decimal.Round(supplyOrderUkraineItem.UnitPriceLocal * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(supplyOrderUkraineItem.UnitPriceLocal * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
             supplyOrderUkraineItem.GrossPrice =
-                decimal.Round(supplyOrderUkraineItem.GrossUnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(supplyOrderUkraineItem.GrossUnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
             income.TotalNetPrice =
                 decimal.Round(income.TotalNetPrice + supplyOrderUkraineItem.NetPriceLocal + supplyOrderUkraineItem.VatAmountLocal, 2, MidpointRounding.AwayFromZero);
@@ -3278,7 +3278,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             income.TotalQty += productIncomeItem.Qty;
 
             income.TotalNetWeight =
-                Math.Round(income.TotalNetWeight + supplyOrderUkraineItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(income.TotalNetWeight + supplyOrderUkraineItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.SupplyOrderUkraineItem = supplyOrderUkraineItem;
 
@@ -3397,10 +3397,10 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             actReconciliationItem.Product = product;
             actReconciliationItem.ActReconciliation = actReconciliation;
 
-            actReconciliationItem.TotalNetWeight = Math.Round(actReconciliationItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
-            actReconciliationItem.NetWeight = Math.Round(actReconciliationItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+            actReconciliationItem.TotalNetWeight = LegacyNumeric.Round(actReconciliationItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
+            actReconciliationItem.NetWeight = LegacyNumeric.Round(actReconciliationItem.NetWeight, 3, MidpointRounding.AwayFromZero);
             actReconciliationItem.TotalAmount =
-                decimal.Round(actReconciliationItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(actReconciliationItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
             productIncomeItem.ActReconciliationItem = actReconciliationItem;
 
@@ -3410,7 +3410,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             income.TotalQty += productIncomeItem.Qty;
 
             income.TotalNetWeight =
-                Math.Round(income.TotalNetWeight + actReconciliationItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(income.TotalNetWeight + actReconciliationItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
             income.ProductIncomeItems.Add(productIncomeItem);
 
@@ -3576,9 +3576,9 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             productCapitalizationItem.ProductCapitalization = productCapitalization;
 
             productCapitalizationItem.TotalAmount =
-                decimal.Round(productCapitalizationItem.UnitPrice * Convert.ToDecimal(productCapitalizationItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(productCapitalizationItem.UnitPrice * LegacyNumeric.ToDecimal(productCapitalizationItem.Qty), 2, MidpointRounding.AwayFromZero);
 
-            productCapitalizationItem.TotalNetWeight = Math.Round(productCapitalizationItem.Qty * productCapitalizationItem.Weight, 3, MidpointRounding.AwayFromZero);
+            productCapitalizationItem.TotalNetWeight = LegacyNumeric.Round(productCapitalizationItem.Qty * productCapitalizationItem.Weight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.ProductCapitalizationItem = productCapitalizationItem;
 
@@ -3588,7 +3588,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                 decimal.Round(income.TotalNetPrice + productCapitalizationItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
 
             income.TotalNetWeight =
-                Math.Round(
+                LegacyNumeric.Round(
                     income.TotalNetWeight + productCapitalizationItem.TotalNetWeight,
                     3,
                     MidpointRounding.AwayFromZero
@@ -4029,14 +4029,14 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             packingListPackageOrderItem.PackingListPackage = package;
             packingListPackageOrderItem.SupplyInvoiceOrderItem = supplyInvoiceOrderItem;
 
-            packingListPackageOrderItem.TotalNetWeight = Math.Round(packingListPackageOrderItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
-            packingListPackageOrderItem.TotalGrossWeight = Math.Round(packingListPackageOrderItem.GrossWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.TotalNetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.TotalGrossWeight = LegacyNumeric.Round(packingListPackageOrderItem.GrossWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-            packingListPackageOrderItem.NetWeight = Math.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
-            packingListPackageOrderItem.GrossWeight = Math.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.NetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.GrossWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
 
             packingListPackageOrderItem.TotalNetPrice =
-                packingListPackageOrderItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty);
+                packingListPackageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty);
 
             income.TotalNetPrice += packingListPackageOrderItem.TotalNetPrice;
 
@@ -4047,9 +4047,9 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             income.TotalQty += productIncomeItem.Qty;
 
             income.TotalNetWeight =
-                Math.Round(income.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(income.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
             income.TotalGrossWeight =
-                Math.Round(income.TotalGrossWeight + packingListPackageOrderItem.TotalGrossWeight, 3, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(income.TotalGrossWeight + packingListPackageOrderItem.TotalGrossWeight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.PackingListPackageOrderItem = packingListPackageOrderItem;
 
@@ -4687,7 +4687,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                 decimal.Round(orderItem.PricePerItem * orderItem.ExchangeRateAmount, 4, MidpointRounding.AwayFromZero);
 
             orderItem.TotalAmount =
-                decimal.Round(orderItem.PricePerItem * Convert.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(orderItem.PricePerItem * LegacyNumeric.ToDecimal(orderItem.Qty), 2, MidpointRounding.AwayFromZero);
             orderItem.TotalAmountLocal = decimal.Round(orderItem.TotalAmount * orderItem.ExchangeRateAmount, 2, MidpointRounding.AwayFromZero);
 
             orderItem.Product.CurrentPrice = decimal.Round(orderItem.Product.CurrentPrice, 2, MidpointRounding.AwayFromZero);
@@ -4824,12 +4824,12 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             packingListPackageOrderItem.PackingListPackage = package;
             packingListPackageOrderItem.SupplyInvoiceOrderItem = supplyInvoiceOrderItem;
 
-            packingListPackageOrderItem.TotalNetWeight = Math.Round(packingListPackageOrderItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.TotalNetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-            packingListPackageOrderItem.NetWeight = Math.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+            packingListPackageOrderItem.NetWeight = LegacyNumeric.Round(packingListPackageOrderItem.NetWeight, 3, MidpointRounding.AwayFromZero);
 
             packingListPackageOrderItem.TotalNetPrice =
-                decimal.Round(packingListPackageOrderItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(packingListPackageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
             income.TotalNetPrice =
                 decimal.Round(income.TotalNetPrice + packingListPackageOrderItem.TotalNetPrice, 2, MidpointRounding.AwayFromZero);
@@ -4837,7 +4837,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             income.TotalQty += productIncomeItem.Qty;
 
             income.TotalNetWeight =
-                Math.Round(income.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(income.TotalNetWeight + packingListPackageOrderItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.PackingListPackageOrderItem = packingListPackageOrderItem;
 
@@ -4912,12 +4912,12 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             supplyOrderUkraineItem.Product = product;
             supplyOrderUkraineItem.SupplyOrderUkraine = supplyOrderUkraine;
 
-            supplyOrderUkraineItem.TotalNetWeight = Math.Round(supplyOrderUkraineItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
+            supplyOrderUkraineItem.TotalNetWeight = LegacyNumeric.Round(supplyOrderUkraineItem.NetWeight * productIncomeItem.Qty, 3, MidpointRounding.AwayFromZero);
 
-            supplyOrderUkraineItem.NetWeight = Math.Round(supplyOrderUkraineItem.NetWeight, 3, MidpointRounding.AwayFromZero);
+            supplyOrderUkraineItem.NetWeight = LegacyNumeric.Round(supplyOrderUkraineItem.NetWeight, 3, MidpointRounding.AwayFromZero);
 
             supplyOrderUkraineItem.NetPrice =
-                decimal.Round(supplyOrderUkraineItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(supplyOrderUkraineItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 2, MidpointRounding.AwayFromZero);
 
             income.TotalNetPrice =
                 decimal.Round(income.TotalNetPrice + supplyOrderUkraineItem.NetPrice, 2, MidpointRounding.AwayFromZero);
@@ -4925,7 +4925,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             income.TotalQty += productIncomeItem.Qty;
 
             income.TotalNetWeight =
-                Math.Round(income.TotalNetWeight + supplyOrderUkraineItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
+                LegacyNumeric.Round(income.TotalNetWeight + supplyOrderUkraineItem.TotalNetWeight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.SupplyOrderUkraineItem = supplyOrderUkraineItem;
 
@@ -5090,9 +5090,9 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             productCapitalizationItem.ProductCapitalization = productCapitalization;
 
             productCapitalizationItem.TotalAmount =
-                decimal.Round(productCapitalizationItem.UnitPrice * Convert.ToDecimal(productCapitalizationItem.Qty), 2, MidpointRounding.AwayFromZero);
+                decimal.Round(productCapitalizationItem.UnitPrice * LegacyNumeric.ToDecimal(productCapitalizationItem.Qty), 2, MidpointRounding.AwayFromZero);
 
-            productCapitalizationItem.TotalNetWeight = Math.Round(productCapitalizationItem.Qty * productCapitalizationItem.Weight, 3, MidpointRounding.AwayFromZero);
+            productCapitalizationItem.TotalNetWeight = LegacyNumeric.Round(productCapitalizationItem.Qty * productCapitalizationItem.Weight, 3, MidpointRounding.AwayFromZero);
 
             productIncomeItem.ProductCapitalizationItem = productCapitalizationItem;
 
@@ -5102,7 +5102,7 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                 decimal.Round(income.TotalNetPrice + productCapitalizationItem.TotalAmount, 2, MidpointRounding.AwayFromZero);
 
             income.TotalNetWeight =
-                Math.Round(
+                LegacyNumeric.Round(
                     income.TotalNetWeight + productCapitalizationItem.TotalNetWeight,
                     3,
                     MidpointRounding.AwayFromZero
@@ -5215,8 +5215,8 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
             supplyOrderUkraine.Organization = organization;
             supplyOrderUkraine.Responsible = user;
 
-            supplyOrderUkraineItem.GrossPriceLocal = Convert.ToDecimal(supplyOrderUkraineItem.Qty) * supplyOrderUkraineItem.GrossUnitPriceLocal;
-            supplyOrderUkraineItem.NetPriceLocal = Convert.ToDecimal(supplyOrderUkraineItem.Qty) * supplyOrderUkraineItem.UnitPriceLocal;
+            supplyOrderUkraineItem.GrossPriceLocal = LegacyNumeric.ToDecimal(supplyOrderUkraineItem.Qty) * supplyOrderUkraineItem.GrossUnitPriceLocal;
+            supplyOrderUkraineItem.NetPriceLocal = LegacyNumeric.ToDecimal(supplyOrderUkraineItem.Qty) * supplyOrderUkraineItem.UnitPriceLocal;
             supplyOrderUkraineItem.TotalNetWeight = supplyOrderUkraineItem.Qty * supplyOrderUkraineItem.NetWeight;
             supplyOrderUkraineItem.TotalGrossWeight = supplyOrderUkraineItem.Qty * supplyOrderUkraineItem.GrossWeight;
 
@@ -5445,9 +5445,9 @@ public sealed class ProductIncomeRepository : IProductIncomeRepository {
                 packingListPackageOrderItem.TotalNetWithVat = packingListPackageOrderItem.TotalNetPrice + packingListPackageOrderItem.VatAmount;
 
                 packingListPackageOrderItem.TotalNetPrice =
-                    decimal.Round(packingListPackageOrderItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 3, MidpointRounding.AwayFromZero);
+                    decimal.Round(packingListPackageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 3, MidpointRounding.AwayFromZero);
 
-                decimal totalPriceWithVat = decimal.Round(packingListPackageOrderItem.UnitPrice * Convert.ToDecimal(productIncomeItem.Qty), 3, MidpointRounding.AwayFromZero) +
+                decimal totalPriceWithVat = decimal.Round(packingListPackageOrderItem.UnitPrice * LegacyNumeric.ToDecimal(productIncomeItem.Qty), 3, MidpointRounding.AwayFromZero) +
                                             packingListPackageOrderItem.VatAmount;
 
                 toReturn.PackingList.TotalQuantity += productIncomeItem.Qty;

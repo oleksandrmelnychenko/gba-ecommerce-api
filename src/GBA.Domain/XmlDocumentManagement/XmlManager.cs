@@ -1331,7 +1331,7 @@ public sealed class XmlManager : IXmlManager {
         product.Add(CreatePropertyWithValueElement(TypeOfExchangeFile.NUMBER, "ПроцентСкидкиНаценки", orderItem.DiscountAmount));
         product.Add(CreatePropertyWithValueElement(TypeOfExchangeFile.NUMBER, "Сумма", orderItem.TotalAmount));
         product.Add(CreatePropertyWithValueElement(TypeOfExchangeFile.NUMBER, "СуммаНДС",
-            (orderItem.PricePerItem - orderItem.PricePerItemWithoutVat) * Convert.ToDecimal(orderItem.Qty)));
+            (orderItem.PricePerItem - orderItem.PricePerItemWithoutVat) * LegacyNumeric.ToDecimal(orderItem.Qty)));
 
         return product;
     }
@@ -1377,9 +1377,9 @@ public sealed class XmlManager : IXmlManager {
         product.Add(CreatePropertyWithValueElement(TypeOfExchangeFile.NUMBER, "Количество", supplyOrderUkraineItem.Qty));
         product.Add(CreatePropertyWithValueElement(TypeOfExchangeFile.NUMBER, "Цена", supplyOrderUkraineItem.UnitPrice));
         product.Add(CreatePropertyWithValueElement(TypeOfExchangeFile.NUMBER, "Сумма",
-            decimal.Round(Convert.ToDecimal(supplyOrderUkraineItem.Qty) * supplyOrderUkraineItem.UnitPrice, MidpointRounding.AwayFromZero)));
+            decimal.Round(LegacyNumeric.ToDecimal(supplyOrderUkraineItem.Qty) * supplyOrderUkraineItem.UnitPrice, MidpointRounding.AwayFromZero)));
         product.Add(CreatePropertyWithValueElement(TypeOfExchangeFile.NUMBER, "СуммаНДС",
-            decimal.Round((supplyOrderUkraineItem.GrossPrice - supplyOrderUkraineItem.UnitPrice) * Convert.ToDecimal(supplyOrderUkraineItem.Qty),
+            decimal.Round((supplyOrderUkraineItem.GrossPrice - supplyOrderUkraineItem.UnitPrice) * LegacyNumeric.ToDecimal(supplyOrderUkraineItem.Qty),
                 MidpointRounding.AwayFromZero)));
 
         return product;
@@ -1426,7 +1426,7 @@ public sealed class XmlManager : IXmlManager {
         product.Add(CreatePropertyWithValueElement(TypeOfExchangeFile.NUMBER, "Количество", supplyOrderItem.Qty));
         product.Add(CreatePropertyWithValueElement(TypeOfExchangeFile.NUMBER, "Цена", supplyOrderItem.UnitPrice));
         product.Add(CreatePropertyWithValueElement(TypeOfExchangeFile.NUMBER, "Сумма",
-            decimal.Round(Convert.ToDecimal(supplyOrderItem.Qty) * supplyOrderItem.UnitPrice, MidpointRounding.AwayFromZero)));
+            decimal.Round(LegacyNumeric.ToDecimal(supplyOrderItem.Qty) * supplyOrderItem.UnitPrice, MidpointRounding.AwayFromZero)));
         product.Add(CreatePropertyWithValueElement(TypeOfExchangeFile.NUMBER, "СуммаНДС"));
 
         return product;

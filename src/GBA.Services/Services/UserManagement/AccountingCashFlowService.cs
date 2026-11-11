@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
+using GBA.Domain;
 using GBA.Domain.DbConnectionFactory.Contracts;
 using GBA.Domain.Entities;
 using GBA.Domain.Entities.Clients;
@@ -92,7 +93,7 @@ public sealed class AccountingCashFlowService : IAccountingCashFlowService {
             toReturn = GetReSaleModelForUpdate(toReturn);
 
             if (toReturn.ReSale.ChangedToInvoice.HasValue && toReturn.ReSale.ClientAgreement != null) {
-                decimal vatPercent = Convert.ToDecimal(toReturn.ReSale.Organization.VatRate?.Value ?? 0);
+                decimal vatPercent = LegacyNumeric.ToDecimal(toReturn.ReSale.Organization.VatRate?.Value ?? 0);
 
                 Currency uah = _currencyRepositoriesFactory.NewCurrencyRepository(connection).GetUAHCurrencyIfExists();
                 Currency eur = _currencyRepositoriesFactory.NewCurrencyRepository(connection).GetEURCurrencyIfExists();
@@ -136,7 +137,7 @@ public sealed class AccountingCashFlowService : IAccountingCashFlowService {
         } else {
             toReturn = updatedReSaleModel;
 
-            decimal vatPercent = Convert.ToDecimal(toReturn.ReSale.Organization.VatRate?.Value ?? 0);
+            decimal vatPercent = LegacyNumeric.ToDecimal(toReturn.ReSale.Organization.VatRate?.Value ?? 0);
 
             foreach (UpdatedReSaleItemModel updated in toReturn.ReSaleItemModels) {
                 updated.Price = decimal.Round(updated.Price, 2, MidpointRounding.AwayFromZero);
@@ -148,9 +149,9 @@ public sealed class AccountingCashFlowService : IAccountingCashFlowService {
 
 
                 if (!updated.Amount.Equals(updated.OldValue.Amount)) {
-                    updated.SalePrice = updated.Amount / Convert.ToDecimal(updated.QtyToReSale);
+                    updated.SalePrice = updated.Amount / LegacyNumeric.ToDecimal(updated.QtyToReSale);
                 } else if (!updated.SalePrice.Equals(updated.OldValue.SalePrice)) {
-                    updated.Amount = updated.SalePrice * Convert.ToDecimal(updated.QtyToReSale);
+                    updated.Amount = updated.SalePrice * LegacyNumeric.ToDecimal(updated.QtyToReSale);
                 } else if (!updated.QtyToReSale.Equals(updated.OldValue.QtyToReSale)) {
                     if (updated.QtyToReSale > updated.Qty)
                         updated.QtyToReSale = updated.Qty;
@@ -158,10 +159,10 @@ public sealed class AccountingCashFlowService : IAccountingCashFlowService {
                     if (updated.QtyToReSale.Equals(0) || updated.QtyToReSale < 0)
                         updated.QtyToReSale = 1;
 
-                    updated.Amount = updated.SalePrice * Convert.ToDecimal(updated.QtyToReSale);
+                    updated.Amount = updated.SalePrice * LegacyNumeric.ToDecimal(updated.QtyToReSale);
                 }
 
-                decimal amountWithoutExtraCharge = Convert.ToDecimal(updated.QtyToReSale) * updated.Price;
+                decimal amountWithoutExtraCharge = LegacyNumeric.ToDecimal(updated.QtyToReSale) * updated.Price;
 
                 if (updated.Price.Equals(updated.SalePrice))
                     updated.Profit = 0;
@@ -183,7 +184,7 @@ public sealed class AccountingCashFlowService : IAccountingCashFlowService {
     }
 
     private static UpdatedReSaleModel GetReSaleModelForUpdate(UpdatedReSaleModel toReturn) {
-        decimal vatPercent = Convert.ToDecimal(toReturn.ReSale.Organization.VatRate?.Value ?? 0);
+        decimal vatPercent = LegacyNumeric.ToDecimal(toReturn.ReSale.Organization.VatRate?.Value ?? 0);
 
         foreach (ReSaleItem reSaleItem in toReturn.ReSale.ReSaleItems)
             if (!toReturn.ReSaleItemModels.Any(x => x.ConsignmentItem.Id.Equals(reSaleItem.ReSaleAvailability.ConsignmentItem.Id))) {
@@ -194,7 +195,7 @@ public sealed class AccountingCashFlowService : IAccountingCashFlowService {
                     QtyToReSale = reSaleItem.Qty,
                     ConsignmentItem = reSaleItem.ReSaleAvailability.ConsignmentItem,
                     SalePrice = reSaleItem.PricePerItem,
-                    Amount = Convert.ToDecimal(reSaleItem.Qty) * reSaleItem.PricePerItem
+                    Amount = LegacyNumeric.ToDecimal(reSaleItem.Qty) * reSaleItem.PricePerItem
                 };
 
                 item.Price = decimal.Round(item.Price, 2, MidpointRounding.AwayFromZero);
@@ -204,7 +205,7 @@ public sealed class AccountingCashFlowService : IAccountingCashFlowService {
                 item.OldValue.SalePrice = decimal.Round(item.OldValue.SalePrice, 2, MidpointRounding.AwayFromZero);
                 item.OldValue.Amount = decimal.Round(item.OldValue.Amount, 2, MidpointRounding.AwayFromZero);
 
-                decimal amountWithoutExtraCharge = Convert.ToDecimal(item.QtyToReSale) * item.Price;
+                decimal amountWithoutExtraCharge = LegacyNumeric.ToDecimal(item.QtyToReSale) * item.Price;
 
                 if (item.Price.Equals(item.SalePrice))
                     item.Profit = 0;
@@ -230,12 +231,12 @@ public sealed class AccountingCashFlowService : IAccountingCashFlowService {
                 existItem.Price = decimal.Round(existItem.Price, 2, MidpointRounding.AwayFromZero);
                 existItem.SalePrice = decimal.Round(existItem.SalePrice, 2, MidpointRounding.AwayFromZero);
                 existItem.QtyToReSale += reSaleItem.Qty;
-                existItem.Amount += decimal.Round(Convert.ToDecimal(reSaleItem.Qty) * reSaleItem.PricePerItem, 2, MidpointRounding.AwayFromZero);
+                existItem.Amount += decimal.Round(LegacyNumeric.ToDecimal(reSaleItem.Qty) * reSaleItem.PricePerItem, 2, MidpointRounding.AwayFromZero);
 
                 existItem.OldValue.SalePrice = decimal.Round(existItem.OldValue.SalePrice, 2, MidpointRounding.AwayFromZero);
                 existItem.OldValue.Amount = decimal.Round(existItem.OldValue.Amount, 2, MidpointRounding.AwayFromZero);
 
-                decimal amountWithoutExtraCharge = Convert.ToDecimal(existItem.QtyToReSale) * existItem.Price;
+                decimal amountWithoutExtraCharge = LegacyNumeric.ToDecimal(existItem.QtyToReSale) * existItem.Price;
 
                 if (existItem.Price.Equals(existItem.SalePrice))
                     existItem.Profit = 0;

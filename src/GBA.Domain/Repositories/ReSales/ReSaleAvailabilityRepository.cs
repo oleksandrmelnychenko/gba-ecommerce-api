@@ -105,7 +105,7 @@ public sealed class ReSaleAvailabilityRepository : IReSaleAvailabilityRepository
                     MidpointRounding.AwayFromZero
                 );
 
-                decimal convertRemainingQty = Convert.ToDecimal(reSaleAvailability.RemainingQty);
+                decimal convertRemainingQty = LegacyNumeric.ToDecimal(reSaleAvailability.RemainingQty);
 
                 decimal totalAccountingPrice = reSaleAvailability.PricePerItem * convertRemainingQty;
                 decimal totalSalePrice = salePrice * convertRemainingQty;
@@ -140,7 +140,7 @@ public sealed class ReSaleAvailabilityRepository : IReSaleAvailabilityRepository
 
                 double qty = reSaleAvailabilityModel.Qty + reSaleAvailability.RemainingQty;
 
-                decimal convertRemainingQty = Convert.ToDecimal(qty);
+                decimal convertRemainingQty = LegacyNumeric.ToDecimal(qty);
 
                 decimal totalAccountingPrice = reSaleAvailabilityModel.AccountingGrossPrice * convertRemainingQty;
                 decimal totalSalePrice = reSaleAvailabilityModel.SalePrice * convertRemainingQty;
@@ -303,7 +303,7 @@ public sealed class ReSaleAvailabilityRepository : IReSaleAvailabilityRepository
                 if (usedQty != null) {
                     groupReSaleAvailability.Qty -= usedQty.Qty;
 
-                    decimal convertRemainingQty = Convert.ToDecimal(groupReSaleAvailability.Qty);
+                    decimal convertRemainingQty = LegacyNumeric.ToDecimal(groupReSaleAvailability.Qty);
 
                     decimal totalAccountingPrice = groupReSaleAvailability.AccountingGrossPrice * convertRemainingQty;
                     decimal totalSalePrice = groupReSaleAvailability.SalePrice * convertRemainingQty;
@@ -368,7 +368,7 @@ public sealed class ReSaleAvailabilityRepository : IReSaleAvailabilityRepository
                     MidpointRounding.AwayFromZero
                 );
 
-                decimal convertRemainingQty = Convert.ToDecimal(reSaleAvailability.RemainingQty);
+                decimal convertRemainingQty = LegacyNumeric.ToDecimal(reSaleAvailability.RemainingQty);
 
                 decimal totalAccountingPrice = reSaleAvailability.PricePerItem * convertRemainingQty;
                 decimal totalSalePrice = salePrice * convertRemainingQty;
@@ -403,7 +403,7 @@ public sealed class ReSaleAvailabilityRepository : IReSaleAvailabilityRepository
 
                 double qty = reSaleAvailabilityModel.Qty + reSaleAvailability.RemainingQty;
 
-                decimal convertRemainingQty = Convert.ToDecimal(qty);
+                decimal convertRemainingQty = LegacyNumeric.ToDecimal(qty);
 
                 decimal totalAccountingPrice = reSaleAvailabilityModel.AccountingGrossPrice * convertRemainingQty;
                 decimal totalSalePrice = reSaleAvailabilityModel.SalePrice * convertRemainingQty;
@@ -529,7 +529,7 @@ public sealed class ReSaleAvailabilityRepository : IReSaleAvailabilityRepository
                 if (usedQty != null) {
                     groupReSaleAvailability.Qty -= usedQty.Qty;
 
-                    decimal convertRemainingQty = Convert.ToDecimal(groupReSaleAvailability.Qty);
+                    decimal convertRemainingQty = LegacyNumeric.ToDecimal(groupReSaleAvailability.Qty);
 
                     decimal totalAccountingPrice = groupReSaleAvailability.AccountingGrossPrice * convertRemainingQty;
                     decimal totalSalePrice = groupReSaleAvailability.SalePrice * convertRemainingQty;
@@ -615,7 +615,7 @@ public sealed class ReSaleAvailabilityRepository : IReSaleAvailabilityRepository
 
                 double qty = reSaleAvailabilityModel.Qty + reSaleAvailability.RemainingQty;
 
-                decimal convertRemainingQty = Convert.ToDecimal(qty);
+                decimal convertRemainingQty = LegacyNumeric.ToDecimal(qty);
 
                 decimal totalAccountingPrice = reSaleAvailabilityModel.AccountingGrossPrice * convertRemainingQty;
                 decimal totalSalePrice = reSaleAvailabilityModel.SalePrice * convertRemainingQty;
@@ -739,7 +739,7 @@ public sealed class ReSaleAvailabilityRepository : IReSaleAvailabilityRepository
                 if (usedQty != null) {
                     groupReSaleAvailability.Qty -= usedQty.Qty;
 
-                    decimal convertRemainingQty = Convert.ToDecimal(groupReSaleAvailability.Qty);
+                    decimal convertRemainingQty = LegacyNumeric.ToDecimal(groupReSaleAvailability.Qty);
 
                     decimal totalAccountingPrice = groupReSaleAvailability.AccountingGrossPrice * convertRemainingQty;
                     decimal totalSalePrice = groupReSaleAvailability.SalePrice * convertRemainingQty;

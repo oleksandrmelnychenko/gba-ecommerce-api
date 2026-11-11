@@ -1544,7 +1544,7 @@ public sealed class OrderItemRepository : IOrderItemRepository {
 
                     if (productProductGroup != null) product.ProductProductGroups.Add(productProductGroup);
 
-                    orderItem.TotalAmount = productPricing.Price * Convert.ToDecimal(orderItem.Qty);
+                    orderItem.TotalAmount = productPricing.Price * LegacyNumeric.ToDecimal(orderItem.Qty);
                     orderItem.User = user;
                     product.ProductPricings.Add(productPricing);
                 }
@@ -1866,7 +1866,7 @@ public sealed class OrderItemRepository : IOrderItemRepository {
 
                     if (productProductGroup != null) product.ProductProductGroups.Add(productProductGroup);
 
-                    orderItem.TotalAmount = productPricing.Price * Convert.ToDecimal(orderItem.Qty);
+                    orderItem.TotalAmount = productPricing.Price * LegacyNumeric.ToDecimal(orderItem.Qty);
                     orderItem.User = user;
                     product.ProductPricings.Add(productPricing);
                 }
