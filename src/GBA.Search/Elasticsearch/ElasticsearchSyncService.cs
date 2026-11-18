@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using GBA.Common.Search;
 using GBA.Search.Configuration;
 using GBA.Search.Sync;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -159,7 +160,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         try {
             _log.LogInformation("Starting Elasticsearch full rebuild (alias-swap)");
 
-            string sourceFingerprint = await _repository.GetSourceFingerprintAsync();
+            string sourceFingerprint = await ReadSourceFingerprintAsync(ct);
             string retailSignature = await _repository.GetRetailConfigurationSignatureAsync();
 
             // Build into a brand-new index; the live alias keeps serving the current one
@@ -288,6 +289,13 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
     internal static void ResetForcedRebuildBackoff() =>
         Interlocked.Exchange(ref _forcedRebuildRetryAfterTicks, 0);
 
+    private Task<string> ReadSourceFingerprintAsync(CancellationToken ct) =>
+        _timeoutRetry.ExecuteAsync(
+            "source database fingerprint read",
+            _repository.GetSourceFingerprintAsync,
+            ct,
+            static exception => exception is SqlException { Number: -2 or 258 });
+
     public Task<SyncResult> IncrementalSyncAsync(CancellationToken ct = default) =>
         ExecuteWithTimeoutRetriesAsync(
             "incremental sync",
@@ -319,7 +327,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
             return schemaRebuild;
         }
 
-        string sourceFingerprint = await _repository.GetSourceFingerprintAsync();
+        string sourceFingerprint = await ReadSourceFingerprintAsync(ct);
         string? indexedFingerprint = await _state.GetMarkerAsync(SearchSyncMarkers.SourceDatabase, ct);
         if (indexedFingerprint is not null
             && !string.Equals(indexedFingerprint, sourceFingerprint, StringComparison.Ordinal)

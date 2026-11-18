@@ -236,6 +236,96 @@ public sealed class ElasticsearchSyncSafetyTests {
         Assert.Equal(0, logger.Count(LogLevel.Error));
     }
 
+    [Theory]
+    [InlineData(-2)]
+    [InlineData(258)]
+    public async Task IncrementalSync_SourceFingerprintTimeout_RetriesOnlyTheReadAndRestoresReadiness(int number) {
+        DateTime previous = DateTime.UtcNow.AddMinutes(-10);
+        TestProductSyncRepository repository = new();
+        repository.FingerprintErrors.Enqueue(TestSqlExceptions.Create(number));
+        TestSearchSyncStateStore state = new() { Watermark = previous };
+        TestElasticsearchIndexService index = new();
+        CollectingLogger<ElasticsearchSyncService> logger = new();
+        ElasticsearchSyncService service = CreateSyncService(
+            repository, state, new TestSearchCacheInvalidator(), logger, maxRetries: 1, index: index);
+
+        SyncResult result = await service.IncrementalSyncAsync();
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal(2, repository.FingerprintReads);
+        Assert.Equal(1, state.WatermarkReads);
+        Assert.Equal(1, repository.ChangedCalls);
+        Assert.Equal(0, repository.AllProductsCalls);
+        Assert.Equal(repository.Fingerprint, state.SourceFingerprint);
+        Assert.Equal(1, state.SetCalls);
+        Assert.True(state.Watermark > previous);
+        Assert.Equal(1, logger.Count(LogLevel.Warning));
+        Assert.Equal(0, logger.Count(LogLevel.Error));
+        var settings = Options.Create(new SyncSettings());
+        SearchSyncHealthProbe probe = new(index, state, settings, new CollectingLogger<SearchSyncHealthProbe>());
+        SearchSyncHealthSnapshot snapshot = await probe.GetSnapshotAsync();
+        Assert.True(snapshot.Healthy && snapshot.IndexExists && snapshot.Ready);
+        Assert.False(snapshot.Stale);
+        Assert.Null(snapshot.Error);
+        Assert.Equal(state.Watermark, snapshot.LastSyncUtc);
+        Assert.InRange(snapshot.LagSeconds!.Value, 0, settings.Value.LagWarningSeconds);
+    }
+
+    [Theory]
+    [InlineData(-2, 2)]
+    [InlineData(208, 1)]
+    public async Task IncrementalSync_SourceFingerprintFailure_PreservesStateUntilNextSuccess(int number, int expectedReads) {
+        DateTime previous = DateTime.UtcNow.AddMinutes(-10);
+        TestProductSyncRepository repository = new();
+        var failure = TestSqlExceptions.Create(number);
+        for (int i = 0; i < expectedReads; i++) {
+            repository.FingerprintErrors.Enqueue(failure);
+        }
+        TestSearchSyncStateStore state = new() { Watermark = previous };
+        CollectingLogger<ElasticsearchSyncService> logger = new();
+        ElasticsearchSyncService service = CreateSyncService(
+            repository, state, new TestSearchCacheInvalidator(), logger, maxRetries: 1);
+
+        SyncResult result = await service.IncrementalSyncAsync();
+
+        Assert.False(result.Success);
+        Assert.Equal(failure.Message, result.Error);
+        Assert.Equal(expectedReads, repository.FingerprintReads);
+        Assert.Equal(expectedReads - 1, logger.Count(LogLevel.Warning));
+        Assert.Same(failure, Assert.Single(logger.Entries, entry => entry.Level == LogLevel.Error).Exception);
+        Assert.Equal(previous, state.Watermark);
+        Assert.Equal(0, state.SetCalls);
+        Assert.Empty(state.Markers);
+        Assert.Equal(0, repository.ChangedCalls);
+
+        SyncResult recovery = await service.IncrementalSyncAsync();
+
+        Assert.True(recovery.Success, recovery.Error);
+        Assert.Equal(1, state.SetCalls);
+        Assert.True(state.Watermark > previous);
+    }
+
+    [Fact]
+    public async Task IncrementalSync_SourceFingerprintRetry_StopsDuringBackoff() {
+        using CancellationTokenSource stopping = new();
+        TestProductSyncRepository repository = new();
+        repository.FingerprintErrors.Enqueue(TestSqlExceptions.Create(-2));
+        TestSearchSyncStateStore state = new() { Watermark = DateTime.UtcNow.AddMinutes(-1) };
+        CollectingLogger<ElasticsearchSyncService> logger = new();
+        ElasticsearchSyncService service = CreateSyncService(
+            repository, state, new TestSearchCacheInvalidator(), logger, maxRetries: 1, retryBaseDelayMilliseconds: 30000);
+
+        Task<SyncResult> syncing = service.IncrementalSyncAsync(stopping.Token);
+        stopping.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => syncing);
+        Assert.Equal(1, repository.FingerprintReads);
+        Assert.Equal(1, logger.Count(LogLevel.Warning));
+        Assert.Equal(0, logger.Count(LogLevel.Error));
+        Assert.Equal(0, state.SetCalls);
+        Assert.Empty(state.Markers);
+    }
+
     [Fact]
     public async Task IncrementalSync_ExhaustedTimeout_EscalatesToError() {
         TestProductSyncRepository repository = new() {
@@ -947,7 +1037,8 @@ public sealed class ElasticsearchSyncSafetyTests {
         CollectingLogger<ElasticsearchSyncService> logger,
         int maxRetries,
         SuccessfulElasticsearchHandler? handler = null,
-        TestElasticsearchIndexService? index = null) {
+        TestElasticsearchIndexService? index = null,
+        int retryBaseDelayMilliseconds = 1) {
         HttpClient http = new(handler ?? new SuccessfulElasticsearchHandler()) {
             BaseAddress = new Uri("http://elasticsearch/")
         };
@@ -957,7 +1048,7 @@ public sealed class ElasticsearchSyncSafetyTests {
             Options.Create(new ElasticsearchSettings {
                 IndexName = "products",
                 MaxRetries = maxRetries,
-                RetryBaseDelayMilliseconds = 1
+                RetryBaseDelayMilliseconds = retryBaseDelayMilliseconds
             }),
             Options.Create(new SyncSettings {
                 BatchSize = 1000,
@@ -1008,6 +1099,8 @@ public sealed class ElasticsearchSyncSafetyTests {
         public int LiveIdCalls { get; private set; }
         public List<long> LiveIds { get; set; } = [];
         public string Fingerprint { get; set; } = "2026-05-19|fork-a|38041649";
+        public Queue<Exception> FingerprintErrors { get; } = new();
+        public int FingerprintReads { get; private set; }
 
         public Task<List<ProductSyncData>> GetAllProductsAsync() {
             AllProductsCalls++;
@@ -1029,8 +1122,13 @@ public sealed class ElasticsearchSyncSafetyTests {
 
         public string RetailSignature { get; set; } = "retail-a";
 
-        public Task<string> GetSourceFingerprintAsync() =>
-            Task.FromResult(Fingerprint);
+        public Task<string> GetSourceFingerprintAsync(CancellationToken ct = default) {
+            ct.ThrowIfCancellationRequested();
+            FingerprintReads++;
+            return FingerprintErrors.TryDequeue(out var error)
+                ? Task.FromException<string>(error)
+                : Task.FromResult(Fingerprint);
+        }
 
         public Task<string> GetRetailConfigurationSignatureAsync() =>
             Task.FromResult(RetailSignature);
@@ -1053,6 +1151,7 @@ public sealed class ElasticsearchSyncSafetyTests {
         public DateTime Watermark { get; set; }
         public Dictionary<string, string> Markers { get; } = new();
         public int SetCalls { get; private set; }
+        public int WatermarkReads { get; private set; }
 
         public string? SourceFingerprint {
             get => Markers.GetValueOrDefault(SearchSyncMarkers.SourceDatabase);
@@ -1082,8 +1181,10 @@ public sealed class ElasticsearchSyncSafetyTests {
             return Task.CompletedTask;
         }
 
-        public Task<DateTime> GetWatermarkAsync(CancellationToken ct = default) =>
-            Task.FromResult(Watermark);
+        public Task<DateTime> GetWatermarkAsync(CancellationToken ct = default) {
+            WatermarkReads++;
+            return Task.FromResult(Watermark);
+        }
 
         public Task SetWatermarkAsync(
             DateTime watermarkUtc,

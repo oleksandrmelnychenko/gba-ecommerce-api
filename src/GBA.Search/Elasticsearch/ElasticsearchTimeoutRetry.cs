@@ -14,14 +14,17 @@ internal sealed class ElasticsearchTimeoutRetry(ElasticsearchSettings settings, 
     public async Task<T> ExecuteAsync<T>(
         string operation,
         Func<CancellationToken, Task<T>> executeAttempt,
-        CancellationToken ct) {
+        CancellationToken ct,
+        Func<Exception, bool>? isTimeout = null) {
+        isTimeout ??= IsHttpTimeout;
         int attemptLimit = AttemptLimit;
         for (int attempt = 1; ; attempt++) {
             ct.ThrowIfCancellationRequested();
             try {
                 return await executeAttempt(ct);
-            } catch (TaskCanceledException ex) when (
-                !ct.IsCancellationRequested && IsHttpTimeout(ex) && attempt < attemptLimit) {
+            } catch (Exception ex) when (isTimeout(ex)) {
+                ct.ThrowIfCancellationRequested();
+                if (attempt >= attemptLimit) throw;
                 TimeSpan delay = GetTimeoutRetryDelay(attempt, settings.RetryBaseDelayMilliseconds);
                 logger.LogWarning(
                     ex,
@@ -34,8 +37,8 @@ internal sealed class ElasticsearchTimeoutRetry(ElasticsearchSettings settings, 
         }
     }
 
-    internal static bool IsHttpTimeout(TaskCanceledException exception) =>
-        exception.InnerException is TimeoutException;
+    internal static bool IsHttpTimeout(Exception exception) =>
+        exception is TaskCanceledException { InnerException: TimeoutException };
 
     internal static TimeSpan GetTimeoutRetryDelay(
         int retryNumber,

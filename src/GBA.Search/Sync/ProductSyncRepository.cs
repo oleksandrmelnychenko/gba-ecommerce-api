@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Dapper;
 using GBA.Search.Models;
@@ -33,7 +34,7 @@ public interface IProductSyncRepository {
 
     Task<List<long>> GetLiveProductIdsAsync();
 
-    Task<string> GetSourceFingerprintAsync();
+    Task<string> GetSourceFingerprintAsync(CancellationToken ct = default);
 
     Task<string> GetRetailConfigurationSignatureAsync();
 }
@@ -178,10 +179,10 @@ WHERE d.database_id = DB_ID()";
         return signature ?? string.Empty;
     }
 
-    public async Task<string> GetSourceFingerprintAsync() {
+    public async Task<string> GetSourceFingerprintAsync(CancellationToken ct = default) {
         using IDbConnection connection = connectionFactory();
-        connection.Open();
-        string? fingerprint = await connection.ExecuteScalarAsync<string>(SourceFingerprintSql, commandTimeout: 30);
+        CommandDefinition command = new(SourceFingerprintSql, commandTimeout: 30, cancellationToken: ct);
+        string? fingerprint = await connection.ExecuteScalarAsync<string>(command);
         return fingerprint ?? string.Empty;
     }
 
