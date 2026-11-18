@@ -9,6 +9,8 @@ using GBA.Search.Configuration;
 using GBA.Search.Elasticsearch;
 using GBA.Search.Models;
 using GBA.Search.Sync;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
@@ -22,6 +24,90 @@ namespace GBA.Ecommerce.Api.Tests;
 public sealed class ElasticsearchSyncSafetyTests {
     public ElasticsearchSyncSafetyTests() {
         ElasticsearchSyncService.ResetForcedRebuildBackoff();
+    }
+
+    [Theory]
+    [InlineData(1, 0)]
+    [InlineData(2, 1)]
+    public async Task ScheduledSync_WatermarkReadTimeout_RetriesBeforeEscalationAndRecovers(
+        int timedOutReads, int expectedErrors) {
+        DateTime previous = DateTime.UtcNow.AddMinutes(-10);
+        WatermarkHandler handler = new(previous, timedOutReads);
+        using HttpClient http = new(handler) {
+            BaseAddress = new Uri("http://elasticsearch/"),
+            Timeout = TimeSpan.FromMilliseconds(250)
+        };
+        var elastic = Options.Create(new ElasticsearchSettings { MaxRetries = 1, RetryBaseDelayMilliseconds = 1 });
+        var schedule = Options.Create(new SyncSettings { IncrementalIntervalSeconds = 5, FullRebuildHour = -1 });
+        SearchSyncStateStore state = new(http, elastic, new CollectingLogger<SearchSyncStateStore>());
+        TestProductSyncRepository repository = new();
+        TestElasticsearchIndexService index = new();
+        ElasticsearchSyncService sync = CreateSyncService(repository, state, new TestSearchCacheInvalidator(),
+            new CollectingLogger<ElasticsearchSyncService>(), maxRetries: 1, index: index);
+        TaskCompletionSource<SyncResult> completed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Mock<IElasticsearchSyncService> scheduled = new(MockBehavior.Strict);
+        scheduled.Setup(service => service.IncrementalSyncAsync(It.IsAny<CancellationToken>()))
+            .Returns(async (CancellationToken ct) => {
+                SyncResult result = await sync.IncrementalSyncAsync(ct);
+                completed.TrySetResult(result);
+                return result;
+            });
+        CollectingLogger<ProductSearchSyncBackgroundService> logger = new();
+        int iterations = 0;
+        using ServiceProvider provider = new ServiceCollection()
+            .AddScoped<ISearchSyncStateStore>(_ => {
+                iterations++;
+                return state;
+            })
+            .AddSingleton(scheduled.Object)
+            .AddSingleton(schedule)
+            .AddSingleton(elastic)
+            .AddSingleton<ILogger<ProductSearchSyncBackgroundService>>(logger)
+            .AddHostedService<ProductSearchSyncBackgroundService>()
+            .BuildServiceProvider();
+        IHostedService worker = provider.GetRequiredService<IHostedService>();
+        await worker.StartAsync(CancellationToken.None);
+        try {
+            SyncResult result = await completed.Task.WaitAsync(TimeSpan.FromSeconds(40));
+            Assert.True(result.Success, result.Error);
+        } finally {
+            await worker.StopAsync(CancellationToken.None);
+        }
+
+        Assert.Equal(expectedErrors + 1, iterations);
+        Assert.Equal(expectedErrors, logger.Count(LogLevel.Error));
+        Assert.Equal(1, logger.Entries.Count(entry => entry.Level == LogLevel.Warning
+            && entry.Exception is TaskCanceledException { InnerException: TimeoutException }));
+        Assert.Equal(timedOutReads + 2, handler.Reads);
+        Assert.Equal(1, handler.Writes);
+        Assert.Equal(1, repository.ChangedCalls);
+        Assert.Equal(0, repository.AllProductsCalls);
+        SearchSyncHealthProbe probe = new(index, state, schedule, new CollectingLogger<SearchSyncHealthProbe>());
+        SearchSyncHealthSnapshot snapshot = await probe.GetSnapshotAsync();
+        Assert.True(snapshot.Healthy && snapshot.IndexExists && snapshot.Ready);
+        Assert.False(snapshot.Stale);
+        Assert.Null(snapshot.Error);
+        Assert.True(snapshot.LastSyncUtc > previous);
+        Assert.Equal(handler.Watermark, snapshot.LastSyncUtc);
+        Assert.InRange(snapshot.LagSeconds!.Value, 0, schedule.Value.LagWarningSeconds);
+    }
+
+    [Fact]
+    public async Task WatermarkRetry_HostStoppingDuringBackoff_CancelsWithoutAnotherRead() {
+        using CancellationTokenSource stopping = new();
+        CollectingLogger<ProductSearchSyncBackgroundService> logger = new();
+        ElasticsearchTimeoutRetry retry = new(new ElasticsearchSettings { RetryBaseDelayMilliseconds = 30000 }, logger);
+        int reads = 0;
+        Task<DateTime> reading = retry.ExecuteAsync<DateTime>("sync watermark read", ct => {
+            reads++;
+            throw new TaskCanceledException("Watermark read timed out", new TimeoutException(), ct);
+        }, stopping.Token);
+        stopping.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => reading);
+        Assert.Equal(1, reads);
+        Assert.Equal(1, logger.Count(LogLevel.Warning));
+        Assert.Equal(0, logger.Count(LogLevel.Error));
     }
 
     [Fact]
@@ -490,13 +576,13 @@ public sealed class ElasticsearchSyncSafetyTests {
     public void TimeoutRetryDelay_IsExponentialAndBounded() {
         Assert.Equal(
             TimeSpan.FromMilliseconds(100),
-            ElasticsearchSyncService.GetTimeoutRetryDelay(1, 100));
+            ElasticsearchTimeoutRetry.GetTimeoutRetryDelay(1, 100));
         Assert.Equal(
             TimeSpan.FromMilliseconds(400),
-            ElasticsearchSyncService.GetTimeoutRetryDelay(3, 100));
+            ElasticsearchTimeoutRetry.GetTimeoutRetryDelay(3, 100));
         Assert.Equal(
             TimeSpan.FromSeconds(30),
-            ElasticsearchSyncService.GetTimeoutRetryDelay(10, 1000));
+            ElasticsearchTimeoutRetry.GetTimeoutRetryDelay(10, 1000));
     }
 
     [Fact]
@@ -856,7 +942,7 @@ public sealed class ElasticsearchSyncSafetyTests {
 
     private static ElasticsearchSyncService CreateSyncService(
         TestProductSyncRepository repository,
-        TestSearchSyncStateStore state,
+        ISearchSyncStateStore state,
         TestSearchCacheInvalidator cache,
         CollectingLogger<ElasticsearchSyncService> logger,
         int maxRetries,
@@ -1119,6 +1205,30 @@ public sealed class ElasticsearchSyncSafetyTests {
         }
     }
 
+    private sealed class WatermarkHandler(DateTime previous, int timedOutReads) : HttpMessageHandler {
+        public DateTime Watermark { get; private set; } = previous;
+        public int Reads { get; private set; }
+        public int Writes { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) {
+            if (request.RequestUri!.AbsolutePath == "/products_sync_state/_doc/watermark") {
+                if (request.Method == HttpMethod.Get) {
+                    if (++Reads <= timedOutReads) await Task.Delay(Timeout.Infinite, ct);
+                    return new HttpResponseMessage(HttpStatusCode.OK) {
+                        Content = new StringContent(JsonSerializer.Serialize(new { _source = new { lastSyncTime = Watermark } }))
+                    };
+                }
+                Assert.Equal(HttpMethod.Put, request.Method);
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                Watermark = body.RootElement.GetProperty("lastSyncTime").GetDateTime();
+                Writes++;
+                return new HttpResponseMessage(HttpStatusCode.OK);
+            }
+            Assert.StartsWith("/products_sync_state/_doc/marker-", request.RequestUri.AbsolutePath);
+            return new HttpResponseMessage(request.Method == HttpMethod.Get ? HttpStatusCode.NotFound : HttpStatusCode.OK);
+        }
+    }
+
     private sealed class StaticJsonHandler(string responseBody)
         : HttpMessageHandler {
         protected override Task<HttpResponseMessage> SendAsync(
@@ -1132,7 +1242,7 @@ public sealed class ElasticsearchSyncSafetyTests {
     }
 
     private sealed class CollectingLogger<T> : ILogger<T> {
-        private readonly List<LogLevel> _levels = [];
+        public List<(LogLevel Level, Exception? Exception)> Entries { get; } = [];
 
         public IDisposable? BeginScope<TState>(TState state)
             where TState : notnull => NullScope.Instance;
@@ -1145,11 +1255,11 @@ public sealed class ElasticsearchSyncSafetyTests {
             TState state,
             Exception? exception,
             Func<TState, Exception?, string> formatter) {
-            _levels.Add(logLevel);
+            Entries.Add((logLevel, exception));
         }
 
         public int Count(LogLevel level) =>
-            _levels.Count(candidate => candidate == level);
+            Entries.Count(entry => entry.Level == level);
     }
 
     private sealed class NullScope : IDisposable {

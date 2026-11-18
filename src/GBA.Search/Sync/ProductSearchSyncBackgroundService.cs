@@ -20,6 +20,7 @@ namespace GBA.Search.Sync;
 public sealed class ProductSearchSyncBackgroundService : BackgroundService {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SyncSettings _settings;
+    private readonly ElasticsearchTimeoutRetry _timeoutRetry;
     private readonly ILogger<ProductSearchSyncBackgroundService> _log;
 
     private DateOnly? _lastFullRebuildDate;
@@ -27,9 +28,11 @@ public sealed class ProductSearchSyncBackgroundService : BackgroundService {
     public ProductSearchSyncBackgroundService(
         IServiceScopeFactory scopeFactory,
         IOptions<SyncSettings> settings,
+        IOptions<ElasticsearchSettings> elasticsearchSettings,
         ILogger<ProductSearchSyncBackgroundService> logger) {
         _scopeFactory = scopeFactory;
         _settings = settings.Value;
+        _timeoutRetry = new ElasticsearchTimeoutRetry(elasticsearchSettings.Value, logger);
         _log = logger;
     }
 
@@ -71,7 +74,8 @@ public sealed class ProductSearchSyncBackgroundService : BackgroundService {
 
         // Surface staleness before running: a watermark older than the SLA means the index
         // is lagging behind live stock (the exact failure mode behind the catalog/cart divergence).
-        DateTime watermark = await provider.GetRequiredService<ISearchSyncStateStore>().GetWatermarkAsync(ct);
+        ISearchSyncStateStore state = provider.GetRequiredService<ISearchSyncStateStore>();
+        DateTime watermark = await _timeoutRetry.ExecuteAsync("sync watermark read", state.GetWatermarkAsync, ct);
         if (watermark != DateTime.MinValue) {
             double lagSeconds = (DateTime.UtcNow - watermark).TotalSeconds;
             if (lagSeconds > _settings.LagWarningSeconds) {

@@ -32,12 +32,11 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
     private readonly ISearchSyncStateStore _state;
     private readonly ISearchCacheInvalidator _cacheInvalidator;
     private readonly ILogger<ElasticsearchSyncService> _log;
+    private readonly ElasticsearchTimeoutRetry _timeoutRetry;
 
     // Re-scan a small window before the last watermark so rows written during the previous
     // run are never missed (bulk upserts are idempotent, so overlap is harmless).
     private const int WatermarkOverlapSeconds = 120;
-    private const int MaximumTimeoutRetries = 10;
-    private const int MaximumRetryDelayMilliseconds = 30000;
 
     // Process-wide single-flight: never let a rebuild and an incremental run overlap.
     private static readonly SemaphoreSlim _gate = new(1, 1);
@@ -141,6 +140,7 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         _state = state;
         _cacheInvalidator = cacheInvalidator;
         _log = logger;
+        _timeoutRetry = new ElasticsearchTimeoutRetry(settings.Value, logger);
     }
 
     public Task<SyncResult> FullRebuildAsync(CancellationToken ct = default) =>
@@ -439,66 +439,18 @@ public sealed class ElasticsearchSyncService : IElasticsearchSyncService {
         string operation,
         Func<CancellationToken, Task<SyncResult>> executeAttempt,
         CancellationToken ct) {
-        int maximumRetries = Math.Clamp(
-            _settings.MaxRetries,
-            0,
-            MaximumTimeoutRetries);
-
-        for (int attempt = 1; ; attempt++) {
-            try {
-                return await executeAttempt(ct);
-            } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
-                throw;
-            } catch (TaskCanceledException exception)
-                when (IsHttpTimeout(exception)) {
-                if (attempt > maximumRetries) {
-                    _log.LogError(
-                        exception,
-                        "Elasticsearch {Operation} timed out after {AttemptCount} attempts",
-                        operation,
-                        attempt);
-                    return SyncResult.Failed(exception.Message);
-                }
-
-                TimeSpan delay = GetTimeoutRetryDelay(
-                    attempt,
-                    _settings.RetryBaseDelayMilliseconds);
-                _log.LogWarning(
-                    exception,
-                    "Elasticsearch {Operation} timed out on attempt {Attempt}; " +
-                    "retrying in {DelayMs}ms",
-                    operation,
-                    attempt,
-                    delay.TotalMilliseconds);
-                await Task.Delay(delay, ct);
-            } catch (Exception exception) {
-                _log.LogError(
-                    exception,
-                    "Elasticsearch {Operation} failed",
-                    operation);
-                return SyncResult.Failed(exception.Message);
-            }
+        try {
+            return await _timeoutRetry.ExecuteAsync(operation, executeAttempt, ct);
+        } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+            throw;
+        } catch (TaskCanceledException exception) when (ElasticsearchTimeoutRetry.IsHttpTimeout(exception)) {
+            _log.LogError(exception, "Elasticsearch {Operation} timed out after {AttemptCount} attempts",
+                operation, _timeoutRetry.AttemptLimit);
+            return SyncResult.Failed(exception.Message);
+        } catch (Exception exception) {
+            _log.LogError(exception, "Elasticsearch {Operation} failed", operation);
+            return SyncResult.Failed(exception.Message);
         }
-    }
-
-    internal static bool IsHttpTimeout(TaskCanceledException exception) =>
-        exception.InnerException is TimeoutException;
-
-    internal static TimeSpan GetTimeoutRetryDelay(
-        int retryNumber,
-        int baseDelayMilliseconds) {
-        ArgumentOutOfRangeException.ThrowIfLessThan(retryNumber, 1);
-
-        int boundedBaseDelay = Math.Clamp(
-            baseDelayMilliseconds,
-            1,
-            MaximumRetryDelayMilliseconds);
-        int boundedRetryNumber = Math.Min(retryNumber, MaximumTimeoutRetries);
-        long multiplier = 1L << (boundedRetryNumber - 1);
-        long delayMilliseconds = Math.Min(
-            MaximumRetryDelayMilliseconds,
-            boundedBaseDelay * multiplier);
-        return TimeSpan.FromMilliseconds(delayMilliseconds);
     }
 
     public async Task<SyncResult> ReindexProductsAsync(IReadOnlyCollection<long> productIds, CancellationToken ct = default) {
