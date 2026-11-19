@@ -38,6 +38,8 @@ public sealed class ElasticsearchSyncSafetyTests {
     [InlineData(SocketError.TryAgain, true, 1, 0)]
     [InlineData(SocketError.WouldBlock, true, 2, 1)]
     [InlineData(SocketError.TryAgain, false, 1, 0)]
+    [InlineData(SocketError.ConnectionRefused, false, 1, 0)]
+    [InlineData(SocketError.ConnectionRefused, false, 2, 1)]
     [InlineData(SocketError.AccessDenied, true, 1, 1)]
     public Task ScheduledSync_WatermarkSocketFailure_RetriesOnlyTemporaryErrors(
         SocketError socketError, bool wrapped, int failedReads, int expectedErrors) {

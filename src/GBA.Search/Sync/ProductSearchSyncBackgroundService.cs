@@ -106,7 +106,9 @@ public sealed class ProductSearchSyncBackgroundService : BackgroundService {
         if (ElasticsearchTimeoutRetry.IsHttpTimeout(exception)) return true;
         Exception? cause = exception is TaskCanceledException ? exception.InnerException : exception;
         return cause is HttpRequestException {
-            InnerException: SocketException { SocketErrorCode: SocketError.TryAgain or SocketError.WouldBlock }
+            InnerException: SocketException {
+                SocketErrorCode: SocketError.TryAgain or SocketError.WouldBlock or SocketError.ConnectionRefused
+            }
         };
     }
 
