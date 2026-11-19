@@ -1,4 +1,6 @@
 using System;
+using System.Net.Http;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using GBA.Search.Configuration;
@@ -75,7 +77,8 @@ public sealed class ProductSearchSyncBackgroundService : BackgroundService {
         // Surface staleness before running: a watermark older than the SLA means the index
         // is lagging behind live stock (the exact failure mode behind the catalog/cart divergence).
         ISearchSyncStateStore state = provider.GetRequiredService<ISearchSyncStateStore>();
-        DateTime watermark = await _timeoutRetry.ExecuteAsync("sync watermark read", state.GetWatermarkAsync, ct);
+        DateTime watermark = await _timeoutRetry.ExecuteAsync(
+            "sync watermark read", state.GetWatermarkAsync, ct, IsTransientWatermarkReadFailure);
         if (watermark != DateTime.MinValue) {
             double lagSeconds = (DateTime.UtcNow - watermark).TotalSeconds;
             if (lagSeconds > _settings.LagWarningSeconds) {
@@ -97,6 +100,14 @@ public sealed class ProductSearchSyncBackgroundService : BackgroundService {
             _log.LogWarning("Product search {Kind} sync failed: {Error}",
                 fullRebuildDue ? "full" : "incremental", result.Error);
         }
+    }
+
+    private static bool IsTransientWatermarkReadFailure(Exception exception) {
+        if (ElasticsearchTimeoutRetry.IsHttpTimeout(exception)) return true;
+        Exception? cause = exception is TaskCanceledException ? exception.InnerException : exception;
+        return cause is HttpRequestException {
+            InnerException: SocketException { SocketErrorCode: SocketError.TryAgain or SocketError.WouldBlock }
+        };
     }
 
     private bool IsFullRebuildDue(DateTime nowUtc) {

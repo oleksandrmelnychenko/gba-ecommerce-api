@@ -15,20 +15,20 @@ internal sealed class ElasticsearchTimeoutRetry(ElasticsearchSettings settings, 
         string operation,
         Func<CancellationToken, Task<T>> executeAttempt,
         CancellationToken ct,
-        Func<Exception, bool>? isTimeout = null) {
-        isTimeout ??= IsHttpTimeout;
+        Func<Exception, bool>? shouldRetry = null) {
+        shouldRetry ??= IsHttpTimeout;
         int attemptLimit = AttemptLimit;
         for (int attempt = 1; ; attempt++) {
             ct.ThrowIfCancellationRequested();
             try {
                 return await executeAttempt(ct);
-            } catch (Exception ex) when (isTimeout(ex)) {
+            } catch (Exception ex) when (shouldRetry(ex)) {
                 ct.ThrowIfCancellationRequested();
                 if (attempt >= attemptLimit) throw;
                 TimeSpan delay = GetTimeoutRetryDelay(attempt, settings.RetryBaseDelayMilliseconds);
                 logger.LogWarning(
                     ex,
-                    "Elasticsearch {Operation} timed out on attempt {Attempt}; retrying in {DelayMs}ms",
+                    "Elasticsearch {Operation} failed on attempt {Attempt}, retrying in {DelayMs}ms",
                     operation,
                     attempt,
                     delay.TotalMilliseconds);

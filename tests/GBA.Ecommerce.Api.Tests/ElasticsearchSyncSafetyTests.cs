@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using GBA.Common.Search;
 using GBA.Common.ResponseBuilder;
@@ -29,10 +30,29 @@ public sealed class ElasticsearchSyncSafetyTests {
     [Theory]
     [InlineData(1, 0)]
     [InlineData(2, 1)]
-    public async Task ScheduledSync_WatermarkReadTimeout_RetriesBeforeEscalationAndRecovers(
-        int timedOutReads, int expectedErrors) {
+    public Task ScheduledSync_WatermarkReadTimeout_RetriesBeforeEscalationAndRecovers(
+        int timedOutReads, int expectedErrors) =>
+        AssertScheduledWatermarkRecoveryAsync(timedOutReads, expectedErrors);
+
+    [Theory]
+    [InlineData(SocketError.TryAgain, true, 1, 0)]
+    [InlineData(SocketError.WouldBlock, true, 2, 1)]
+    [InlineData(SocketError.TryAgain, false, 1, 0)]
+    [InlineData(SocketError.AccessDenied, true, 1, 1)]
+    public Task ScheduledSync_WatermarkSocketFailure_RetriesOnlyTemporaryErrors(
+        SocketError socketError, bool wrapped, int failedReads, int expectedErrors) {
+        var socket = new SocketException((int)socketError);
+        var connectionFailure = new HttpRequestException(socket.Message, socket);
+        Exception failure = wrapped
+            ? new TaskCanceledException("The operation was canceled.", connectionFailure)
+            : connectionFailure;
+        return AssertScheduledWatermarkRecoveryAsync(failedReads, expectedErrors, failure);
+    }
+
+    private static async Task AssertScheduledWatermarkRecoveryAsync(
+        int failedReads, int expectedErrors, Exception? failure = null) {
         DateTime previous = DateTime.UtcNow.AddMinutes(-10);
-        WatermarkHandler handler = new(previous, timedOutReads);
+        WatermarkHandler handler = new(previous, failedReads, failure);
         using HttpClient http = new(handler) {
             BaseAddress = new Uri("http://elasticsearch/"),
             Timeout = TimeSpan.FromMilliseconds(250)
@@ -76,9 +96,17 @@ public sealed class ElasticsearchSyncSafetyTests {
 
         Assert.Equal(expectedErrors + 1, iterations);
         Assert.Equal(expectedErrors, logger.Count(LogLevel.Error));
-        Assert.Equal(1, logger.Entries.Count(entry => entry.Level == LogLevel.Warning
-            && entry.Exception is TaskCanceledException { InnerException: TimeoutException }));
-        Assert.Equal(timedOutReads + 2, handler.Reads);
+        var failures = logger.Entries.Where(entry => entry.Exception != null).ToList();
+        Assert.Equal(failedReads, failures.Count);
+        Assert.Equal(failedReads - expectedErrors, failures.Count(entry => entry.Level == LogLevel.Warning));
+        Assert.All(failures, entry => {
+            if (failure != null) {
+                Assert.Same(failure, entry.Exception);
+            } else {
+                Assert.IsType<TimeoutException>(Assert.IsType<TaskCanceledException>(entry.Exception).InnerException);
+            }
+        });
+        Assert.Equal(failedReads + 2, handler.Reads);
         Assert.Equal(1, handler.Writes);
         Assert.Equal(1, repository.ChangedCalls);
         Assert.Equal(0, repository.AllProductsCalls);
@@ -1306,7 +1334,7 @@ public sealed class ElasticsearchSyncSafetyTests {
         }
     }
 
-    private sealed class WatermarkHandler(DateTime previous, int timedOutReads) : HttpMessageHandler {
+    private sealed class WatermarkHandler(DateTime previous, int failedReads, Exception? failure) : HttpMessageHandler {
         public DateTime Watermark { get; private set; } = previous;
         public int Reads { get; private set; }
         public int Writes { get; private set; }
@@ -1314,7 +1342,10 @@ public sealed class ElasticsearchSyncSafetyTests {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) {
             if (request.RequestUri!.AbsolutePath == "/products_sync_state/_doc/watermark") {
                 if (request.Method == HttpMethod.Get) {
-                    if (++Reads <= timedOutReads) await Task.Delay(Timeout.Infinite, ct);
+                    if (++Reads <= failedReads) {
+                        if (failure != null) throw failure;
+                        await Task.Delay(Timeout.Infinite, ct);
+                    }
                     return new HttpResponseMessage(HttpStatusCode.OK) {
                         Content = new StringContent(JsonSerializer.Serialize(new { _source = new { lastSyncTime = Watermark } }))
                     };
