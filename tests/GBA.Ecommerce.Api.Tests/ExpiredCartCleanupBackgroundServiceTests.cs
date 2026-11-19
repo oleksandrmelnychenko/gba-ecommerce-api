@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using GBA.Ecommerce.Background;
 using GBA.Services.Services.Clients.Contracts;
 using Microsoft.Data.SqlClient;
@@ -9,16 +10,20 @@ namespace GBA.Ecommerce.Api.Tests;
 
 public sealed class ExpiredCartCleanupBackgroundServiceTests {
     [Theory]
-    [InlineData(-2)]
-    [InlineData(258)]
-    public async Task First_sql_timeout_warns_and_retries_then_reports_released_reservations(int number) {
-        SqlException timeout = TestSqlExceptions.Create(number);
+    [InlineData(-2, null)]
+    [InlineData(258, null)]
+    [InlineData(0, SocketError.TryAgain)]
+    [InlineData(0, SocketError.WouldBlock)]
+    public async Task Transient_sql_failure_warns_and_retries_then_reports_released_reservations(
+        int number, SocketError? socketError) {
+        SocketException? cause = socketError.HasValue ? new SocketException((int)socketError.Value) : null;
+        SqlException exception = TestSqlExceptions.Create(number, cause);
 
-        RunResult result = await RunAsync(_ => throw timeout, _ => 2);
+        RunResult result = await RunAsync(_ => throw exception, _ => 2);
 
         LogEntry failure = Assert.Single(result.Logs, entry => entry.Exception != null);
         Assert.Equal(LogLevel.Warning, failure.Level);
-        Assert.Same(timeout, failure.Exception);
+        Assert.Same(exception, failure.Exception);
         Assert.Contains("(1/5)", failure.Message);
         Assert.Contains("00:01:00", failure.Message);
         Assert.Equal(
@@ -27,24 +32,25 @@ public sealed class ExpiredCartCleanupBackgroundServiceTests {
         Assert.Contains(result.Logs, entry => entry.Level == LogLevel.Information
             && entry.Message == "Expired-cart cleanup released 2 reservations back to stock");
         Assert.Contains(result.Logs, entry => entry.Level == LogLevel.Information
-            && entry.Message == "Expired-cart cleanup recovered after SQL timeouts");
+            && entry.Message == "Expired-cart cleanup recovered after transient SQL failures");
         Assert.Equal(2, result.Calls);
         Assert.Equal(2, result.ScopesCreated);
         Assert.Equal(2, result.ScopesDisposed);
     }
 
     [Fact]
-    public async Task Persistent_timeouts_escalate_and_back_off_until_a_success_resets_the_streak() {
+    public async Task Persistent_transient_sql_failures_escalate_and_back_off_until_a_success_resets_the_streak() {
         SqlException timeout = TestSqlExceptions.Create(-2);
+        SqlException dnsFailure = TestSqlExceptions.Create(0, new SocketException((int)SocketError.TryAgain));
         RunResult result = await RunAsync(
+            _ => throw dnsFailure,
             _ => throw timeout,
+            _ => throw dnsFailure,
             _ => throw timeout,
-            _ => throw timeout,
-            _ => throw timeout,
-            _ => throw timeout,
-            _ => throw timeout,
+            _ => throw dnsFailure,
+            _ => throw dnsFailure,
             _ => 0,
-            _ => throw timeout,
+            _ => throw dnsFailure,
             _ => 1);
 
         LogEntry[] failures = result.Logs.Where(entry => entry.Exception != null).ToArray();
@@ -55,7 +61,8 @@ public sealed class ExpiredCartCleanupBackgroundServiceTests {
         Assert.Contains("(5/5)", failures[4].Message);
         Assert.Contains("(5/5)", failures[5].Message);
         Assert.Contains("(1/5)", failures[6].Message);
-        Assert.All(failures, entry => Assert.Same(timeout, entry.Exception));
+        Assert.Equal([dnsFailure, timeout, dnsFailure, timeout, dnsFailure, dnsFailure, dnsFailure],
+            failures.Select(entry => entry.Exception));
         Assert.Equal(
             [TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1),
                 TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1), TimeSpan.FromHours(1),
@@ -68,10 +75,20 @@ public sealed class ExpiredCartCleanupBackgroundServiceTests {
     }
 
     [Theory]
+    [InlineData(0)]
     [InlineData(18456)]
     [InlineData(208)]
-    public async Task Non_timeout_sql_failures_remain_errors(int number) {
+    public async Task Non_transient_sql_failures_remain_errors(int number) {
         SqlException exception = TestSqlExceptions.Create(number);
+
+        RunResult result = await RunAsync(_ => throw exception, _ => 0);
+
+        AssertErrorWithHourlyRetry(result, exception);
+    }
+
+    [Fact]
+    public async Task Permanent_dns_failure_remains_an_error() {
+        SqlException exception = TestSqlExceptions.Create(0, new SocketException((int)SocketError.HostNotFound));
 
         RunResult result = await RunAsync(_ => throw exception, _ => 0);
 

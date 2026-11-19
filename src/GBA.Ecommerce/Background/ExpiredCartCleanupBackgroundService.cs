@@ -1,4 +1,5 @@
 using System;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using GBA.Services.Services.Clients.Contracts;
@@ -16,8 +17,8 @@ namespace GBA.Ecommerce.Background;
 /// </summary>
 public sealed class ExpiredCartCleanupBackgroundService : BackgroundService {
     private static readonly TimeSpan Interval = TimeSpan.FromHours(1);
-    private static readonly TimeSpan TimeoutRetryInterval = TimeSpan.FromMinutes(1);
-    private const int PersistentTimeoutThreshold = 5;
+    private static readonly TimeSpan TransientRetryInterval = TimeSpan.FromMinutes(1);
+    private const int PersistentFailureThreshold = 5;
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ExpiredCartCleanupBackgroundService> _log;
@@ -42,7 +43,7 @@ public sealed class ExpiredCartCleanupBackgroundService : BackgroundService {
         if (!await DelayAsync(TimeSpan.FromMinutes(2), stoppingToken)) return;
 
         _log.LogInformation("Expired-cart cleanup started: every {Interval}", Interval);
-        int consecutiveTimeouts = 0;
+        int consecutiveFailures = 0;
 
         while (!stoppingToken.IsCancellationRequested) {
             TimeSpan nextInterval = Interval;
@@ -51,28 +52,29 @@ public sealed class ExpiredCartCleanupBackgroundService : BackgroundService {
                 IClientShoppingCartService cartService = scope.ServiceProvider.GetRequiredService<IClientShoppingCartService>();
 
                 int released = await cartService.ReleaseExpiredCartsAsync();
-                if (consecutiveTimeouts > 0) {
-                    _log.LogInformation("Expired-cart cleanup recovered after SQL timeouts");
+                if (consecutiveFailures > 0) {
+                    _log.LogInformation("Expired-cart cleanup recovered after transient SQL failures");
                 }
-                consecutiveTimeouts = 0;
+                consecutiveFailures = 0;
                 if (released > 0) {
                     _log.LogInformation("Expired-cart cleanup released {Released} reservations back to stock", released);
                 }
             } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
                 break;
-            } catch (SqlException ex) when (ex.Number is -2 or 258) {
-                consecutiveTimeouts = Math.Min(consecutiveTimeouts + 1, PersistentTimeoutThreshold);
+            } catch (SqlException ex) when (ex.Number is -2 or 258
+                || ex.InnerException is SocketException { SocketErrorCode: SocketError.TryAgain or SocketError.WouldBlock }) {
+                consecutiveFailures = Math.Min(consecutiveFailures + 1, PersistentFailureThreshold);
                 LogLevel level = LogLevel.Error;
-                if (consecutiveTimeouts < PersistentTimeoutThreshold) {
+                if (consecutiveFailures < PersistentFailureThreshold) {
                     level = LogLevel.Warning;
-                    nextInterval = TimeoutRetryInterval;
+                    nextInterval = TransientRetryInterval;
                 }
                 _log.Log(
                     level,
                     ex,
-                    "Expired-cart cleanup SQL timeout ({ConsecutiveTimeout}/{ErrorThreshold}); retrying in {RetryInterval}",
-                    consecutiveTimeouts,
-                    PersistentTimeoutThreshold,
+                    "Expired-cart cleanup transient SQL failure ({ConsecutiveFailure}/{ErrorThreshold}); retrying in {RetryInterval}",
+                    consecutiveFailures,
+                    PersistentFailureThreshold,
                     nextInterval);
             } catch (Exception ex) {
                 _log.LogError(ex, "Expired-cart cleanup iteration failed; retrying next interval");

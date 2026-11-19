@@ -6,7 +6,7 @@ using Microsoft.Data.SqlClient;
 namespace GBA.Ecommerce.Api.Tests;
 
 internal static class TestSqlExceptions {
-    public static SqlException Create(int number) {
+    public static SqlException Create(int number, Exception? innerException = null) {
         ConstructorInfo errorConstructor = typeof(SqlError)
             .GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance)
             .OrderByDescending(constructor => constructor.GetParameters().Length)
@@ -33,8 +33,8 @@ internal static class TestSqlExceptions {
                 "CreateException",
                 BindingFlags.NonPublic | BindingFlags.Static,
                 null,
-                new[] { typeof(SqlErrorCollection), typeof(string) },
+                new[] { typeof(SqlErrorCollection), typeof(string), typeof(Guid), typeof(Exception) },
                 null)!
-            .Invoke(null, new object[] { errors, "16.00.0000" })!;
+            .Invoke(null, new object?[] { errors, "16.00.0000", Guid.Empty, innerException })!;
     }
 }
